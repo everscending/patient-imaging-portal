@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en" data-theme="luxury">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase 1 decisions — Patient Imaging Portal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, h4, li, dd, td, th, .badge, .label) { overflow-wrap: anywhere; }
+  :where(img, svg, video, canvas) { max-width: 100%; height: auto; }
+  .opt { cursor: pointer; }
+  .opt:has(input:checked) {
+    border-color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px var(--color-primary);
+    background-color: color-mix(in oklch, var(--color-primary) 8%, transparent);
+  }
+  .shape {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .72rem; line-height: 1.5; white-space: pre-wrap;
+    background-color: var(--color-base-300);
+    border-radius: .5rem; padding: .65rem .8rem; overflow-x: auto;
+  }
+  .queued { outline: 2px solid var(--color-success); outline-offset: 3px; }
+</style>
+</head>
+<body class="bg-base-200 text-base-content">
+
+<main class="mx-auto max-w-6xl p-4 sm:p-6 lg:p-10 space-y-8">
+
+  <!-- ── Header ───────────────────────────────────────────── -->
+  <header class="space-y-3">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="badge badge-primary badge-sm">Loom · phase 1</span>
+      <span class="badge badge-soft badge-sm">Patient Imaging Portal</span>
+      <span class="badge badge-soft badge-warning badge-sm">3-day timebox</span>
+    </div>
+    <h1 class="text-3xl sm:text-4xl font-bold tracking-tight">Five decisions left before tickets</h1>
+    <p class="max-w-3xl text-base-content/70">
+      The dependent architecture chain is closed. These five are independent of each other and of
+      that chain — each one changes what gets built, and none of them can be derived from
+      <code class="text-primary">PRD.md</code>. Answer each card; the recommendation is badged.
+    </p>
+  </header>
+
+  <!-- ── Already closed ───────────────────────────────────── -->
+  <section class="card card-border bg-base-100">
+    <div class="card-body gap-3">
+      <h2 class="card-title text-lg">
+        Already closed
+        <span class="badge badge-success badge-soft badge-sm">no action needed</span>
+      </h2>
+      <p class="text-sm text-base-content/60">
+        These become ADRs. Shown so this page stands on its own — flag anything you want reopened.
+      </p>
+      <div class="overflow-x-auto rounded-box border border-base-content/10">
+        <table class="table table-sm table-zebra">
+          <thead>
+            <tr><th class="w-40">Decision</th><th>Choice</th><th class="hidden md:table-cell">Why it mattered</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="font-semibold">Stack</td>
+              <td>Next.js full-stack, TypeScript — route handlers are the API</td>
+              <td class="hidden md:table-cell text-base-content/60">One codebase, one CI job, one deploy. The two-codebase integration tax is the biggest avoidable cost in 3 days.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold">Platform</td>
+              <td>Supabase (Postgres + Storage + Auth) · app on Vercel</td>
+              <td class="hidden md:table-cell text-base-content/60">Row-level security behind the app checks, signed storage URLs, and <code>pg_cron</code> for FR-15 — Vercel's free cron fires roughly once a day.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold">PHI delivery</td>
+              <td>Audited access grant, then short-lived signed URLs</td>
+              <td class="hidden md:table-cell text-base-content/60">The only shape that meets PF-3 (100-frame clip playable under 5 s p95) without 100 serverless invocations per clip.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold">Auth</td>
+              <td>Supabase Auth + a server-side identity-unlock row</td>
+              <td class="hidden md:table-cell text-base-content/60">Keeps the FR-2 unlock revocable, auditable, and lockable after EC-1 failures; keeps <code>auth.uid()</code> available to RLS.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider text-sm text-base-content/50">open decisions</div>
+
+  <!-- ═══ D-1 · Elective scope ════════════════════════════ -->
+  <section class="card card-border bg-base-100" id="d1">
+    <div class="card-body gap-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="card-title text-xl">D-1 · Which stretch items get built?</h2>
+          <p class="text-sm text-base-content/60 mt-1">Sets the scope ceiling. A cut elective must not be built — tickets never revive it.</p>
+        </div>
+        <div class="flex flex-wrap gap-1">
+          <span class="badge badge-soft badge-sm">EL-1…EL-5</span>
+        </div>
+      </div>
+
+      <div role="alert" class="alert alert-soft alert-info text-sm">
+        <span>
+          <strong>The rubric is lopsided.</strong> EL-1 (fast image/cine delivery) is the only stretch
+          item carrying points — up to <strong>+5</strong>, and only if every Priority 1 core criterion
+          already passes. EL-2 through EL-5 carry <strong>zero explicit points</strong>; they only improve
+          the qualitative read of rows you can improve more cheaply by polishing core.
+        </span>
+      </div>
+
+      <form data-lavish-question="d1-electives" class="space-y-3"
+            onsubmit="event.preventDefault(); const f=new FormData(event.currentTarget); const picked=f.getAll('el'); qp('D-1 electives: build ' + (picked.length? picked.join(', ') : 'NONE — all electives cut'), {tag:'decision', text:'D-1 electives: '+(picked.length?picked.join(', '):'none'), element:event.currentTarget, queueKey:'d1', data:{question:'d1-electives', answer:picked}});">
+        <div class="grid gap-3 md:grid-cols-2">
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" name="el" value="EL-1 fast image/cine delivery" class="checkbox checkbox-primary checkbox-sm mt-1" checked>
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">EL-1 · Fast image/cine delivery</span>
+                    <span class="badge badge-success badge-sm">Recommended</span>
+                    <span class="badge badge-soft badge-success badge-xs">+5 pts</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Thumbnail-first progressive load, prefetch/priority hints, frame-level caching.
+                    Needs a committed before/after benchmark and a techniques note.
+                  </p>
+                  <div class="shape mt-2">rubric   +5 bonus (only stretch with points)
+gated on Priority 1 fully passing
+cost     ~half a day on top of FR-3/FR-4
+risk     must never regress a core criterion</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" name="el" value="EL-5 natural-language booking (AI)" class="checkbox checkbox-sm mt-1">
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">EL-5 · Natural-language booking</span>
+                    <span class="badge badge-soft badge-warning badge-xs">0 pts</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    "Book me next Tuesday afternoon." Demos well. Also drags in AI-1: a 15-utterance
+                    golden set, an ≥80% threshold, a committed scorecard harness, and a model/version
+                    write-up — all of which a grader will then hold you to.
+                  </p>
+                  <div class="shape mt-2">rubric   0 explicit points
+drags in AI-1 (golden set + harness + threshold)
+cost     ~half a day, and a new failure mode
+note     PRD: "No AI is required to pass this brief"</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" name="el" value="EL-2 waitlist + auto-fill" class="checkbox checkbox-sm mt-1">
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">EL-2 · Waitlist + auto-fill</span>
+                    <span class="badge badge-soft badge-warning badge-xs">0 pts</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Auto-booking on cancellation touches the same rows FR-12's concurrency guard
+                    protects — it is the elective most likely to destabilise a Priority 3 core item.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" name="el" value="EL-3 recurring appointments" class="checkbox checkbox-sm mt-1">
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">EL-3 · Recurring appointments</span>
+                    <span class="badge badge-soft badge-warning badge-xs">0 pts</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    A repeating series multiplies every EC-6 time-zone and DST case across a
+                    trimester of dates. High correctness surface, no points.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40 md:col-span-2">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" name="el" value="EL-4 insurance / intake capture" class="checkbox checkbox-sm mt-1">
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">EL-4 · Insurance / intake field capture</span>
+                    <span class="badge badge-soft badge-warning badge-xs">0 pts</span>
+                    <span class="badge badge-soft badge-error badge-xs">widens PHI surface</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    The PRD treats intake and insurance fields as PHI, so every field added here must
+                    also satisfy SEC-2, SEC-4, SEC-5 and SEC-6 — more compliance surface for zero points.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </label>
+
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="submit" class="btn btn-primary btn-sm">Queue this answer</button>
+          <span class="text-sm text-base-content/50">Default shown: EL-1 only.</span>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ═══ D-2 · EC-8 collision policy ═════════════════════ -->
+  <section class="card card-border bg-base-100" id="d2">
+    <div class="card-body gap-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="card-title text-xl">D-2 · A provider edits availability over a booked slot</h2>
+          <p class="text-sm text-base-content/60 mt-1">
+            The PRD allows either answer, so it is a product decision — and it changes the FR-10 endpoint,
+            the UI, and the EC-8 test.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-1">
+          <span class="badge badge-soft badge-sm">EC-8</span>
+          <span class="badge badge-soft badge-sm">FR-10</span>
+        </div>
+      </div>
+
+      <p class="text-sm text-base-content/70">
+        A provider shrinks hours to 09:00–15:00, but a patient is already booked at 16:00. The one thing
+        forbidden is silently deleting or double-booking that appointment. Everything else is your call.
+      </p>
+
+      <form data-lavish-question="d2-collision" class="space-y-3"
+            onsubmit="event.preventDefault(); const v=new FormData(event.currentTarget).get('d2'); if(!v) return; qp('D-2 availability-edit collision policy: ' + v, {tag:'decision', text:'D-2: '+v, element:event.currentTarget, queueKey:'d2', data:{question:'d2-collision', answer:v}});">
+        <div class="grid gap-3 lg:grid-cols-3">
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d2" value="Reject the whole edit, list the conflicts" class="radio radio-primary radio-sm mt-1" checked>
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">Reject, list conflicts</span>
+                    <span class="badge badge-success badge-sm">Recommended</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    The edit fails atomically. The response names every appointment in the way, and the
+                    provider resolves them first. One code path, one test, no ambiguous half-state.
+                  </p>
+                  <div class="shape mt-2">PATCH /api/availability
+409 CONFLICT
+{ error: "conflicting_appointments",
+  appointments: [
+    { id, starts_at, patient_ref } ] }
+
+state after: unchanged
+tests: 1 · UI: a conflict list</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d2" value="Accept the edit, preserve and flag the booked slot" class="radio radio-sm mt-1">
+                <div class="flex-1">
+                  <span class="font-semibold">Accept and flag</span>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Free time is removed; the booked appointment survives, flagged as sitting outside
+                    current hours. More forgiving for the provider, and arguably more realistic — clinics
+                    do run over. Costs a new appointment flag that every downstream view must render.
+                  </p>
+                  <div class="shape mt-2">PATCH /api/availability
+200 OK
+{ removed_free_slots: 14,
+  preserved_out_of_hours: [ ... ] }
+
+appointments.out_of_hours = true
+tests: 2 · UI: a flag in 3 views</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d2" value="Reject by default, with an explicit force-and-flag override" class="radio radio-sm mt-1">
+                <div class="flex-1">
+                  <span class="font-semibold">Reject, with a force override</span>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Both behaviours, the provider picks. The most defensible product answer and the most
+                    expensive — it is both of the other options plus a confirmation flow, on the
+                    lowest-weighted rubric row.
+                  </p>
+                  <div class="shape mt-2">PATCH /api/availability        -> 409
+PATCH /api/availability?force=1 -> 200
+                                 + flags
+
+tests: 3 · UI: conflict list + confirm + flag</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Queue this answer</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ═══ D-3 · Report format ════════════════════════════ -->
+  <section class="card card-border bg-base-100" id="d3">
+    <div class="card-body gap-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="card-title text-xl">D-3 · How is a report stored and rendered?</h2>
+          <p class="text-sm text-base-content/60 mt-1">
+            Priority 2 is 15 rubric points. This choice decides the seed, the viewer, the share-link
+            resolution, and whether CQ-5 accessibility is free or expensive.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-1">
+          <span class="badge badge-soft badge-sm">FR-7</span>
+          <span class="badge badge-soft badge-sm">FR-8</span>
+          <span class="badge badge-soft badge-sm">CQ-5</span>
+        </div>
+      </div>
+
+      <form data-lavish-question="d3-report" class="space-y-3"
+            onsubmit="event.preventDefault(); const v=new FormData(event.currentTarget).get('d3'); if(!v) return; qp('D-3 report storage and rendering: ' + v, {tag:'decision', text:'D-3: '+v, element:event.currentTarget, queueKey:'d3', data:{question:'d3-report', answer:v}});">
+        <div class="grid gap-3 lg:grid-cols-3">
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d3" value="Structured report rows in Postgres, rendered by a React component" class="radio radio-primary radio-sm mt-1" checked>
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">Structured in Postgres</span>
+                    <span class="badge badge-success badge-sm">Recommended</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Findings, impression, signer and signed-at as real columns; a React component renders
+                    them. The <em>signed-only</em> filter in FR-7 becomes a <code>WHERE</code> clause an
+                    RLS policy can also enforce. Semantic HTML means CQ-5 and CQ-4 come almost free, and
+                    the seed writes rows, not binaries.
+                  </p>
+                  <div class="shape mt-2">reports(id, study_id, patient_id,
+        status 'preliminary'|'signed',
+        findings, impression,
+        signed_by, signed_at)
+
+RLS: status='signed' AND owns(patient_id)
+viewer: &lt;ReportView/&gt; · print CSS
+share:  same component, token-gated route</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d3" value="Pre-rendered PDF in Supabase Storage" class="radio radio-sm mt-1">
+                <div class="flex-1">
+                  <span class="font-semibold">PDF in Storage</span>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    The most realistic artifact, and it reuses the signed-URL path already built for
+                    images. But it needs a PDF generator in the seed, a viewer embed, and it is the
+                    worst option for CQ-5 keyboard/contrast and CQ-4 phone width — a PDF in an iframe
+                    on a phone is exactly the experience the PRD's edge cases penalise.
+                  </p>
+                  <div class="shape mt-2">reports(id, ..., storage_key)
+seed: generate N PDFs -> Storage
+
+viewer: &lt;iframe&gt; or pdf.js
+CQ-5:   poor  · CQ-4: poor
+"renders with correct formatting": ok</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d3" value="Sanitized HTML blob stored in Postgres" class="radio radio-sm mt-1">
+                <div class="flex-1">
+                  <span class="font-semibold">Sanitized HTML blob</span>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Middle ground — rich formatting, styleable, no PDF pipeline. But every render is a
+                    <code>dangerouslySetInnerHTML</code>, so CQ-7 input validation now has to defend an
+                    XSS path that the structured option simply does not have.
+                  </p>
+                  <div class="shape mt-2">reports(id, ..., body_html)
+
+render: sanitize -> dangerouslySetInnerHTML
+CQ-7:   new XSS surface to defend
+no structured signed-only field checks</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Queue this answer</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ═══ D-4 · Product parameters ═══════════════════════ -->
+  <section class="card card-border bg-base-100" id="d4">
+    <div class="card-body gap-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="card-title text-xl">D-4 · The five numbers the PRD leaves open</h2>
+          <p class="text-sm text-base-content/60 mt-1">
+            Each of these is a stated rule a reviewer will test against. They go in the README and in
+            the acceptance criteria, so they must be fixed now, not chosen by whichever ticket runs first.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-1">
+          <span class="badge badge-soft badge-sm">FR-5</span>
+          <span class="badge badge-soft badge-sm">FR-13</span>
+          <span class="badge badge-soft badge-sm">FR-15</span>
+          <span class="badge badge-soft badge-sm">EC-1</span>
+        </div>
+      </div>
+
+      <form data-lavish-question="d4-params" class="space-y-4"
+            onsubmit="event.preventDefault(); const f=new FormData(event.currentTarget); const p=['share link TTL = '+f.get('share')+' h','minimum reschedule/cancel notice = '+f.get('notice')+' h','reminder lead time = '+f.get('reminder')+' h before start','identity-unlock TTL = '+f.get('unlock')+' min','EC-1 lockout = '+f.get('fails')+' failed attempts, '+f.get('lock')+' min lockout']; qp('D-4 product parameters: ' + p.join('; '), {tag:'decision', text:'D-4 parameters set', element:event.currentTarget, queueKey:'d4', data:{question:'d4-params', answer:Object.fromEntries(f)}});">
+        <div class="overflow-x-auto rounded-box border border-base-content/10">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Parameter</th>
+                <th class="w-32">Value</th>
+                <th class="hidden lg:table-cell">Why this default</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="font-semibold">Share-link lifetime</div>
+                  <div class="text-xs text-base-content/50">FR-5, FR-8, SEC-8</div>
+                </td>
+                <td>
+                  <label class="input input-sm w-28">
+                    <input type="number" name="share" value="48" min="1" max="72" class="grow">
+                    <span class="text-xs opacity-60">h</span>
+                  </label>
+                </td>
+                <td class="hidden lg:table-cell text-sm text-base-content/60">
+                  PRD states 24–72 h. 48 h is long enough for a referring provider to open it on a
+                  working day, short enough that expiry is demonstrable in the DEL-6 video.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="font-semibold">Minimum change notice</div>
+                  <div class="text-xs text-base-content/50">FR-13</div>
+                </td>
+                <td>
+                  <label class="input input-sm w-28">
+                    <input type="number" name="notice" value="24" min="0" max="168" class="grow">
+                    <span class="text-xs opacity-60">h</span>
+                  </label>
+                </td>
+                <td class="hidden lg:table-cell text-sm text-base-content/60">
+                  The PRD's own worked example. Enforced server-side, so the seed must include one
+                  appointment inside the window and one outside it to make the rule testable.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="font-semibold">Reminder lead time</div>
+                  <div class="text-xs text-base-content/50">FR-15, EC-9, PF-8</div>
+                </td>
+                <td>
+                  <label class="input input-sm w-28">
+                    <input type="number" name="reminder" value="24" min="1" max="168" class="grow">
+                    <span class="text-xs opacity-60">h</span>
+                  </label>
+                </td>
+                <td class="hidden lg:table-cell text-sm text-base-content/60">
+                  One reminder, 24 h ahead. A single interval keeps the EC-9 idempotency key simple —
+                  one row per appointment per interval — and one interval is all the PRD asks for.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="font-semibold">Identity-unlock lifetime</div>
+                  <div class="text-xs text-base-content/50">FR-2</div>
+                </td>
+                <td>
+                  <label class="input input-sm w-28">
+                    <input type="number" name="unlock" value="30" min="5" max="240" class="grow">
+                    <span class="text-xs opacity-60">min</span>
+                  </label>
+                </td>
+                <td class="hidden lg:table-cell text-sm text-base-content/60">
+                  Short enough to be a real second factor, long enough that a patient can browse
+                  images, read a report and share it without re-verifying mid-flow.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="font-semibold">Failed-attempt lockout</div>
+                  <div class="text-xs text-base-content/50">EC-1</div>
+                </td>
+                <td>
+                  <div class="flex gap-1">
+                    <label class="input input-sm w-20">
+                      <input type="number" name="fails" value="5" min="3" max="10" class="grow">
+                      <span class="text-xs opacity-60">×</span>
+                    </label>
+                    <label class="input input-sm w-24">
+                      <input type="number" name="lock" value="15" min="1" max="60" class="grow">
+                      <span class="text-xs opacity-60">min</span>
+                    </label>
+                  </div>
+                </td>
+                <td class="hidden lg:table-cell text-sm text-base-content/60">
+                  5 failures then a 15-minute lock, counted per patient identifier and per source —
+                  not per session, or clearing cookies defeats it. Short enough to demo live.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Queue these values</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ═══ D-5 · Seed scale ═══════════════════════════════ -->
+  <section class="card card-border bg-base-100" id="d5">
+    <div class="card-body gap-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="card-title text-xl">D-5 · How does the seed fit 1 GB of free storage?</h2>
+          <p class="text-sm text-base-content/60 mt-1">
+            This is GAP-2, and it is arithmetic, not preference — the dataset the PRD specifies does
+            not fit the free tier the PRD also mandates.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-1">
+          <span class="badge badge-soft badge-sm">DEL-4</span>
+          <span class="badge badge-soft badge-warning badge-sm">GAP-2</span>
+          <span class="badge badge-soft badge-sm">CUT-3</span>
+        </div>
+      </div>
+
+      <div role="alert" class="alert alert-soft alert-warning text-sm">
+        <span>
+          <strong>The collision.</strong> DEL-4 asks for ~50 patients × 1–5 visits × up to 2 cine clips ×
+          up to 100 frames. That is up to <strong>~50,000 frames</strong>. At even 25 KB a frame it is
+          ~1.25 GB — over Supabase's free 1 GB — while CUT-3 forbids paying for more.
+        </span>
+      </div>
+
+      <form data-lavish-question="d5-seed" class="space-y-3"
+            onsubmit="event.preventDefault(); const v=new FormData(event.currentTarget).get('d5'); if(!v) return; qp('D-5 seed strategy: ' + v, {tag:'decision', text:'D-5: '+v, element:event.currentTarget, queueKey:'d5', data:{question:'d5-seed', answer:v}});">
+        <div class="grid gap-3 lg:grid-cols-3">
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d5" value="Shared synthetic asset pool referenced by all studies, full row counts" class="radio radio-primary radio-sm mt-1" checked>
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold">Shared asset pool</span>
+                    <span class="badge badge-success badge-sm">Recommended</span>
+                  </div>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Generate a small pool of distinct synthetic clips and stills once; every study
+                    references pool assets by storage key. <strong>Row counts stay exactly at DEL-4's
+                    numbers</strong> — 50 patients, 16,000 slots, the full study graph — so every
+                    ownership, leakage and performance test sees the dataset the PRD specified. Only the
+                    bytes are deduplicated, and each request still transfers a full 100-frame clip, so
+                    PF-1/PF-2/PF-3 stay honest.
+                  </p>
+                  <div class="shape mt-2">pool:  8 cine sets × 100 frames  ≈  20 MB
+       40 stills                ≈   2 MB
+                                  ─────────
+                                  ~22 MB  of 1 GB
+
+rows:  50 patients · 150 studies
+       ~250 clips · ~700 images
+       16,000 slots        <- unchanged
+per-request bytes: unchanged</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d5" value="Unique frames per study, patient count scaled down to fit 1 GB" class="radio radio-sm mt-1">
+                <div class="flex-1">
+                  <span class="font-semibold">Unique frames, fewer patients</span>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    Every clip genuinely distinct, dataset trimmed until it fits. Most realistic bytes —
+                    but it shrinks the row counts, and the row counts are what FR-6's ID-guessing test
+                    and PF-5's 16,000-slot query are actually measuring.
+                  </p>
+                  <div class="shape mt-2">~12 patients · ~35 studies
+~4,000 frames          ≈ 950 MB
+16,000 slots -> ~4,000
+
+weakens: FR-6 ID-space, PF-5 realism
+strengthens: nothing a grader checks</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+          <label class="opt card card-border bg-base-200/40">
+            <div class="card-body gap-2 p-4">
+              <div class="flex items-start gap-3">
+                <input type="radio" name="d5" value="Two seed profiles: small default plus a full-scale benchmark mode" class="radio radio-sm mt-1">
+                <div class="flex-1">
+                  <span class="font-semibold">Two seed profiles</span>
+                  <p class="text-sm text-base-content/70 mt-1">
+                    A small default a grader runs in seconds, plus a full-scale mode used only for the
+                    benchmark run, with the README stating which produced each number. Honest and
+                    flexible — but it is two datasets to keep correct, and every acceptance criterion
+                    now has to say which profile it was verified against.
+                  </p>
+                  <div class="shape mt-2">npm run seed             -> small
+npm run seed -- --full   -> benchmark
+
+2 datasets to maintain
+every criterion names its profile
+README reports per-profile numbers</div>
+                </div>
+              </div>
+            </div>
+          </label>
+
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Queue this answer</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ── Next ─────────────────────────────────────────────── -->
+  <section class="card card-border bg-base-100">
+    <div class="card-body gap-3">
+      <h2 class="card-title text-lg">What happens once these land</h2>
+      <ul class="steps steps-vertical lg:steps-horizontal w-full">
+        <li class="step step-primary">ADRs written for all nine decisions</li>
+        <li class="step step-primary">ARCHITECTURE.md + pinned seams</li>
+        <li class="step step-primary">UX spec with annotated mockups</li>
+        <li class="step">Fresh-agent audit, then <code>/loom epics</code></li>
+      </ul>
+      <p class="text-sm text-base-content/60">
+        Queue each card's answer, then press <strong>Send to Agent</strong>. Anything you disagree with
+        that is not one of these five — including the four already closed — annotate it directly and it
+        gets reopened.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  function qp(prompt, opts) {
+    if (window.lavish && window.lavish.queuePrompt) {
+      window.lavish.queuePrompt(prompt, opts);
+      if (opts && opts.element) {
+        opts.element.classList.add('queued');
+        const b = opts.element.querySelector('button[type=submit]');
+        if (b) { b.classList.remove('btn-primary'); b.classList.add('btn-success'); b.textContent = 'Queued ✓'; }
+      }
+    } else {
+      console.log('[lavish not attached] would queue:', prompt);
+    }
+  }
+</script>
+</body>
+</html>

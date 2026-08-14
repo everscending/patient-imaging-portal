@@ -1,0 +1,1280 @@
+<!doctype html>
+<html lang="en" data-theme="luxury">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UX spec — Patient Imaging Portal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, h4, li, td, th, .badge) { overflow-wrap: anywhere; }
+
+  /* ── frames ───────────────────────────────────────── */
+  .phone {
+    width: 268px; height: 476px; flex: none;
+    border-radius: 26px; padding: 8px;
+    background: var(--color-base-300);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  }
+  .phone > .screen { border-radius: 19px; }
+  .desk {
+    width: 560px; height: 360px; flex: none;
+    border-radius: 10px; padding: 0;
+    background: var(--color-base-300);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--color-base-content) 14%, transparent);
+    overflow: hidden;
+  }
+  .deskbar {
+    height: 20px; display: flex; align-items: center; gap: 4px; padding: 0 8px;
+    background: var(--color-base-300);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in oklch, var(--color-base-content) 25%, transparent); }
+  .deskurl {
+    margin-left: 6px; font-size: 8px; padding: 1px 6px; border-radius: 4px;
+    background: var(--color-base-100); color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .desk > .screen { height: calc(100% - 20px); }
+  .screen {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--color-base-100);
+    display: flex; flex-direction: column;
+    font-size: 10.5px; line-height: 1.35;
+  }
+  .bar  { padding: 6px 9px; font-size: 10px; background: var(--color-base-200); }
+  .body { flex: 1; overflow: hidden; padding: 8px 9px; }
+  .tile { background: var(--color-base-300); border-radius: 5px; }
+  .tabbar { display: grid; grid-template-columns: repeat(4,1fr); text-align: center;
+            padding: 6px 0; font-size: 8.5px; background: var(--color-base-200); }
+  .sidebar { width: 118px; flex: none; background: var(--color-base-200); padding: 8px 7px; font-size: 9.5px; }
+  .sideitem { padding: 4px 6px; border-radius: 4px; margin-bottom: 2px; }
+  .sideitem.on { background: var(--color-primary); color: var(--color-primary-content); font-weight: 700; }
+  .frameimg { background: #000; color: rgba(255,255,255,.35); display:flex; align-items:center; justify-content:center; }
+
+  /* ── viewport switch ──────────────────────────────── */
+  body[data-view="mobile"]  .only-desk { display: none; }
+  body[data-view="desktop"] .only-mob  { display: none; }
+
+  .gallery { display: flex; gap: 1.1rem; overflow-x: auto; padding-bottom: .5rem; align-items: flex-start; }
+  .opt { cursor: pointer; display: block; }
+  .opt:has(input:checked) .phone, .opt:has(input:checked) .desk { box-shadow: 0 0 0 2px var(--color-primary); }
+  .opt:has(input:checked) .optlabel { color: var(--color-primary); font-weight: 700; }
+  .note { font-size: .72rem; line-height: 1.45; }
+  .queued { outline: 2px solid var(--color-success); outline-offset: 3px; }
+  .anchorbar { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(8px); }
+</style>
+</head>
+<body class="bg-base-200 text-base-content" data-view="both">
+<main class="mx-auto max-w-7xl p-4 sm:p-6 lg:p-10 space-y-8">
+
+<header class="space-y-3">
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="badge badge-primary badge-sm">Loom · phase 2</span>
+    <span class="badge badge-soft badge-sm">UX spec</span>
+    <span class="badge badge-soft badge-warning badge-sm">17 screens · 2 viewports</span>
+  </div>
+  <h1 class="text-3xl sm:text-4xl font-bold tracking-tight">Every screen, mobile and desktop</h1>
+  <p class="max-w-3xl text-base-content/70">
+    The whole application surface, drawn at <strong>390&nbsp;px</strong> (the phone width CQ-4 and
+    EC-4 are graded at) and at desktop. Part 1 is the five open decisions. Part 2 is the full screen
+    gallery — every route in the URL map, including the failure states a happy-path build forgets.
+    Annotate any screen you want changed.
+  </p>
+</header>
+
+<div class="anchorbar bg-base-200/80 py-3 -mx-1 px-1">
+  <div class="flex flex-wrap items-center gap-3">
+    <div role="tablist" class="tabs tabs-box tabs-sm">
+      <button role="tab" class="tab tab-active" data-view-btn="both">Both</button>
+      <button role="tab" class="tab" data-view-btn="mobile">Mobile only</button>
+      <button role="tab" class="tab" data-view-btn="desktop">Desktop only</button>
+    </div>
+    <div class="flex flex-wrap gap-1 text-xs">
+      <a href="#decisions" class="btn btn-xs btn-ghost">Decisions</a>
+      <a href="#foundation" class="btn btn-xs btn-ghost">Foundation</a>
+      <a href="#imaging" class="btn btn-xs btn-ghost">Imaging</a>
+      <a href="#reports" class="btn btn-xs btn-ghost">Reports</a>
+      <a href="#sched" class="btn btn-xs btn-ghost">Scheduling</a>
+      <a href="#ops" class="btn btn-xs btn-ghost">Compliance</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 1 · DECISIONS ══════════════════ -->
+<div class="divider text-sm text-base-content/50" id="decisions">part 1 · five open decisions</div>
+
+<!-- U-1 -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 class="card-title text-xl">U-1 · The patient navigation shell</h2>
+      <p class="text-sm text-base-content/60 mt-1">Wraps every patient flow. Changes every patient page ticket.</p></div>
+      <div class="flex gap-1"><span class="badge badge-soft badge-sm">CQ-4</span><span class="badge badge-soft badge-sm">CQ-5</span></div>
+    </div>
+    <form data-lavish-question="u1"
+      onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u1');if(!v)return;qp('U-1 patient shell: '+v,{tag:'ux',text:'U-1: '+v,element:event.currentTarget,queueKey:'u1',data:{q:'u1',a:v}});">
+      <div class="gallery">
+        <label class="opt">
+          <input type="radio" name="u1" value="Bottom tab bar on mobile, left sidebar on desktop" class="sr-only" checked>
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar flex justify-between"><span class="font-bold">My imaging</span><span class="badge badge-success badge-xs">45m</span></div>
+              <div class="body space-y-1.5">
+                <div class="tile p-2"><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun · 6 images · 1 clip</div></div>
+                <div class="tile p-2"><div class="font-semibold">Renal ultrasound</div><div class="opacity-60">3 Apr · 4 images</div></div>
+                <div class="tile p-2"><div class="font-semibold">Thyroid ultrasound</div><div class="opacity-60">18 Jan · 8 images</div></div>
+              </div>
+              <div class="tabbar"><div class="text-primary font-bold">▣<div>Imaging</div></div><div class="opacity-60">▤<div>Reports</div></div><div class="opacity-60">▦<div>Visits</div></div><div class="opacity-60">▧<div>Shares</div></div></div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+              <div class="screen" style="flex-direction:row">
+                <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+                  <div class="sideitem on">Imaging</div><div class="sideitem">Reports</div><div class="sideitem">Appointments</div><div class="sideitem">Shared links</div>
+                  <div class="mt-3 badge badge-success badge-xs">Unlocked 45m</div></div>
+                <div class="flex-1 body">
+                  <div class="font-bold mb-2" style="font-size:12px">My imaging</div>
+                  <div class="grid grid-cols-3 gap-1.5">
+                    <div class="tile p-2"><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun · 6 img</div></div>
+                    <div class="tile p-2"><div class="font-semibold">Renal</div><div class="opacity-60">3 Apr · 4 img</div></div>
+                    <div class="tile p-2"><div class="font-semibold">Thyroid</div><div class="opacity-60">18 Jan · 8 img</div></div>
+                  </div>
+                </div>
+              </div></div>
+          </div>
+          <div class="mt-2 flex items-center gap-2"><span class="optlabel text-sm">Tab bar → sidebar</span><span class="badge badge-success badge-xs">Recommended</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            One nav model, two shapes: thumb-reachable tabs on a phone, a persistent sidebar on
+            desktop. Every destination stays one interaction away in both, which is what the DEL-6
+            video has to walk through in order.
+          </p>
+        </label>
+
+        <label class="opt">
+          <input type="radio" name="u1" value="Top navbar with a slide-out drawer at both sizes" class="sr-only">
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar flex gap-2"><span>☰</span><span class="font-bold">My imaging</span></div>
+              <div class="body space-y-1.5">
+                <div class="tile p-2"><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun</div></div>
+                <div class="tile p-2"><div class="font-semibold">Renal ultrasound</div><div class="opacity-60">3 Apr</div></div>
+                <div class="tile p-2"><div class="font-semibold">Thyroid ultrasound</div><div class="opacity-60">18 Jan</div></div>
+                <div class="tile p-2"><div class="font-semibold">Carotid ultrasound</div><div class="opacity-60">2 Jan</div></div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+              <div class="screen">
+                <div class="bar flex items-center gap-3"><span class="font-bold">Portal</span><span class="opacity-60">Imaging</span><span class="opacity-60">Reports</span><span class="opacity-60">Appointments</span><span class="opacity-60">Shares</span></div>
+                <div class="body"><div class="grid grid-cols-4 gap-1.5">
+                  <div class="tile p-2">OB ultrasound</div><div class="tile p-2">Renal</div><div class="tile p-2">Thyroid</div><div class="tile p-2">Carotid</div>
+                </div></div>
+              </div></div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">Top navbar + drawer</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            More vertical room and a conventional desktop shape. Costs a tap and a focus trap on
+            every mobile navigation — the usual place keyboard traversal (CQ-5) goes wrong.
+          </p>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-3">Queue this answer</button>
+    </form>
+  </div>
+</section>
+
+<!-- U-2 -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 class="card-title text-xl">U-2 · Where the identity check happens</h2>
+      <p class="text-sm text-base-content/60 mt-1">The 45-minute unlock expires mid-session, so this screen reappears. Where it appears is the decision.</p></div>
+      <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-2</span><span class="badge badge-soft badge-sm">EC-1</span></div>
+    </div>
+    <form data-lavish-question="u2"
+      onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u2');if(!v)return;qp('U-2 identity gate: '+v,{tag:'ux',text:'U-2: '+v,element:event.currentTarget,queueKey:'u2',data:{q:'u2',a:v}});">
+      <div class="gallery">
+        <label class="opt">
+          <input type="radio" name="u2" value="Dedicated /verify route, redirect with return-to" class="sr-only" checked>
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar font-bold">Verify your identity</div>
+              <div class="body space-y-2">
+                <p class="opacity-70">Confirm your details before viewing images or reports.</p>
+                <div><div class="opacity-60 mb-1">Patient ID</div><div class="tile px-2 py-1.5">PT-04471</div></div>
+                <div><div class="opacity-60 mb-1">Date of birth</div><div class="tile px-2 py-1.5">14 / 03 / 1988</div></div>
+                <div class="alert alert-error alert-soft py-1.5 px-2" style="font-size:9.5px">We could not match those details.</div>
+                <div class="btn btn-primary btn-xs btn-block">Continue</div>
+                <p class="opacity-50" style="font-size:9px">Unlocked for 45 minutes once verified.</p>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/verify?next=/studies/8f2…</span></div>
+              <div class="screen"><div class="body flex items-center justify-center">
+                <div style="width:300px" class="space-y-2">
+                  <div class="font-bold" style="font-size:13px">Verify your identity</div>
+                  <p class="opacity-70">To protect your health information, confirm your details before viewing images or reports.</p>
+                  <div><div class="opacity-60 mb-1">Patient ID</div><div class="tile px-2 py-1.5">PT-04471</div></div>
+                  <div><div class="opacity-60 mb-1">Date of birth</div><div class="tile px-2 py-1.5">14 / 03 / 1988</div></div>
+                  <div class="alert alert-error alert-soft py-1.5 px-2" style="font-size:9.5px">We could not match those details.</div>
+                  <div class="btn btn-primary btn-xs">Continue</div>
+                </div>
+              </div></div></div>
+          </div>
+          <div class="mt-2 flex items-center gap-2"><span class="optlabel text-sm">Dedicated route</span><span class="badge badge-success badge-xs">Recommended</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            One URL, one component, one focus target. Middleware redirects any locked route here and
+            returns you afterwards. The EC-1 generic-error rule lives in exactly one place, so it
+            cannot be phrased two ways.
+          </p>
+        </label>
+
+        <label class="opt">
+          <input type="radio" name="u2" value="Inline sheet or modal over the page that triggered it" class="sr-only">
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar font-bold">My imaging</div>
+              <div class="body space-y-1.5 opacity-30">
+                <div class="tile p-2">OB ultrasound</div><div class="tile p-2">Renal ultrasound</div></div>
+              <div class="p-2.5 space-y-2" style="background:var(--color-base-200);border-radius:12px 12px 0 0">
+                <div class="font-bold">Confirm your identity</div>
+                <div class="tile px-2 py-1.5" style="background:var(--color-base-100)">Patient ID</div>
+                <div class="tile px-2 py-1.5" style="background:var(--color-base-100)">Date of birth</div>
+                <div class="btn btn-primary btn-xs btn-block">Unlock</div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+              <div class="screen" style="position:relative">
+                <div class="bar font-bold">My imaging</div>
+                <div class="body opacity-25"><div class="grid grid-cols-3 gap-1.5"><div class="tile p-2">OB</div><div class="tile p-2">Renal</div><div class="tile p-2">Thyroid</div></div></div>
+                <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)">
+                  <div class="p-3 space-y-2" style="width:230px;background:var(--color-base-100);border-radius:8px">
+                    <div class="font-bold">Confirm your identity</div>
+                    <div class="tile px-2 py-1.5">Patient ID</div>
+                    <div class="tile px-2 py-1.5">Date of birth</div>
+                    <div class="btn btn-primary btn-xs btn-block">Unlock</div>
+                  </div>
+                </div>
+              </div></div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">Inline sheet / modal</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Keeps context — you can see what you were reaching for. But the gate must then exist on
+            every PHI surface, and a modal focus trap is where CQ-5 keyboard support usually breaks.
+          </p>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-3">Queue this answer</button>
+    </form>
+  </div>
+</section>
+
+<!-- U-3 -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 class="card-title text-xl">U-3 · Cine controls</h2>
+      <p class="text-sm text-base-content/60 mt-1">The highest-value screen in the build. Priority 1 is 25 points and this is its centrepiece.</p></div>
+      <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-4</span><span class="badge badge-soft badge-sm">EC-2</span><span class="badge badge-soft badge-sm">EC-4</span></div>
+    </div>
+    <form data-lavish-question="u3"
+      onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u3');if(!v)return;qp('U-3 cine controls: '+v,{tag:'ux',text:'U-3: '+v,element:event.currentTarget,queueKey:'u3',data:{q:'u3',a:v}});">
+      <div class="gallery">
+        <label class="opt">
+          <input type="radio" name="u3" value="Always-visible docked control bar" class="sr-only" checked>
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 1/2</span></div>
+              <div class="flex-1 frameimg" style="font-size:10px">frame 34 / 100</div>
+              <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+                <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+                <div class="flex items-center justify-between">
+                  <div class="flex gap-1.5"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+                  <div class="flex items-center gap-1"><span class="opacity-60" style="font-size:9px">FPS</span><div class="btn btn-xs">12</div></div>
+                </div>
+                <div class="alert alert-warning alert-soft py-1 px-2" style="font-size:9px">2 frames unavailable — shown as gaps</div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies/8f2…/clips/a41…</span></div>
+              <div class="screen">
+                <div class="bar flex justify-between"><span>‹ OB ultrasound · Clip 1 of 2</span><span class="opacity-60">Rosa Delgado · PT-04471</span></div>
+                <div class="flex-1 flex">
+                  <div class="flex-1 frameimg">frame 34 / 100</div>
+                  <div style="width:150px;background:var(--color-base-200);padding:8px" class="space-y-2">
+                    <div class="font-semibold">Playback</div>
+                    <div class="flex gap-1"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+                    <div><div class="opacity-60" style="font-size:9px">Frames per second</div><div class="tile px-2 py-1">12</div></div>
+                    <div class="alert alert-warning alert-soft py-1 px-2 block" style="font-size:9px">2 frames unavailable</div>
+                    <div class="btn btn-xs btn-outline btn-block">Share this clip</div>
+                  </div>
+                </div>
+                <div class="p-2" style="background:var(--color-base-200)">
+                  <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+                </div>
+              </div></div>
+          </div>
+          <div class="mt-2 flex items-center gap-2"><span class="optlabel text-sm">Docked controls</span><span class="badge badge-success badge-xs">Recommended</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Controls never hide, so tap targets are always measurable and EC-4 is testable without
+            timing a fade. Real buttons mean keyboard and screen-reader support come free, and the
+            EC-2 gap notice has a permanent home.
+          </p>
+        </label>
+
+        <label class="opt">
+          <input type="radio" name="u3" value="Fading overlay controls, tap or move to summon" class="sr-only">
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="flex-1 frameimg" style="position:relative">frame 34 / 100
+                <div style="position:absolute;left:0;right:0;bottom:0;padding:8px;display:flex;align-items:center;gap:6px;background:linear-gradient(transparent,rgba(0,0,0,.75))">
+                  <span style="color:#fff">▶</span>
+                  <div style="height:2px;flex:1;border-radius:2px;background:rgba(255,255,255,.25)"><div style="height:2px;width:34%;border-radius:2px;background:#fff"></div></div>
+                  <span style="color:rgba(255,255,255,.7);font-size:9px">12fps</span>
+                </div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies/8f2…/clips/a41…</span></div>
+              <div class="screen"><div class="flex-1 frameimg" style="position:relative">frame 34 / 100
+                <div style="position:absolute;left:0;right:0;bottom:0;padding:10px;display:flex;align-items:center;gap:8px;background:linear-gradient(transparent,rgba(0,0,0,.8))">
+                  <span style="color:#fff">▶</span>
+                  <div style="height:3px;flex:1;border-radius:2px;background:rgba(255,255,255,.25)"><div style="height:3px;width:34%;border-radius:2px;background:#fff"></div></div>
+                  <span style="color:rgba(255,255,255,.7);font-size:9px">12 fps</span>
+                </div>
+              </div></div></div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">Fading overlay</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Maximum image area and a familiar media-player feel. Costs: hidden controls are a real
+            EC-4 tap-target risk, contrast over a moving greyscale frame is hard to guarantee for
+            CQ-5, and the EC-2 gap indicator has nowhere permanent to live.
+          </p>
+        </label>
+
+        <label class="opt">
+          <input type="radio" name="u3" value="Filmstrip scrubber with per-frame thumbnails" class="sr-only">
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar">‹ OB ultrasound</div>
+              <div class="flex-1 frameimg" style="font-size:10px">frame 34 / 100</div>
+              <div class="p-2 space-y-1.5" style="background:var(--color-base-200)">
+                <div class="flex gap-1 overflow-hidden">
+                  <div class="tile" style="width:26px;height:20px"></div><div class="tile" style="width:26px;height:20px"></div>
+                  <div class="tile ring-2 ring-primary" style="width:26px;height:20px"></div><div class="tile" style="width:26px;height:20px"></div>
+                  <div class="tile opacity-30 flex items-center justify-center" style="width:26px;height:20px;font-size:8px">✕</div>
+                  <div class="tile" style="width:26px;height:20px"></div>
+                </div>
+                <div class="flex justify-between"><div class="flex gap-1"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div><div class="btn btn-xs">12 fps</div></div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies/8f2…/clips/a41…</span></div>
+              <div class="screen">
+                <div class="bar">‹ OB ultrasound · Clip 1 of 2</div>
+                <div class="flex-1 frameimg">frame 34 / 100</div>
+                <div class="p-2 space-y-1.5" style="background:var(--color-base-200)">
+                  <div class="flex gap-1 overflow-hidden">
+                    <div class="tile" style="width:30px;height:22px"></div><div class="tile" style="width:30px;height:22px"></div>
+                    <div class="tile ring-2 ring-primary" style="width:30px;height:22px"></div><div class="tile" style="width:30px;height:22px"></div>
+                    <div class="tile opacity-30 flex items-center justify-center" style="width:30px;height:22px;font-size:8px">✕</div>
+                    <div class="tile" style="width:30px;height:22px"></div><div class="tile" style="width:30px;height:22px"></div>
+                    <div class="tile" style="width:30px;height:22px"></div><div class="tile" style="width:30px;height:22px"></div>
+                  </div>
+                  <div class="flex justify-between"><div class="flex gap-1"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div><div class="btn btn-xs">12 fps</div></div>
+                </div>
+              </div></div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">Filmstrip scrubber</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            The most capable option, and the EC-2 gap becomes visually obvious (the ✕ tile). But 100
+            thumbnails is a second asset set to generate and load — EL-1 work pulled forward into a
+            Core ticket.
+          </p>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-3">Queue this answer</button>
+    </form>
+  </div>
+</section>
+
+<!-- U-4 -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 class="card-title text-xl">U-4 · Sharing, and taking it back</h2>
+      <p class="text-sm text-base-content/60 mt-1">SEC-8 says a share link is never a permanent exposure — so revocation must be findable.</p></div>
+      <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-5</span><span class="badge badge-soft badge-sm">FR-8</span><span class="badge badge-soft badge-sm">SEC-8</span></div>
+    </div>
+    <form data-lavish-question="u4"
+      onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u4');if(!v)return;qp('U-4 share flow: '+v,{tag:'ux',text:'U-4: '+v,element:event.currentTarget,queueKey:'u4',data:{q:'u4',a:v}});">
+      <div class="gallery">
+        <label class="opt">
+          <input type="radio" name="u4" value="Share action on the item, plus a standing Shared links screen" class="sr-only" checked>
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar font-bold">Shared links</div>
+              <div class="body space-y-1.5">
+                <div class="tile p-2 space-y-1"><div class="flex justify-between"><span class="font-semibold">OB report</span><span class="badge badge-success badge-xs">Active</span></div>
+                  <div class="opacity-60">dr.lee@clinic.test · expires in 41 h</div><div class="btn btn-xs btn-error btn-outline btn-block">Revoke</div></div>
+                <div class="tile p-2 space-y-1"><div class="flex justify-between"><span class="font-semibold">Image 3 of 6</span><span class="badge badge-ghost badge-xs">Revoked</span></div><div class="opacity-60">mum@example.test · 2 h ago</div></div>
+                <div class="tile p-2 space-y-1"><div class="flex justify-between"><span class="font-semibold">Renal report</span><span class="badge badge-ghost badge-xs">Expired</span></div><div class="opacity-60">dr.okafor@clinic.test · 12 Aug</div></div>
+              </div>
+              <div class="tabbar"><div class="opacity-60">▣<div>Imaging</div></div><div class="opacity-60">▤<div>Reports</div></div><div class="opacity-60">▦<div>Visits</div></div><div class="text-primary font-bold">▧<div>Shares</div></div></div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/shares</span></div>
+              <div class="screen" style="flex-direction:row">
+                <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+                  <div class="sideitem">Imaging</div><div class="sideitem">Reports</div><div class="sideitem">Appointments</div><div class="sideitem on">Shared links</div></div>
+                <div class="flex-1 body">
+                  <div class="font-bold mb-2" style="font-size:12px">Shared links</div>
+                  <table class="table table-xs"><thead><tr><th>Resource</th><th>Recipient</th><th>State</th><th></th></tr></thead>
+                  <tbody>
+                    <tr><td>OB report</td><td>dr.lee@clinic.test</td><td><span class="badge badge-success badge-xs">Active · 41 h</span></td><td><span class="btn btn-xs btn-error btn-outline">Revoke</span></td></tr>
+                    <tr><td>Image 3 of 6</td><td>mum@example.test</td><td><span class="badge badge-ghost badge-xs">Revoked</span></td><td></td></tr>
+                    <tr><td>Renal report</td><td>dr.okafor@clinic.test</td><td><span class="badge badge-ghost badge-xs">Expired</span></td><td></td></tr>
+                  </tbody></table>
+                </div>
+              </div></div>
+          </div>
+          <div class="mt-2 flex items-center gap-2"><span class="optlabel text-sm">Item action + standing list</span><span class="badge badge-success badge-xs">Recommended</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Creating is one action from the thing you are looking at; revoking lives at a fixed
+            destination with all three states visible. That list is the screen the SEC-8 write-up
+            points at and the one DEL-6 demonstrates revocation on.
+          </p>
+        </label>
+
+        <label class="opt">
+          <input type="radio" name="u4" value="One dedicated Share page that also lists active links" class="sr-only">
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar font-bold">Share</div>
+              <div class="body space-y-2">
+                <div><div class="opacity-60 mb-1">What to share</div><div class="tile px-2 py-1.5">OB ultrasound — report ▾</div></div>
+                <div><div class="opacity-60 mb-1">Send to</div><div class="tile px-2 py-1.5">dr.lee@clinic.test</div></div>
+                <div class="opacity-60" style="font-size:9px">Expires after 48 hours. Revocable at any time.</div>
+                <div class="btn btn-primary btn-xs btn-block">Send secure link</div>
+                <div class="divider my-1" style="font-size:9px">Active links</div>
+                <div class="tile p-2 flex justify-between"><span>OB report</span><span class="opacity-60">41 h</span></div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/share</span></div>
+              <div class="screen"><div class="body flex gap-4">
+                <div style="width:230px" class="space-y-2">
+                  <div class="font-bold" style="font-size:12px">Share</div>
+                  <div><div class="opacity-60 mb-1">What to share</div><div class="tile px-2 py-1.5">OB ultrasound — report ▾</div></div>
+                  <div><div class="opacity-60 mb-1">Send to</div><div class="tile px-2 py-1.5">dr.lee@clinic.test</div></div>
+                  <div class="btn btn-primary btn-xs">Send secure link</div>
+                </div>
+                <div class="flex-1"><div class="font-semibold mb-1">Active links</div>
+                  <div class="tile p-2 flex justify-between mb-1"><span>OB report</span><span class="opacity-60">41 h</span></div>
+                  <div class="tile p-2 flex justify-between"><span>Image 3 of 6</span><span class="opacity-60">Revoked</span></div>
+                </div>
+              </div></div></div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">One Share page</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            One screen, one ticket, nothing duplicated. But sharing begins by re-picking the item you
+            were already looking at — the step people abandon, and one the demo video sits through twice.
+          </p>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-3">Queue this answer</button>
+    </form>
+  </div>
+</section>
+
+<!-- U-5 -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 class="card-title text-xl">U-5 · The provider availability editor</h2>
+      <p class="text-sm text-base-content/60 mt-1">It must make ADR-0006's accept-and-flag outcome legible: what was removed, and which booked appointments now sit outside hours.</p></div>
+      <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-10</span><span class="badge badge-soft badge-sm">EC-8</span></div>
+    </div>
+    <form data-lavish-question="u5"
+      onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u5');if(!v)return;qp('U-5 availability editor: '+v,{tag:'ux',text:'U-5: '+v,element:event.currentTarget,queueKey:'u5',data:{q:'u5',a:v}});">
+      <div class="gallery">
+        <label class="opt">
+          <input type="radio" name="u5" value="Form-based weekday list with a post-save outcome summary" class="sr-only" checked>
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar font-bold">Availability</div>
+              <div class="body space-y-1.5">
+                <div class="opacity-60" style="font-size:9px">Times shown in America/Chicago</div>
+                <div class="tile p-1.5 flex justify-between"><span>Mon</span><span class="opacity-70">09:00 – 15:00</span></div>
+                <div class="tile p-1.5 flex justify-between"><span>Tue</span><span class="opacity-70">09:00 – 17:00</span></div>
+                <div class="tile p-1.5 flex justify-between"><span>Wed</span><span class="opacity-40">Closed</span></div>
+                <div class="alert alert-warning alert-soft py-1.5 px-2 block" style="font-size:9px">
+                  <div class="font-bold">Saved. 14 open slots removed.</div>
+                  <div>1 booked appointment is now outside your hours:</div>
+                  <div class="mt-1">Mon 16:00 · PT-04471</div></div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/provider/availability</span></div>
+              <div class="screen" style="flex-direction:row">
+                <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Dr Amina Okafor</div>
+                  <div class="sideitem">Schedule</div><div class="sideitem on">Availability</div><div class="sideitem">Patients</div></div>
+                <div class="flex-1 body flex gap-3">
+                  <div style="width:200px" class="space-y-1">
+                    <div class="font-bold mb-1" style="font-size:11px">Working hours</div>
+                    <div class="opacity-60" style="font-size:9px">America/Chicago · 30 min slots</div>
+                    <div class="tile p-1.5 flex justify-between"><span>Mon</span><span class="opacity-70">09:00 – 15:00</span></div>
+                    <div class="tile p-1.5 flex justify-between"><span>Tue</span><span class="opacity-70">09:00 – 17:00</span></div>
+                    <div class="tile p-1.5 flex justify-between"><span>Wed</span><span class="opacity-40">Closed</span></div>
+                    <div class="tile p-1.5 flex justify-between"><span>Thu</span><span class="opacity-70">09:00 – 17:00</span></div>
+                    <div class="btn btn-primary btn-xs mt-1">Save</div>
+                  </div>
+                  <div class="flex-1">
+                    <div class="alert alert-warning alert-soft py-2 px-2 block" style="font-size:9.5px">
+                      <div class="font-bold">Saved. 14 open slots removed.</div>
+                      <div class="mt-1">These booked appointments are now outside your hours and have been kept:</div>
+                      <div class="tile p-1.5 mt-1 flex justify-between" style="background:var(--color-base-100)"><span>Mon 16:00</span><span class="opacity-60">PT-04471</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div></div>
+          </div>
+          <div class="mt-2 flex items-center gap-2"><span class="optlabel text-sm">Form + outcome summary</span><span class="badge badge-success badge-xs">Recommended</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Native inputs, so keyboard and screen-reader support are free (CQ-5). The post-save panel
+            is exactly the <code>preservedOutOfHours</code> payload the API already returns — EC-8's
+            outcome is shown, not inferred.
+          </p>
+        </label>
+
+        <label class="opt">
+          <input type="radio" name="u5" value="Interactive weekly calendar grid, drag to set hours" class="sr-only">
+          <div class="flex gap-3">
+            <div class="phone only-mob"><div class="screen">
+              <div class="bar font-bold">Availability</div>
+              <div class="body">
+                <div class="grid grid-cols-6 gap-0.5" style="font-size:8px">
+                  <div></div><div class="text-center opacity-60">M</div><div class="text-center opacity-60">T</div><div class="text-center opacity-60">W</div><div class="text-center opacity-60">T</div><div class="text-center opacity-60">F</div>
+                  <div class="opacity-50">09</div><div class="rounded-sm h-4 bg-primary/60"></div><div class="rounded-sm bg-primary/60"></div><div class="tile"></div><div class="rounded-sm bg-primary/60"></div><div class="rounded-sm bg-primary/60"></div>
+                  <div class="opacity-50">11</div><div class="rounded-sm h-4 bg-primary/60"></div><div class="rounded-sm bg-primary/60"></div><div class="tile"></div><div class="rounded-sm bg-primary/60"></div><div class="rounded-sm bg-primary/60"></div>
+                  <div class="opacity-50">13</div><div class="rounded-sm h-4 bg-primary/60"></div><div class="rounded-sm bg-primary/60"></div><div class="tile"></div><div class="rounded-sm bg-primary/60"></div><div class="tile"></div>
+                  <div class="opacity-50">15</div><div class="tile h-4"></div><div class="rounded-sm bg-primary/60"></div><div class="tile"></div><div class="rounded-sm bg-primary/60"></div><div class="tile"></div>
+                  <div class="opacity-50">16</div><div class="rounded-sm h-4 bg-warning/70"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div>
+                </div>
+                <div class="mt-2 opacity-60" style="font-size:9px">▨ booked, outside hours</div>
+              </div>
+            </div></div>
+            <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/provider/availability</span></div>
+              <div class="screen"><div class="body">
+                <div class="font-bold mb-2" style="font-size:11px">Availability · America/Chicago</div>
+                <div class="grid gap-0.5" style="grid-template-columns:26px repeat(5,1fr);font-size:8px">
+                  <div></div><div class="text-center opacity-60">Mon</div><div class="text-center opacity-60">Tue</div><div class="text-center opacity-60">Wed</div><div class="text-center opacity-60">Thu</div><div class="text-center opacity-60">Fri</div>
+                  <div class="opacity-50">09:00</div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 tile"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 rounded-sm bg-primary/60"></div>
+                  <div class="opacity-50">11:00</div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 tile"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 rounded-sm bg-primary/60"></div>
+                  <div class="opacity-50">13:00</div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 tile"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 tile"></div>
+                  <div class="opacity-50">15:00</div><div class="h-4 tile"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 tile"></div><div class="h-4 rounded-sm bg-primary/60"></div><div class="h-4 tile"></div>
+                  <div class="opacity-50">16:00</div><div class="h-4 rounded-sm bg-warning/70"></div><div class="h-4 tile"></div><div class="h-4 tile"></div><div class="h-4 tile"></div><div class="h-4 tile"></div>
+                </div>
+                <div class="mt-2 opacity-60" style="font-size:9px">Drag to set hours · ▨ booked, outside hours (kept)</div>
+              </div></div></div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">Weekly grid</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Shows the out-of-hours appointment in place, genuinely the clearest picture. But
+            drag-to-select on a phone is hard to get right and harder to make keyboard-operable —
+            real CQ-5 risk on the lowest-weighted rubric row.
+          </p>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-3">Queue this answer</button>
+    </form>
+  </div>
+</section>
+
+<!-- ══════════════════ PART 2 · SCREEN GALLERY ══════════════════ -->
+<div class="divider text-sm text-base-content/50">part 2 · the full screen set</div>
+
+<div role="alert" class="alert alert-soft alert-info text-sm">
+  <span>
+    <strong>These are drawn as specified, not as options.</strong> They show what the recommended
+    decisions above produce. Annotate any screen you want changed and it becomes a correction to
+    <code>UX_SPEC.md</code>. Failure and empty states are included deliberately — the PRD grades
+    them (EC-1 to EC-12) and a happy-path-only submission is meant to visibly fail there.
+  </span>
+</div>
+
+<h2 class="text-2xl font-bold" id="foundation">Foundation</h2>
+
+<!-- S1 login -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S1 · Register and sign in <code class="text-primary text-xs">/login</code> <code class="text-primary text-xs">/register</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-1</span><span class="badge badge-soft badge-xs">SEC-7</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Sign in</div>
+        <div class="body space-y-2">
+          <div><div class="opacity-60 mb-1">Email</div><div class="tile px-2 py-1.5">rosa@example.test</div></div>
+          <div><div class="opacity-60 mb-1">Password</div><div class="tile px-2 py-1.5">••••••••••</div></div>
+          <div class="btn btn-primary btn-xs btn-block">Sign in</div>
+          <div class="divider my-1" style="font-size:9px">or</div>
+          <div class="btn btn-xs btn-outline btn-block">Create an account</div>
+          <p class="opacity-50" style="font-size:9px">Sessions expire after inactivity.</p>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/login</span></div>
+        <div class="screen"><div class="body flex items-center justify-center">
+          <div style="width:250px" class="space-y-2">
+            <div class="font-bold" style="font-size:13px">Sign in</div>
+            <p class="opacity-60">Access your ultrasound images and reports.</p>
+            <div><div class="opacity-60 mb-1">Email</div><div class="tile px-2 py-1.5">rosa@example.test</div></div>
+            <div><div class="opacity-60 mb-1">Password</div><div class="tile px-2 py-1.5">••••••••••</div></div>
+            <div class="btn btn-primary btn-xs">Sign in</div>
+            <div class="opacity-60" style="font-size:9px">New here? Create an account</div>
+          </div>
+        </div></div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> Login is Supabase Auth (ADR-0004); this screen never sees a
+      password hash. Signing in alone unlocks nothing — every PHI route still requires S2.
+    </p>
+  </div>
+</section>
+
+<!-- S2 verify + lockout -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S2 · Identity verification, and the lockout <code class="text-primary text-xs">/verify</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-2</span><span class="badge badge-soft badge-xs">EC-1</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Verify your identity</div>
+        <div class="body space-y-2">
+          <p class="opacity-70">Confirm your details before viewing images or reports.</p>
+          <div><div class="opacity-60 mb-1">Patient ID</div><div class="tile px-2 py-1.5">PT-04471</div></div>
+          <div><div class="opacity-60 mb-1">Date of birth</div><div class="tile px-2 py-1.5">14 / 03 / 1988</div></div>
+          <div class="btn btn-primary btn-xs btn-block">Continue</div>
+        </div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Verify your identity</div>
+        <div class="body space-y-2">
+          <div class="alert alert-error alert-soft py-2 px-2 block" style="font-size:9.5px">
+            <div class="font-bold">We could not match those details.</div>
+            <div class="mt-1">Please check them and try again.</div></div>
+          <div><div class="opacity-60 mb-1">Patient ID</div><div class="tile px-2 py-1.5">PT-04471</div></div>
+          <div><div class="opacity-60 mb-1">Date of birth</div><div class="tile px-2 py-1.5">14 / 03 / 1988</div></div>
+          <div class="btn btn-primary btn-xs btn-block btn-disabled">Continue</div>
+          <p class="opacity-50" style="font-size:9px">Try again in a few minutes.</p>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/verify?next=/studies</span></div>
+        <div class="screen"><div class="body flex items-center justify-center gap-6">
+          <div style="width:220px" class="space-y-2">
+            <div class="font-bold" style="font-size:12px">Verify your identity</div>
+            <div><div class="opacity-60 mb-1">Patient ID</div><div class="tile px-2 py-1.5">PT-04471</div></div>
+            <div><div class="opacity-60 mb-1">Date of birth</div><div class="tile px-2 py-1.5">14 / 03 / 1988</div></div>
+            <div class="btn btn-primary btn-xs">Continue</div>
+          </div>
+          <div style="width:190px" class="space-y-2">
+            <div class="opacity-60 font-semibold">After 3 failed attempts</div>
+            <div class="alert alert-error alert-soft py-2 px-2 block" style="font-size:9.5px">
+              <div class="font-bold">We could not match those details.</div>
+              <div class="mt-1">Please check them and try again.</div></div>
+            <p class="opacity-50" style="font-size:9px">Identical wording. The response never says a lock is in effect.</p>
+          </div>
+        </div></div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation — this is the screen most likely to leak.</strong> The error is one string
+      for a wrong ID, a wrong date of birth, and an active lockout. It never says which field failed,
+      never hints at a partial match, and never says "locked" — saying so would confirm the patient
+      ID exists. 3 failures, 5-minute lock, counted per patient reference and per source (ADR-0008).
+    </p>
+  </div>
+</section>
+
+<h2 class="text-2xl font-bold" id="imaging">Priority 1 · Imaging <span class="badge badge-primary badge-sm align-middle">25 pts</span></h2>
+
+<!-- S3 studies list + empty -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S3 · Studies list, and first-run empty state <code class="text-primary text-xs">/studies</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-3</span><span class="badge badge-soft badge-xs">EC-12</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span class="font-bold">My imaging</span><span class="badge badge-success badge-xs">45m</span></div>
+        <div class="body space-y-1.5">
+          <div class="tile p-2"><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun 2026 · Dr Okafor</div><div class="opacity-60">6 images · 1 cine clip</div></div>
+          <div class="tile p-2"><div class="font-semibold">Renal ultrasound</div><div class="opacity-60">3 Apr 2026 · Dr Lee</div><div class="opacity-60">4 images</div></div>
+          <div class="tile p-2"><div class="font-semibold">Thyroid ultrasound</div><div class="opacity-60">18 Jan 2026 · Dr Okafor</div><div class="opacity-60">8 images · 2 cine clips</div></div>
+        </div>
+        <div class="tabbar"><div class="text-primary font-bold">▣<div>Imaging</div></div><div class="opacity-60">▤<div>Reports</div></div><div class="opacity-60">▦<div>Visits</div></div><div class="opacity-60">▧<div>Shares</div></div></div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">My imaging</div>
+        <div class="body flex items-center justify-center text-center">
+          <div class="space-y-2 px-2">
+            <div style="font-size:22px" class="opacity-30">▣</div>
+            <div class="font-semibold">No images yet</div>
+            <p class="opacity-60">Images appear here once a completed visit has been processed by the clinic.</p>
+          </div>
+        </div>
+        <div class="tabbar"><div class="text-primary font-bold">▣<div>Imaging</div></div><div class="opacity-60">▤<div>Reports</div></div><div class="opacity-60">▦<div>Visits</div></div><div class="opacity-60">▧<div>Shares</div></div></div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+        <div class="screen" style="flex-direction:row">
+          <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+            <div class="sideitem on">Imaging</div><div class="sideitem">Reports</div><div class="sideitem">Appointments</div><div class="sideitem">Shared links</div>
+            <div class="mt-3 badge badge-success badge-xs">Unlocked 45m</div></div>
+          <div class="flex-1 body">
+            <div class="font-bold mb-2" style="font-size:12px">My imaging</div>
+            <div class="grid grid-cols-3 gap-2">
+              <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun · 6 img · 1 clip</div></div>
+              <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Renal ultrasound</div><div class="opacity-60">3 Apr · 4 img</div></div>
+              <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Thyroid ultrasound</div><div class="opacity-60">18 Jan · 8 img · 2 clips</div></div>
+            </div>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> Only studies from <em>completed</em> visits appear — scheduled and
+      cancelled visits are invisible here (FR-3). The empty state is a real requirement, not polish:
+      EC-12 grades first-run rendering, and a list that errors on zero rows fails it.
+    </p>
+  </div>
+</section>
+
+<!-- S4 image viewer -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S4 · Image viewer with zoom and pan <code class="text-primary text-xs">/studies/[id]</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-3</span><span class="badge badge-soft badge-xs">EC-3</span><span class="badge badge-soft badge-xs">EC-4</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">3 / 6</span></div>
+        <div class="flex-1 frameimg">image 3 of 6</div>
+        <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+          <div class="flex gap-1 overflow-hidden">
+            <div class="tile" style="width:30px;height:24px"></div><div class="tile" style="width:30px;height:24px"></div>
+            <div class="tile ring-2 ring-primary" style="width:30px;height:24px"></div><div class="tile" style="width:30px;height:24px"></div>
+            <div class="tile" style="width:30px;height:24px"></div><div class="tile" style="width:30px;height:24px"></div>
+          </div>
+          <div class="flex justify-between">
+            <div class="flex gap-1"><div class="btn btn-xs btn-square">−</div><div class="btn btn-xs">100%</div><div class="btn btn-xs btn-square">+</div></div>
+            <div class="btn btn-xs btn-outline">Share</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">3 / 6</span></div>
+        <div class="flex-1 frameimg" style="position:relative">
+          <div class="skeleton" style="position:absolute;inset:0;opacity:.15"></div>
+          <div style="position:relative;text-align:center">
+            <div class="loading loading-spinner loading-xs" style="color:rgba(255,255,255,.6)"></div>
+            <div style="font-size:9px;margin-top:4px">Loading full resolution…</div>
+          </div>
+        </div>
+        <div class="p-2" style="background:var(--color-base-200)">
+          <div class="opacity-60" style="font-size:9px">Preview shown first · full image still downloading</div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies/8f2…</span></div>
+        <div class="screen">
+          <div class="bar flex justify-between"><span>‹ OB ultrasound · 12 Jun 2026 · Dr Okafor</span><span class="opacity-60">Rosa Delgado · PT-04471</span></div>
+          <div class="flex-1 flex">
+            <div style="width:74px;background:var(--color-base-200);padding:6px" class="space-y-1">
+              <div class="tile" style="height:40px"></div><div class="tile" style="height:40px"></div>
+              <div class="tile ring-2 ring-primary" style="height:40px"></div><div class="tile" style="height:40px"></div>
+            </div>
+            <div class="flex-1 frameimg">image 3 of 6</div>
+            <div style="width:130px;background:var(--color-base-200);padding:8px" class="space-y-2">
+              <div class="font-semibold">View</div>
+              <div class="flex gap-1"><div class="btn btn-xs btn-square">−</div><div class="btn btn-xs">100%</div><div class="btn btn-xs btn-square">+</div></div>
+              <div class="btn btn-xs btn-outline btn-block">Reset</div>
+              <div class="divider my-0"></div>
+              <div class="btn btn-xs btn-primary btn-block">Share image</div>
+              <div class="btn btn-xs btn-outline btn-block">View cine clip</div>
+            </div>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> Second phone frame is EC-3: a thumbnail appears immediately and the
+      full image streams in behind a visible loading state — the UI never freezes on a full download.
+      Zoom and pan are pinch/drag on touch and buttons plus arrow keys on desktop, because CQ-5
+      requires the same capability from the keyboard.
+    </p>
+  </div>
+</section>
+
+<!-- S5 cine -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S5 · Cine viewer, and a corrupt manifest <code class="text-primary text-xs">/studies/[id]/clips/[id]</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-4</span><span class="badge badge-soft badge-xs">EC-2</span><span class="badge badge-soft badge-xs">EC-4</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 1/2</span></div>
+        <div class="flex-1 frameimg">frame 34 / 100</div>
+        <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+          <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+          <div class="flex items-center justify-between">
+            <div class="flex gap-1.5"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+            <div class="flex items-center gap-1"><span class="opacity-60" style="font-size:9px">FPS</span><div class="btn btn-xs">12</div></div>
+          </div>
+        </div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 2/2</span></div>
+        <div class="flex-1 flex items-center justify-center" style="background:var(--color-base-300)">
+          <div class="text-center opacity-60"><div style="font-size:20px">⃠</div><div style="font-size:9px;margin-top:4px">Frame 47 unavailable</div></div>
+        </div>
+        <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+          <div class="h-1 rounded relative" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)">
+            <div class="h-1 rounded bg-primary" style="width:47%"></div>
+            <div style="position:absolute;left:47%;top:-2px;width:3px;height:5px;background:var(--color-warning);border-radius:1px"></div>
+            <div style="position:absolute;left:62%;top:-2px;width:3px;height:5px;background:var(--color-warning);border-radius:1px"></div>
+          </div>
+          <div class="flex items-center justify-between">
+            <div class="flex gap-1.5"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+            <div class="btn btn-xs">12</div>
+          </div>
+          <div class="alert alert-warning alert-soft py-1 px-2" style="font-size:9px">2 of 100 frames unavailable — playback continues</div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies/8f2…/clips/a41…</span></div>
+        <div class="screen">
+          <div class="bar flex justify-between"><span>‹ OB ultrasound · Clip 1 of 2</span><span class="opacity-60">Rosa Delgado · PT-04471</span></div>
+          <div class="flex-1 flex">
+            <div class="flex-1 frameimg">frame 34 / 100</div>
+            <div style="width:150px;background:var(--color-base-200);padding:8px" class="space-y-2">
+              <div class="font-semibold">Playback</div>
+              <div class="flex gap-1"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+              <div><div class="opacity-60" style="font-size:9px">Frames per second</div><div class="tile px-2 py-1">12</div></div>
+              <div><div class="opacity-60" style="font-size:9px">Frame</div><div class="tile px-2 py-1">34 of 100</div></div>
+              <div class="alert alert-warning alert-soft py-1 px-2 block" style="font-size:9px">2 frames unavailable</div>
+              <div class="btn btn-xs btn-outline btn-block">Share this clip</div>
+            </div>
+          </div>
+          <div class="p-2" style="background:var(--color-base-200)">
+            <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation — EC-2 is the second frame.</strong> A missing frame shows a gap placeholder
+      and a marker on the scrubber; playback keeps going and the viewer never crashes. The API returns
+      that frame as <code>available: false</code> with no URL, so the client is not guessing from a
+      failed image load. FPS is a real control, defaulting to 12 and stated in the README (FR-4).
+    </p>
+  </div>
+</section>
+
+<h2 class="text-2xl font-bold" id="reports">Priority 2 · Reports <span class="badge badge-primary badge-sm align-middle">15 pts</span></h2>
+
+<!-- S6 reports list + viewer -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S6 · Reports list and report viewer <code class="text-primary text-xs">/reports</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-7</span><span class="badge badge-soft badge-xs">CQ-5</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">My reports</div>
+        <div class="body space-y-1.5">
+          <div class="tile p-2"><div class="flex justify-between"><span class="font-semibold">OB ultrasound</span><span class="badge badge-success badge-xs">Signed</span></div><div class="opacity-60">Signed 14 Jun by Dr A Okafor</div></div>
+          <div class="tile p-2"><div class="flex justify-between"><span class="font-semibold">Renal ultrasound</span><span class="badge badge-success badge-xs">Signed</span></div><div class="opacity-60">Signed 5 Apr by Dr S Lee</div></div>
+        </div>
+        <div class="tabbar"><div class="opacity-60">▣<div>Imaging</div></div><div class="text-primary font-bold">▤<div>Reports</div></div><div class="opacity-60">▦<div>Visits</div></div><div class="opacity-60">▧<div>Shares</div></div></div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span>‹ Report</span><span class="btn btn-xs btn-outline">Share</span></div>
+        <div class="body space-y-2" style="overflow-y:hidden">
+          <div class="tile p-2 space-y-0.5" style="font-size:9.5px">
+            <div class="flex justify-between"><span class="opacity-60">Patient</span><span>Rosa Delgado · PT-04471</span></div>
+            <div class="flex justify-between"><span class="opacity-60">Study</span><span>OB ultrasound · 12 Jun</span></div>
+            <div class="flex justify-between"><span class="opacity-60">Signed</span><span>14 Jun · Dr A Okafor</span></div>
+          </div>
+          <div><div class="font-bold">Findings</div><p class="opacity-75">Single intrauterine gestation. Fetal cardiac activity present at 148 bpm. Placenta posterior, clear of the internal os. Amniotic fluid volume within normal limits.</p></div>
+          <div><div class="font-bold">Impression</div><p class="opacity-75">Normal second-trimester obstetric ultrasound. No abnormality identified.</p></div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/reports/c19…</span></div>
+        <div class="screen" style="flex-direction:row">
+          <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+            <div class="sideitem">Imaging</div><div class="sideitem on">Reports</div><div class="sideitem">Appointments</div><div class="sideitem">Shared links</div></div>
+          <div class="flex-1 body space-y-2">
+            <div class="flex justify-between items-start">
+              <div><div class="font-bold" style="font-size:12px">OB ultrasound report</div>
+              <div class="opacity-60" style="font-size:9px">Rosa Delgado · PT-04471 · study 12 Jun 2026</div></div>
+              <div class="flex gap-1"><div class="btn btn-xs btn-outline">Print</div><div class="btn btn-xs btn-primary">Share</div></div>
+            </div>
+            <div class="tile p-2 flex gap-4" style="font-size:9.5px">
+              <span><span class="opacity-60">Status</span> <span class="badge badge-success badge-xs">Signed</span></span>
+              <span><span class="opacity-60">Signed by</span> Dr A Okafor</span>
+              <span><span class="opacity-60">Signed at</span> 14 Jun 2026 09:12</span>
+            </div>
+            <div><div class="font-bold">Findings</div><p class="opacity-75">Single intrauterine gestation. Fetal cardiac activity present at 148 bpm. Placenta posterior, clear of the internal os. Amniotic fluid volume within normal limits. No adnexal abnormality.</p></div>
+            <div><div class="font-bold">Impression</div><p class="opacity-75">Normal second-trimester obstetric ultrasound. No abnormality identified. Routine follow-up as clinically indicated.</p></div>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> Structured text, not a PDF (ADR-0007) — which is why it reflows at
+      phone width, is keyboard-navigable, and prints cleanly. <strong>Preliminary reports never
+      appear in this list and 404 if their URL is guessed</strong>, enforced by an RLS predicate as
+      well as by the query (FR-7).
+    </p>
+  </div>
+</section>
+
+<!-- S7 share landing -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S7 · What the recipient sees <code class="text-primary text-xs">/s/[token]</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-5</span><span class="badge badge-soft badge-xs">FR-8</span><span class="badge badge-soft badge-xs">EC-5</span><span class="badge badge-soft badge-xs">SEC-8</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span class="font-bold">Shared securely</span><span class="opacity-60">41 h left</span></div>
+        <div class="body space-y-2">
+          <div class="alert alert-info alert-soft py-1.5 px-2" style="font-size:9px">Shared with you by a patient. This link expires and can be revoked.</div>
+          <div class="tile p-2" style="font-size:9.5px"><div class="flex justify-between"><span class="opacity-60">Study</span><span>OB ultrasound</span></div>
+            <div class="flex justify-between"><span class="opacity-60">Signed</span><span>14 Jun · Dr A Okafor</span></div></div>
+          <div><div class="font-bold">Findings</div><p class="opacity-75">Single intrauterine gestation. Fetal cardiac activity present at 148 bpm…</p></div>
+        </div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Link unavailable</div>
+        <div class="body flex items-center justify-center text-center">
+          <div class="space-y-2 px-3">
+            <div style="font-size:22px" class="opacity-30">⃠</div>
+            <div class="font-semibold">This link is no longer available</div>
+            <p class="opacity-60">Secure links expire and can be revoked by the person who shared them. Ask them to send a new one.</p>
+          </div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/s/9f4c2e…</span></div>
+        <div class="screen">
+          <div class="bar flex justify-between"><span class="font-bold">Shared securely</span><span class="opacity-60">Expires in 41 hours</span></div>
+          <div class="body space-y-2">
+            <div class="alert alert-info alert-soft py-1.5 px-2" style="font-size:9.5px">This report was shared with you by a patient. The link is time-limited, revocable, and its use is recorded.</div>
+            <div class="font-bold" style="font-size:12px">OB ultrasound report</div>
+            <div class="tile p-2 flex gap-4" style="font-size:9.5px">
+              <span><span class="opacity-60">Signed by</span> Dr A Okafor</span><span><span class="opacity-60">Signed at</span> 14 Jun 2026</span></div>
+            <div><div class="font-bold">Findings</div><p class="opacity-75">Single intrauterine gestation. Fetal cardiac activity present at 148 bpm. Placenta posterior, clear of the internal os.</p></div>
+            <div><div class="font-bold">Impression</div><p class="opacity-75">Normal second-trimester obstetric ultrasound.</p></div>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation — the highest-risk page in the build.</strong> The only PHI-bearing route
+      reachable without a session. It shows the one shared resource and nothing else: no patient
+      navigation, no sibling studies, no way to reach another resource. <code>noindex</code>.
+      <strong>Expired, revoked, and never-existed all render the identical second screen</strong> —
+      any difference between them confirms the link once existed (EC-5).
+    </p>
+  </div>
+</section>
+
+<h2 class="text-2xl font-bold" id="sched">Priority 3 · Scheduling <span class="badge badge-neutral badge-sm align-middle">10 pts</span></h2>
+
+<!-- S8 booking -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S8 · Slot discovery, booking, and losing the race <code class="text-primary text-xs">/book</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-11</span><span class="badge badge-soft badge-xs">FR-12</span><span class="badge badge-soft badge-xs">EC-6</span><span class="badge badge-soft badge-xs">EC-7</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Book a visit</div>
+        <div class="body space-y-1.5">
+          <div class="tile px-2 py-1.5 flex justify-between"><span class="opacity-60">Provider</span><span>Dr A Okafor ▾</span></div>
+          <div class="opacity-60" style="font-size:9px">Times in your zone (Europe/London). Provider is in America/Chicago.</div>
+          <div class="font-semibold mt-1">Tue 15 Sep</div>
+          <div class="grid grid-cols-3 gap-1">
+            <div class="btn btn-xs">15:00</div><div class="btn btn-xs">15:30</div><div class="btn btn-xs btn-primary">16:00</div>
+            <div class="btn btn-xs">16:30</div><div class="btn btn-xs">17:00</div><div class="btn btn-xs">17:30</div>
+          </div>
+          <div class="tile p-2 mt-1" style="font-size:9px"><div class="font-semibold">16:00 BST</div><div class="opacity-60">10:00 CDT for Dr Okafor</div></div>
+          <div class="btn btn-primary btn-xs btn-block">Confirm booking</div>
+        </div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Book a visit</div>
+        <div class="body space-y-2">
+          <div class="alert alert-error alert-soft py-2 px-2 block" style="font-size:9.5px">
+            <div class="font-bold">That slot is no longer available.</div>
+            <div class="mt-1">Someone booked it moments ago. Please choose another time.</div></div>
+          <div class="font-semibold">Tue 15 Sep</div>
+          <div class="grid grid-cols-3 gap-1">
+            <div class="btn btn-xs">15:00</div><div class="btn btn-xs">15:30</div><div class="btn btn-xs btn-disabled">16:00</div>
+            <div class="btn btn-xs">16:30</div><div class="btn btn-xs">17:00</div><div class="btn btn-xs">17:30</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/book</span></div>
+        <div class="screen" style="flex-direction:row">
+          <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+            <div class="sideitem">Imaging</div><div class="sideitem">Reports</div><div class="sideitem on">Appointments</div><div class="sideitem">Shared links</div></div>
+          <div class="flex-1 body space-y-2">
+            <div class="flex gap-2 items-center"><span class="font-bold" style="font-size:12px">Book a visit</span>
+              <span class="tile px-2 py-1">Dr A Okafor ▾</span><span class="tile px-2 py-1">Obstetric ultrasound ▾</span></div>
+            <div class="opacity-60" style="font-size:9px">Times shown in Europe/London. Dr Okafor is in America/Chicago.</div>
+            <div class="grid grid-cols-4 gap-2">
+              <div><div class="font-semibold mb-1">Mon 14</div><div class="space-y-1"><div class="btn btn-xs btn-block">15:00</div><div class="btn btn-xs btn-block">15:30</div></div></div>
+              <div><div class="font-semibold mb-1">Tue 15</div><div class="space-y-1"><div class="btn btn-xs btn-block">15:00</div><div class="btn btn-xs btn-block btn-primary">16:00</div><div class="btn btn-xs btn-block">16:30</div></div></div>
+              <div><div class="font-semibold mb-1">Wed 16</div><div class="opacity-40" style="font-size:9px">No open times</div></div>
+              <div><div class="font-semibold mb-1">Thu 17</div><div class="space-y-1"><div class="btn btn-xs btn-block">15:00</div><div class="btn btn-xs btn-block">17:00</div></div></div>
+            </div>
+            <div class="tile p-2 flex justify-between items-center"><div><div class="font-semibold">Tue 15 Sep, 16:00 BST</div><div class="opacity-60" style="font-size:9px">10:00 CDT for Dr Okafor</div></div><div class="btn btn-xs btn-primary">Confirm booking</div></div>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation — EC-6 is the dual-zone line.</strong> Every time is shown in the viewer's
+      zone with the abbreviation, and the confirmation additionally shows the provider's local time,
+      so neither side can misread it. The second frame is EC-7 and FR-12: the loser of a concurrent
+      booking gets a plain "no longer available" and the slot greys out — never a stack trace, never a
+      silent double-book. Confirm carries a client-generated idempotency key, so a double-tap creates
+      at most one appointment (EC-10).
+    </p>
+  </div>
+</section>
+
+<!-- S9 appointments -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S9 · My appointments <code class="text-primary text-xs">/appointments</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-13</span><span class="badge badge-soft badge-xs">FR-14</span><span class="badge badge-soft badge-xs">EC-8</span><span class="badge badge-soft badge-xs">EC-11</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">My appointments</div>
+        <div class="body space-y-1.5">
+          <div class="tile p-2 space-y-1">
+            <div class="flex justify-between"><span class="font-semibold">Tue 15 Sep · 16:00</span><span class="badge badge-info badge-xs">Confirmed</span></div>
+            <div class="opacity-60">Dr A Okafor · obstetric ultrasound</div>
+            <div class="flex gap-1"><div class="btn btn-xs btn-outline">Reschedule</div><div class="btn btn-xs btn-outline">Cancel</div></div>
+          </div>
+          <div class="tile p-2 space-y-1">
+            <div class="flex justify-between"><span class="font-semibold">Mon 17 Aug · 16:00</span><span class="badge badge-warning badge-xs">Outside hours</span></div>
+            <div class="opacity-60">Dr A Okafor · your appointment is unaffected</div>
+            <div class="flex gap-1"><div class="btn btn-xs btn-outline">Reschedule</div><div class="btn btn-xs btn-outline">Cancel</div></div>
+          </div>
+          <div class="tile p-2 space-y-1">
+            <div class="flex justify-between"><span class="font-semibold">Tomorrow · 09:00</span><span class="badge badge-info badge-xs">Confirmed</span></div>
+            <div class="opacity-60">Dr S Lee · renal ultrasound</div>
+            <div class="alert alert-warning alert-soft py-1 px-2" style="font-size:9px">Changes are not allowed within 24 hours of the start. Call the clinic.</div>
+          </div>
+        </div>
+        <div class="tabbar"><div class="opacity-60">▣<div>Imaging</div></div><div class="opacity-60">▤<div>Reports</div></div><div class="text-primary font-bold">▦<div>Visits</div></div><div class="opacity-60">▧<div>Shares</div></div></div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/appointments</span></div>
+        <div class="screen" style="flex-direction:row">
+          <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+            <div class="sideitem">Imaging</div><div class="sideitem">Reports</div><div class="sideitem on">Appointments</div><div class="sideitem">Shared links</div></div>
+          <div class="flex-1 body">
+            <div class="flex justify-between items-center mb-2"><span class="font-bold" style="font-size:12px">My appointments</span><span class="btn btn-xs btn-primary">Book a visit</span></div>
+            <table class="table table-xs"><thead><tr><th>When</th><th>Provider</th><th>Status</th><th></th></tr></thead><tbody>
+              <tr><td>Tue 15 Sep · 16:00 BST</td><td>Dr A Okafor</td><td><span class="badge badge-info badge-xs">Confirmed</span></td><td class="flex gap-1"><span class="btn btn-xs btn-outline">Reschedule</span><span class="btn btn-xs btn-outline">Cancel</span></td></tr>
+              <tr><td>Mon 17 Aug · 16:00 BST</td><td>Dr A Okafor</td><td><span class="badge badge-warning badge-xs">Outside hours</span></td><td class="flex gap-1"><span class="btn btn-xs btn-outline">Reschedule</span><span class="btn btn-xs btn-outline">Cancel</span></td></tr>
+              <tr><td>Tomorrow · 09:00 BST</td><td>Dr S Lee</td><td><span class="badge badge-info badge-xs">Confirmed</span></td><td class="opacity-60" style="font-size:9px">Within 24 h — call the clinic</td></tr>
+              <tr><td>3 Apr · 11:00</td><td>Dr S Lee</td><td><span class="badge badge-ghost badge-xs">Completed</span></td><td></td></tr>
+              <tr><td>2 Feb · 14:00</td><td>Dr A Okafor</td><td><span class="badge badge-ghost badge-xs">Cancelled</span></td><td></td></tr>
+            </tbody></table>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> "Outside hours" is ADR-0006's flag — the provider shrank their
+      hours, the appointment survived and is annotated. It never blocks a reschedule or cancel; it is
+      information, not a lock. The 24-hour notice rule is rendered from the server's own
+      <code>canChange</code> and <code>changeDeadline</code>, never re-derived client-side. Status is
+      carried by a word as well as a colour (CQ-5).
+    </p>
+  </div>
+</section>
+
+<!-- S10 provider schedule -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S10 · Provider schedule <code class="text-primary text-xs">/provider/schedule</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">FR-10</span><span class="badge badge-soft badge-xs">FR-14</span><span class="badge badge-soft badge-xs">SEC-2</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar flex justify-between"><span class="font-bold">Today</span><span class="opacity-60">Tue 15 Sep</span></div>
+        <div class="body space-y-1.5">
+          <div class="tile p-2 space-y-0.5"><div class="flex justify-between"><span class="font-semibold">09:00</span><span class="badge badge-ghost badge-xs">Completed</span></div><div class="opacity-60">PT-04471 · obstetric</div></div>
+          <div class="tile p-2 space-y-0.5"><div class="flex justify-between"><span class="font-semibold">10:00</span><span class="badge badge-info badge-xs">Confirmed</span></div><div class="opacity-60">PT-01192 · renal</div>
+            <div class="flex gap-1 mt-1"><div class="btn btn-xs btn-outline">Complete</div><div class="btn btn-xs btn-outline">No-show</div></div></div>
+          <div class="tile p-2 space-y-0.5 opacity-60"><div class="flex justify-between"><span class="font-semibold">10:30</span><span>Open</span></div></div>
+          <div class="tile p-2 space-y-0.5"><div class="flex justify-between"><span class="font-semibold">16:00</span><span class="badge badge-warning badge-xs">Outside hours</span></div><div class="opacity-60">PT-04471 · obstetric</div></div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/provider/schedule</span></div>
+        <div class="screen" style="flex-direction:row">
+          <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Dr A Okafor</div>
+            <div class="sideitem on">Schedule</div><div class="sideitem">Availability</div><div class="sideitem">Patients</div>
+            <div class="mt-3 opacity-60" style="font-size:9px">America/Chicago</div></div>
+          <div class="flex-1 body">
+            <div class="font-bold mb-2" style="font-size:12px">Tue 15 September</div>
+            <table class="table table-xs"><thead><tr><th>Time</th><th>Patient</th><th>Service</th><th>Status</th><th></th></tr></thead><tbody>
+              <tr><td>09:00</td><td>PT-04471</td><td>Obstetric</td><td><span class="badge badge-ghost badge-xs">Completed</span></td><td></td></tr>
+              <tr><td>10:00</td><td>PT-01192</td><td>Renal</td><td><span class="badge badge-info badge-xs">Confirmed</span></td><td class="flex gap-1"><span class="btn btn-xs btn-outline">Complete</span><span class="btn btn-xs btn-outline">No-show</span></td></tr>
+              <tr class="opacity-50"><td>10:30</td><td colspan="4">Open</td></tr>
+              <tr class="opacity-50"><td>11:00</td><td colspan="4">Open</td></tr>
+              <tr><td>16:00</td><td>PT-04471</td><td>Obstetric</td><td><span class="badge badge-warning badge-xs">Outside hours</span></td><td></td></tr>
+            </tbody></table>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> Patients appear by reference, never by name or date of birth — a
+      provider screen is still a PHI surface, and reference-only keeps it consistent with the
+      no-PHI-in-logs discipline (SEC-6). A provider sees only their own schedule (SEC-2). "No-show"
+      is offered only on a confirmed appointment whose start has passed (EC-11).
+    </p>
+  </div>
+</section>
+
+<h2 class="text-2xl font-bold" id="ops">Compliance and failure states</h2>
+
+<!-- S11 audit -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S11 · Audit log <code class="text-primary text-xs">/admin/audit</code></h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">SEC-4</span><span class="badge badge-soft badge-xs">SEC-6</span><span class="badge badge-soft badge-xs">FR-6</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Audit log</div>
+        <div class="body space-y-1" style="font-size:9px">
+          <div class="tile p-1.5"><div class="flex justify-between"><span class="font-semibold">clip.view</span><span class="badge badge-success badge-xs">granted</span></div><div class="opacity-60">acct 8f2a… → clip a41c… · 14:02:11</div></div>
+          <div class="tile p-1.5"><div class="flex justify-between"><span class="font-semibold">image.view</span><span class="badge badge-error badge-xs">denied</span></div><div class="opacity-60">acct 8f2a… → image 77b1… · 14:01:48</div></div>
+          <div class="tile p-1.5"><div class="flex justify-between"><span class="font-semibold">share.use</span><span class="badge badge-success badge-xs">granted</span></div><div class="opacity-60">link 9f4c… → report c19d… · 13:58:02</div></div>
+          <div class="tile p-1.5"><div class="flex justify-between"><span class="font-semibold">identity.lockout</span><span class="badge badge-error badge-xs">denied</span></div><div class="opacity-60">src 4a2f… · 13:55:19</div></div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/admin/audit</span></div>
+        <div class="screen" style="flex-direction:row">
+          <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Front desk</div>
+            <div class="sideitem">Schedule</div><div class="sideitem on">Audit log</div>
+            <div class="mt-3 opacity-60" style="font-size:9px">Append-only</div></div>
+          <div class="flex-1 body">
+            <div class="font-bold mb-2" style="font-size:12px">PHI access and booking changes</div>
+            <table class="table table-xs"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody>
+              <tr><td>14:02:11</td><td>acct 8f2a…</td><td>clip.view</td><td>clip a41c…</td><td><span class="badge badge-success badge-xs">granted</span></td></tr>
+              <tr><td>14:01:48</td><td>acct 8f2a…</td><td>image.view</td><td>image 77b1…</td><td><span class="badge badge-error badge-xs">denied</span></td></tr>
+              <tr><td>13:58:02</td><td>link 9f4c…</td><td>share.use</td><td>report c19d…</td><td><span class="badge badge-success badge-xs">granted</span></td></tr>
+              <tr><td>13:55:19</td><td>src 4a2f…</td><td>identity.lockout</td><td>—</td><td><span class="badge badge-error badge-xs">denied</span></td></tr>
+              <tr><td>13:51:07</td><td>acct 3c88…</td><td>booking.cancel</td><td>appt 21ef…</td><td><span class="badge badge-success badge-xs">granted</span></td></tr>
+            </tbody></table>
+          </div>
+        </div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> Identifiers only — no names, no dates of birth, no health context
+      (SEC-6). <strong>Denials are logged as well as grants</strong>, which is what makes the FR-6 and
+      FR-9 adversarial tests provable: the rejected attempt has a row. The table is append-only by
+      grant, not by convention — the application role has no UPDATE or DELETE on it.
+    </p>
+  </div>
+</section>
+
+<!-- S12 degraded -->
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="card-title text-base">S12 · When a dependency fails</h3>
+      <div class="flex gap-1"><span class="badge badge-soft badge-xs">EC-12</span><span class="badge badge-soft badge-xs">CQ-3</span></div>
+    </div>
+    <div class="gallery">
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">My imaging</div>
+        <div class="body flex items-center justify-center text-center">
+          <div class="space-y-2 px-3">
+            <div style="font-size:20px" class="opacity-30">⚠</div>
+            <div class="font-semibold">Images are temporarily unavailable</div>
+            <p class="opacity-60">We could not reach the image store. Your data is safe. Please try again in a few minutes.</p>
+            <div class="btn btn-xs btn-outline">Try again</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="phone only-mob"><div class="screen">
+        <div class="bar font-bold">Share a report</div>
+        <div class="body space-y-2">
+          <div class="alert alert-warning alert-soft py-2 px-2 block" style="font-size:9.5px">
+            <div class="font-bold">We could not send that email.</div>
+            <div class="mt-1">The link was created and is active. We will retry delivery, or you can copy it below.</div></div>
+          <div class="tile px-2 py-1.5" style="font-size:9px">https://…/s/9f4c2e…</div>
+          <div class="btn btn-xs btn-outline btn-block">Copy link</div>
+        </div>
+      </div></div>
+      <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/api/health</span></div>
+        <div class="screen"><div class="body">
+          <div class="font-bold mb-2" style="font-size:12px">Health check · GET /api/health → 200</div>
+          <pre class="tile p-2" style="font-size:9px">{
+  "app":      "ok",
+  "database": "ok",
+  "storage":  "down"
+}</pre>
+          <p class="opacity-60 mt-2" style="font-size:9.5px">Returns 200 even when a dependency is down — the body carries the state, so an uptime check can distinguish "the app is gone" from "the app is up and reporting a degraded dependency" (CQ-3, PF-9).</p>
+        </div></div></div>
+    </div>
+    <p class="note text-base-content/60">
+      <strong>Annotation.</strong> EC-12 in three shapes: storage unreachable degrades to a clear
+      message rather than an unhandled 500; a failed Resend send does <em>not</em> roll back the share
+      link, because the link is the durable thing and the email is a delivery attempt; and the health
+      endpoint reports per-dependency state. Every one of these writes a structured server-side log
+      containing no PHI.
+    </p>
+  </div>
+</section>
+
+<section class="card card-border bg-base-100">
+  <div class="card-body gap-2">
+    <h2 class="card-title text-lg">After this</h2>
+    <p class="text-sm text-base-content/70">
+      Your five answers plus any screen annotations become <code>UX_SPEC.md</code> — the source of
+      truth the build's UI gate checks against. Then the phase-1 exit test: a fresh agent that has
+      never seen this conversation tries to draft the whole ticket breakdown from the documents
+      alone, and reports only questions that would make two engineers build incompatible things.
+    </p>
+    <p class="text-sm text-base-content/50">Queue each decision, annotate any screen, then press <strong>Send to Agent</strong>.</p>
+  </div>
+</section>
+
+</main>
+<script>
+  document.querySelectorAll('[data-view-btn]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('[data-view-btn]').forEach(function (x) { x.classList.remove('tab-active'); });
+      b.classList.add('tab-active');
+      document.body.dataset.view = b.dataset.viewBtn;
+    });
+  });
+  function qp(prompt, opts) {
+    if (window.lavish && window.lavish.queuePrompt) {
+      window.lavish.queuePrompt(prompt, opts);
+      if (opts && opts.element) {
+        opts.element.classList.add('queued');
+        var b = opts.element.querySelector('button[type=submit]');
+        if (b) { b.classList.remove('btn-primary'); b.classList.add('btn-success'); b.textContent = 'Queued ✓'; }
+      }
+    } else { console.log('[lavish not attached] would queue:', prompt); }
+  }
+</script>
+</body>
+</html>
