@@ -44,8 +44,15 @@ identity_attempts
   source_ref                          coarse client identifier
   succeeded
   attempted_at
-  locked_until     nullable            EC-1
 ```
+
+**The lockout is derived, not stored.** An earlier sketch of this ADR carried a
+`locked_until` column; the pinned schema in `ARCHITECTURE.md` §3 does not, and
+that is deliberate. Whether a caller is locked is a count of failed attempts in
+the trailing window, computed at check time from `attempted_at`. A stored
+`locked_until` would be a second source of truth that a missed write leaves
+stale — the same class of defect as a hand-maintained `slots.status`.
+`ARCHITECTURE.md` §3 is the pinned surface; this block is illustrative.
 
 Every PHI route re-reads the unlock server-side through the single
 `lib/access` guard described in ADR-0003. The client never holds anything that

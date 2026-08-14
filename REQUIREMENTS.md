@@ -23,7 +23,7 @@ Status vocabulary:
 
 | ID | Requirement | Acceptance criterion |
 |----|-------------|----------------------|
-| **FR-1** | Patient registration & authentication | A new patient can register and log in. Passwords are hashed, never stored in plaintext. Sessions expire. An unauthenticated request to any patient resource is rejected. |
+| **FR-1** | Patient registration & authentication | A new patient can register, log in, **and manage a basic profile**. Passwords are hashed, never stored in plaintext. Sessions expire. An unauthenticated request to any patient resource is rejected. |
 
 ### Priority 1 — Image access & secure sharing (primary focus)
 
@@ -31,8 +31,8 @@ Status vocabulary:
 |----|-------------|----------------------|
 | **FR-2** | Patient identity verification | Before any image **or report** unlocks, the patient enters a pre-existing Patient/Account ID plus date of birth that must match a seeded record. A correct match unlocks that patient's own studies and reports only. An incorrect match returns one generic error that never reveals which field was wrong. Repeated failed attempts are rate-limited or locked. |
 | **FR-3** | View my images | A patient sees only images tied to their own verified identity and to completed (not future, not cancelled) visits. Images render with basic zoom and pan. |
-| **FR-4** | Cine (multi-frame) playback | A cine clip is a JSON manifest referencing up to 100 sequentially ordered frame image files. The viewer provides play/pause, next/previous frame, and an FPS control. A 100-frame clip plays back with no visible dropped frames at its default rate (10–15 FPS, stated in the README). |
-| **FR-5** | Share an image via secure link | Generating a link sends it by email via Resend (required). The sharer can revoke an active link from their portal. The link expires after a stated window (24–72 h). Once expired or revoked it returns a clear "no longer available" response and never the image. |
+| **FR-4** | Cine (multi-frame) playback | A cine clip is a JSON manifest referencing up to 100 sequentially ordered frame image files. The viewer provides play/pause, next/previous frame, and an FPS control. A 100-frame clip plays back with no visible dropped frames at its default rate (**e.g.** 10–15 FPS — the PRD's illustration; what is required is that the rate is *stated* in the README). |
+| **FR-5** | Share an image via secure link | Generating a link sends it by email via Resend (required). The sharer can revoke an active link from their portal. The link expires after a stated window (**e.g.** 24–72 h — the PRD's illustration; what is required is that the window is *stated*). See §Stated parameters. Once expired or revoked it returns a clear "no longer available" response and never the image. |
 | **FR-6** | No cross-patient image access | An automated test attempts access to another patient's image by guessing/incrementing IDs and by reusing an expired or foreign share link. Every attempt is rejected server-side and logged. Graded with the rigor of a security vulnerability. |
 
 ### Priority 2 — Report & document delivery
@@ -74,14 +74,26 @@ submission visibly fails here.
 | **EC-9** | Reminder idempotency | The reminder job is safe to run repeatedly and to overlap with itself without ever sending a second reminder for the same appointment/interval — enforced by a persisted per-appointment send record, not by timing luck. Refines FR-15. |
 | **EC-10** | Double-submit of a booking | A double-clicked or retried booking request creates at most one appointment for that slot, deduplicated server-side (idempotency key or unique constraint), not merely by disabling the button client-side. |
 | **EC-11** | Cancel / no-show transition rules | A cancelled appointment cannot later be marked completed. No-show applies only to a confirmed appointment whose start time has passed. Cancelling frees the slot atomically. Invalid transitions are rejected server-side with a clear error, not silently ignored. Refines FR-14. |
-| **EC-12** | Graceful degradation & input validation | A failing primary dependency (database, email provider, blob storage, optional LLM) degrades gracefully with a clear user-facing message and a structured server-side error log — never an unhandled 500 or a silently wrong result. All external input is validated and sanitized server-side; malformed, oversized, or out-of-range requests are rejected with clear errors. First-run empty state (no images yet, no appointments yet) renders cleanly rather than erroring. |
+| **EC-12** | Graceful degradation & input validation | A failing primary dependency (database, email provider, blob storage, optional LLM) degrades gracefully with a clear user-facing message and a structured server-side error log — never an unhandled 500 or a silently wrong result. **All external input — booking, availability, image/report access, sharing, and auth payloads — is validated and sanitized server-side**; malformed, oversized, or out-of-range requests are rejected with clear errors. First-run empty state (no images yet, no appointments yet) renders cleanly rather than erroring. |
 
 ---
 
 ## Performance benchmarks (Core)
 
 Stated load: **20–50 concurrent virtual users for 60 s**, generated with **k6**
-(script committed), against the seeded dataset defined in DEL-4.
+(script committed), against the benchmark dataset below.
+
+### Benchmark dataset
+
+The PRD offers this shape as an **illustration** (`e.g.`) of a dataset large
+enough to make the numbers meaningful — roughly 50 patients with 1–5 completed
+visits each, each visit holding 1–10 static images and 0–2 cine clips of up to
+100 frames, plus 10 providers and ~16,000 appointment slots.
+
+It is a **measurement** need, not a deliverable: DEL-4 requires a seed script,
+not these exact counts. It is recorded here so the PF rows are reproducible and
+so the benchmark scale is not mistaken for a grading threshold. GAP-2 and
+ADR-0009 explain how this scale fits the mandated free tier.
 
 | ID | Target | Value | Measurement method |
 |----|--------|-------|--------------------|
@@ -123,12 +135,12 @@ named providers. PHI handling is first-class, not an add-on.
 |----|-------------|----------------------|
 | **CQ-1** | Test coverage ≥ 80% on core logic | Measured over identity verification, image/cine/report access control, the booking engine and its concurrency guard, reschedule/cancel rules, status-lifecycle transitions, and reminder and share-link scheduling. |
 | **CQ-2** | Concurrency & leakage correctness are tested | The no-double-booking guard (FR-12) and the no-cross-patient-access guards (FR-6, FR-9) each have an explicit automated adversarial or concurrent test, not just a happy-path test. |
-| **CQ-3** | Error handling & observability | Clear, non-500 responses for booking conflicts, invalid status transitions, failed identity matches, and reminder/share-send failures. No unhandled 500s in the demo flow. Structured error logging with no PHI, plus a health-check endpoint reporting app, database, and storage reachability. |
+| **CQ-3** | Error handling & observability | Clear, non-500 responses for booking conflicts, invalid status transitions, failed identity matches, and reminder/share-send failures **— and a failed send is retried or queued, not merely reported**. No unhandled 500s in the demo flow. Structured error logging with no PHI, plus a health-check endpoint reporting app, database, and storage reachability. |
 | **CQ-4** | Responsive / mobile-first UI | Every patient-facing flow — identity verification, image and cine viewing, report viewing, sharing, booking — is fully usable at a typical phone-width viewport, not just desktop. |
 | **CQ-5** | Accessibility | Baseline WCAG-aware practice: full keyboard navigation, labeled form controls and slot/cine buttons, sufficient colour contrast, and appointment/report status conveyed by more than colour alone. |
 | **CQ-6** | Database migrations | Schema — including the unique constraints and indexes backing the no-double-book and identity-verification guarantees — is managed via committed migrations, reproducible from a clean checkout with a seed script. |
 | **CQ-7** | Secure coding for PHI | No secrets in the repo. No PHI in logs. Input validation on all booking, availability, image, report, and share endpoints. Server-side authorization on every PHI route. |
-| **CQ-8** | CI | Unit tests and the linter run on every push. Integration/E2E tests run in CI as well. |
+| **CQ-8** | CI | Unit tests and the linter run on every push. Integration/E2E tests run in CI as well **if used** — the PRD makes them conditional. This build elects to use Playwright (the `ui` gate tier depends on it), so for this build the condition is met and they must run in CI. |
 
 ---
 
@@ -139,7 +151,7 @@ named providers. PHI handling is first-class, not an add-on.
 | **DEL-1** | Public repository with README and `AI_USAGE.md` | Both committed. `AI_USAGE.md` documents which AI tools were used and for what, which LLM/engine and versions were used for any runtime AI, and any prompts or configuration that materially shaped the solution. States clearly if no runtime AI was used. |
 | **DEL-2** | Deployed application URL | A reachable deployed demo, meeting PF-9. |
 | **DEL-3** | Documentation | Setup, environment variables, seed script, retention/deletion policy, and roles are all documented. |
-| **DEL-4** | Committed `.env.example` and seed script | The seed produces ~50 patients each with 1–5 completed visits, each visit holding 1–10 static images and 0–2 cine clips of up to 100 frames; plus 10 providers and ~16,000 appointment slots; plus demo patient, provider, and admin accounts. The app runs and is gradeable from a clean checkout. |
+| **DEL-4** | Committed `.env.example` and seed script | A committed seed script / sample dataset: patients with linked images, cine clips and reports; ≈10 providers, the services they offer, and their slots; demo patient, provider and admin accounts. It also plants the fixtures the stated rules need — see ADR-0009. The app runs and is gradeable from a clean checkout. **The larger row counts in §Benchmark dataset are a performance-measurement need, not a submission requirement.** |
 | **DEL-5** | Grader quick-start in the README | A reviewer can install, configure from `.env.example`, seed, run the app, and run the committed test suite — including the concurrency test and the leakage test — in minutes, with demo credentials listed. |
 | **DEL-6** | Video demo | Shows, in this order: patient identity verification and image/cine viewing; secure image/report sharing; report viewing; provider availability setup; patient booking; the no-double-book behaviour; reschedule/cancel; a reminder being sent or received. Also shows the app at phone width at least once. |
 
@@ -189,17 +201,22 @@ ticket may block on one.
 
 ## Stated parameters
 
-Values the PRD leaves open but requires to be *stated* and then enforced. Fixed
-by **ADR-0008**, single-sourced in application config, and quoted in the
+Fixed by **ADR-0008**, single-sourced in application config, and quoted in the
 acceptance criteria of every ticket that enforces one. No ticket may hardcode a
 duplicate or pick its own value.
+
+The first four are values the PRD leaves open but requires to be *stated* and
+then enforced. **The identity-unlock lifetime is different: the PRD never asks
+the FR-2 unlock to expire at all.** It is a design decision from ADR-0004 —
+keeping the unlock revocable and lockable — and it is marked below so no one
+mistakes it for a PRD obligation. Removing it would not fail any PRD item.
 
 | Parameter | Value | Governs |
 |-----------|-------|---------|
 | Share-link lifetime | **48 hours** | FR-5, FR-8, EC-5, SEC-8 |
 | Minimum change notice | **24 hours** | FR-13 |
 | Reminder lead time | **24 hours** before start | FR-15, EC-9, PF-8 |
-| Identity-unlock lifetime | **45 minutes** | FR-2 |
+| Identity-unlock lifetime | **45 minutes** | FR-2 — *our design decision, not a PRD requirement* |
 | Failed-attempt lockout | **3 failures → 5-minute lock**, counted per patient reference and per source | EC-1 |
 
 ---

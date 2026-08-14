@@ -76,6 +76,7 @@ available" response, never the content, never a hint that it once existed
 
 | Term | Meaning |
 |------|---------|
+| **Service** | A kind of ultrasound a provider offers — obstetric, renal, thyroid. A patient picks one when booking, and it is recorded on the appointment. **Availability is per provider, never per service**: a provider has one slot grid, so two services can never claim the same minute. |
 | **Working hours** | A provider's recurring bookable window, expressed in the provider's own time zone. |
 | **Slot length** | The duration of one bookable unit of a provider's time. |
 | **Block** | A specific range a provider marks unavailable, overriding working hours. |

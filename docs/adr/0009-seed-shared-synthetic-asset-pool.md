@@ -47,8 +47,34 @@ rows (unchanged from DEL-4)
   reviewer without hand-editing data.
 - The seed also plants the fixtures other stated rules need: an appointment
   inside the 24 h notice window and one outside it (ADR-0008), at least one
-  Preliminary report that must stay invisible (FR-7), and at least one
-  out-of-hours appointment (ADR-0006).
+  Preliminary report that must stay invisible (FR-7), at least one
+  out-of-hours appointment (ADR-0006), and at least one appointment in each of
+  `requested`, `confirmed`, `completed`, `cancelled` and `no_show`, so the FR-14
+  lifecycle and the terminal-state trigger are both exercisable.
+- **Services are seeded before appointments.** `appointments.service_id` is
+  `NOT NULL`, so the seed populates `services` (obstetric, renal, thyroid — the
+  study descriptions it already generates) and `provider_services` first, gives
+  every provider at least one service, and gives every appointment a service its
+  provider actually offers. A seed that skips this cannot insert a single
+  appointment.
+- **The notice-window fixtures are both live.** The appointment inside the 24 h
+  window and the one outside it are each `confirmed` — a cancelled or completed
+  appointment cannot exercise FR-13's rule, so a seed that leaves their status
+  unstated can satisfy the letter of this list and still make the rule
+  untestable.
+- **The out-of-hours fixture is produced by driving the real edit, never by
+  writing the flag.** `out_of_hours` is derived and recomputed on every
+  availability write (ADR-0006, `CONTEXT.md`); a seed that sets it directly
+  contradicts both and produces a value the first availability edit will clear.
+  So the seed books an appointment, then narrows the provider's working hours
+  through `lib/scheduling/availability.ts`, and lets the service set the flag.
+  That also means the seed exercises the EC-8 path on every run.
+- **Every seeded patient is linked to an account or is deliberately unlinked.**
+  The demo accounts are linked directly so a grader can log straight in. At least
+  one seeded patient is left with a null `user_id` and no account, so the
+  registration-then-verify path (`ARCHITECTURE.md` §4) has something real to bind
+  to — that flow is the one whose failure is silent, and it cannot be tested
+  against a dataset where every patient is pre-linked.
 
 ## Consequences
 
