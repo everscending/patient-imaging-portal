@@ -6,6 +6,15 @@
 // e2e/auth.spec.ts with no live Supabase project — the same keyless-testing
 // shape as lib/notify/email.ts's log transport (GAP-3).
 //
+// The whole app's NEXT_PUBLIC_SUPABASE_URL points at this one server
+// (start-test-server.mjs), so it is also the only place JOR-247's
+// e2e/degraded.spec.ts can make the database or Storage probes in
+// app/api/health/route.ts observe an unreachable dependency: GET /rest/v1/
+// and GET /storage/v1/bucket/phi stand in for those two probes, and
+// POST /__test__/health-state toggles how each answers. Default 'ok' never
+// changes anything for e2e/auth.spec.ts or e2e/smoke.spec.ts, which never
+// call that endpoint.
+//
 // Binds port 0 and reads the assigned port back (ARCHITECTURE.md §9: a test
 // fixture that listens never claims a fixed port).
 import { randomUUID } from 'node:crypto'
@@ -59,10 +68,37 @@ function userWireShape(user: FakeUser, withIdentity: boolean): Record<string, un
   }
 }
 
+type DependencyState = 'ok' | 'down' | 'hang'
+
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const usersByEmail = new Map<string, FakeUser>()
   const sessionsByToken = new Map<string, FakeSession>()
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0 }
+  // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
+  const healthState: { database: DependencyState; storage: DependencyState } = {
+    database: 'ok',
+    storage: 'ok',
+  }
+
+  // 'ok' answers immediately; 'down' destroys the connection outright
+  // (fetch rejects, the same as a refused connection); 'hang' never
+  // responds, so the probe's own AbortController timeout has to fire —
+  // three distinct fake-server behaviors for three distinct probe paths.
+  function answerAsDependency(req: IncomingMessage, res: ServerResponse, state: DependencyState): void {
+    if (state === 'hang') return
+    if (state === 'down') {
+      req.socket.destroy()
+      return
+    }
+    sendJson(res, 200, {})
+  }
+
+  async function handleHealthState(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = (await readJsonBody(req)) as Partial<Record<'database' | 'storage', DependencyState>>
+    if (body.database) healthState.database = body.database
+    if (body.storage) healthState.storage = body.storage
+    sendJson(res, 200, { ...healthState })
+  }
 
   function count(name: string): void {
     calls[name] = (calls[name] ?? 0) + 1
@@ -163,6 +199,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'GET' && url.pathname === '/auth/v1/user') {
       handleGetUser(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/health-state') {
+      void handleHealthState(req, res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/rest/v1/') {
+      answerAsDependency(req, res, healthState.database)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {
+      answerAsDependency(req, res, healthState.storage)
       return
     }
     sendJson(res, 404, { error: 'not_found', message: 'no fake handler for this path' })
