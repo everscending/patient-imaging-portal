@@ -273,7 +273,16 @@ describe('repo-wide guards', () => {
       const content = readFileSync(path.join(REPO_ROOT, file), 'utf8')
       return content.includes('process.env')
     })
-    expect(hits.sort()).toEqual(['lib/config.ts', 'tests/config/config.test.ts'])
+    // ARCHITECTURE.md §8 names `TEST_PG_PORT`'s reader as "test harness", not
+    // lib/config.ts — JOR-195's tests/setup/postgres.ts and the test files
+    // that exercise it are the other legitimate readers this guard allows.
+    expect(hits.sort()).toEqual([
+      'lib/config.ts',
+      'tests/config/config.test.ts',
+      'tests/gate/gate.test.ts',
+      'tests/integration/postgres-harness.test.ts',
+      'tests/setup/postgres.ts',
+    ])
   })
 
   test('no bare 3000 in package.json, next.config.ts, or scripts/', () => {

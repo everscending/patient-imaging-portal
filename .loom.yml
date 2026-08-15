@@ -1,0 +1,24 @@
+# Repo-layer loom config (see loom's references/loom-config.md).
+# gates: the tier keys this repo uses and the literal command each tier runs.
+# docs/adr/0012-phase-4-closures.md removed the `docs` tier — it traced to no
+# requirement, so a document-only ticket takes `logic`. Three tiers only.
+# Tiers are cumulative: api repeats logic's commands, ui repeats api's
+# (ARCHITECTURE.md §15) — a tier that skipped its parent would let a type
+# error through an end-to-end pass. scripts/gate.sh resolves the identical
+# list per tier; tests/gate/gate.test.ts asserts the two never drift apart.
+gates:
+  logic:
+    - "npx tsc --noEmit"
+    - "npx eslint ."
+    - "npx vitest run --project unit"
+  api:
+    - "npx tsc --noEmit"
+    - "npx eslint ."
+    - "npx vitest run --project unit"
+    - "npx vitest run --project integration"
+  ui:
+    - "npx tsc --noEmit"
+    - "npx eslint ."
+    - "npx vitest run --project unit"
+    - "npx vitest run --project integration"
+    - "npx playwright test"
