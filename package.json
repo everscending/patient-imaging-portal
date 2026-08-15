@@ -11,9 +11,11 @@
     "gate:ui": "scripts/gate.sh ui"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
     "next": "^15.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
