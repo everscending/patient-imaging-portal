@@ -199,23 +199,53 @@ const ROLE_RESET_LOCK_KEY = 5942177
 // fresh connection per call.
 async function withRoleLock<T>(fn: () => T): Promise<T> {
   const proc = spawn('docker', ['exec', '-i', CONTAINER_NAME, 'psql', '-U', PG_USER, '-d', MAINTENANCE_DB, '-v', 'ON_ERROR_STOP=1', '-tA'])
-  const nextResponse = () => new Promise<void>((resolve, reject) => {
-    proc.stdout.once('data', () => resolve())
-    proc.once('error', reject)
-  })
 
-  const acquired = nextResponse()
-  proc.stdin.write('select pg_advisory_lock(' + ROLE_RESET_LOCK_KEY + ');\n')
-  await acquired
+  // 'error' only fires for spawn-level failures (e.g. ENOENT) — it never
+  // fires if the process starts fine and then exits or errors afterward (bad
+  // connection, container restart mid-run, a rejected pg_advisory_lock
+  // query). Without an 'exit' listener too, that case leaves the pending
+  // promise unsettled forever instead of failing fast.
+  const nextResponse = () =>
+    new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        proc.stdout.off('data', onData)
+        proc.off('error', onError)
+        proc.off('exit', onExit)
+      }
+      const onData = () => {
+        cleanup()
+        resolve()
+      }
+      const onError = (err: Error) => {
+        cleanup()
+        reject(err)
+      }
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        cleanup()
+        reject(new Error(`psql process for advisory lock exited before responding (code=${code}, signal=${signal})`))
+      }
+      proc.stdout.once('data', onData)
+      proc.once('error', onError)
+      proc.once('exit', onExit)
+    })
 
   try {
-    return fn()
-  } finally {
-    const released = nextResponse()
-    proc.stdin.write('select pg_advisory_unlock(' + ROLE_RESET_LOCK_KEY + ');\n')
-    await released
-    proc.stdin.end()
-    await new Promise((resolve) => proc.once('close', resolve))
+    const acquired = nextResponse()
+    proc.stdin.write('select pg_advisory_lock(' + ROLE_RESET_LOCK_KEY + ');\n')
+    await acquired
+
+    try {
+      return fn()
+    } finally {
+      const released = nextResponse()
+      proc.stdin.write('select pg_advisory_unlock(' + ROLE_RESET_LOCK_KEY + ');\n')
+      await released
+      proc.stdin.end()
+      await new Promise((resolve) => proc.once('close', resolve))
+    }
+  } catch (err) {
+    proc.kill()
+    throw err
   }
 }
 
@@ -232,11 +262,14 @@ function stubAuth(dbName: string): void {
 // concurrent or not — never collide: each generates its own random name.
 export async function startRun(container: Container, migrationsDir?: string): Promise<Run> {
   const dbName = randomDbName()
+  // CREATE DATABASE for a randomly-named database and the registry insert
+  // never collide between concurrent runs, so they run outside the lock.
+  // stubAuth writes only to this run's own dbName, so it's unlocked too.
+  psql(MAINTENANCE_DB, `CREATE DATABASE "${dbName}";`)
+  psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
+  stubAuth(dbName)
   await withRoleLock(() => {
     prepareClusterForRun()
-    psql(MAINTENANCE_DB, `CREATE DATABASE "${dbName}";`)
-    psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
-    stubAuth(dbName)
     runMigrations(dbName, migrationsDir)
   })
   return {
