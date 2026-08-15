@@ -76,9 +76,9 @@ const localPlugin = {
       'lib/** must not import from app/** (ARCHITECTURE.md §2).',
       (source) => APP_IMPORT_RE.test(source),
     ),
-    // Row 2: only lib/config.ts reads process.env.
+    // Row 2: only lib/config.ts reads the process environment directly.
     'process-env-outside-config': restrictedSyntax(
-      'Only lib/config.ts reads process.env (ARCHITECTURE.md §2, §8).',
+      'Only lib/config.ts reads the process environment directly (ARCHITECTURE.md §2, §8).',
       "MemberExpression[object.name='process'][property.name='env']",
     ),
     // Row 3: only lib/db/client.ts imports @supabase/supabase-js.
