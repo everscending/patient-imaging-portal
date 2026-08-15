@@ -1,0 +1,44 @@
+name: CI
+
+# CQ-8: lint and unit tests on every push; this build elects Playwright, so
+# the end-to-end suite runs here too. ARCHITECTURE.md §15 — `ui` already is
+# `api` plus Playwright and `api` already is `logic` plus integration, so one
+# call to the gate runner covers lint, types, unit, integration and
+# end-to-end. No step here may call eslint/tsc/vitest/playwright directly —
+# scripts/gate.sh is the only place those names appear (§15, tests/gate/gate.test.ts).
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      # PORT is explicit and never a bare well-known port (ARCHITECTURE.md
+      # §9). No pin for the test database's port: ADR-0013's ephemeral port
+      # is exactly what a shared runner needs, so nothing here picks a
+      # number for it.
+      PORT: "4310"
+      # §8 required variables, from repository secrets — placeholders only,
+      # no value lives in this file (SEC-7).
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SOURCE_REF_SALT: ${{ secrets.SOURCE_REF_SALT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Same Node major as package.json's @types/node (^22.10.0) — a
+          # skewed major here makes a CI-only failure unexplainable.
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # Resolves against the @playwright/test version npm ci just installed
+      # from package-lock.json — never a floating browser build.
+      - run: npx playwright install --with-deps
+
+      - run: scripts/gate.sh ui
