@@ -5,11 +5,10 @@ worktree. It links to each document; it does not restate a policy, a
 parameter, or a number that document already states — see that document for
 the fact itself.
 
-Deployment, the retention/deletion policy, the coverage report, the EL-1
-benchmark, and the recorded demo each belong here once their own ticket
-lands and creates the file. None of those files exist in this worktree yet,
-so none is linked below — a link with nothing behind it is worse than no
-link.
+The retention/deletion policy, the coverage report, the EL-1 benchmark, and
+the recorded demo each belong here once their own ticket lands and creates
+the file. None of those files exist in this worktree yet, so none is linked
+below — a link with nothing behind it is worse than no link.
 
 ## Architecture Decision Records (`docs/adr/`)
 
@@ -26,6 +25,12 @@ link.
 - [ADR-0011 — Identity verification is a one-time account link, with no expiring unlock](adr/0011-identity-verification-is-a-one-time-account-link.md)
 - [ADR-0012 — The twenty-two closures that writing the tickets forced](adr/0012-phase-4-closures.md)
 - [ADR-0013 — One test Postgres on an ephemeral port, with a database per run](adr/0013-one-test-postgres-ephemeral-port-database-per-run.md)
+
+## Deployment
+
+- [Deploy record](deploy.md) — the Supabase and Vercel projects, where §8's
+  variables and the `phi` bucket are set, and the run record for every
+  deploy.
 
 ## Agent operating docs (`docs/agents/`)
 
