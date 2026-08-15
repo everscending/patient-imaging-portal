@@ -119,7 +119,11 @@ export function zonedTimeToInstant(zone: string, date: string, time: string): Da
     return new Date(secondCandidateMs)
   }
 
-  return new Date(Math.min(firstCandidateMs, secondCandidateMs))
+  // Neither candidate reproduces the requested wall-clock time, so it never
+  // existed (spring-forward gap) rather than being ambiguous (fall-back,
+  // handled above). Resolve forward past the gap — the later of the two
+  // bracketing candidates — matching §11's pinned Postgres behaviour.
+  return new Date(Math.max(firstCandidateMs, secondCandidateMs))
 }
 
 /**

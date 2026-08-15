@@ -102,6 +102,18 @@ export function generateSlots(input: {
     return { ...window, startsSeconds, endsSeconds }
   })
 
+  // Rejected before any walk begins, the same as every other input — an
+  // unparseable or backwards block would otherwise silently remove nothing
+  // (FR-10: blocked time must never come back as bookable).
+  const blockRanges = input.blocks.map((block) => {
+    const start = new Date(block.startsAt).getTime()
+    const end = new Date(block.endsAt).getTime()
+    if (Number.isNaN(start)) throw new Error(`block startsAt is not a parseable timestamp: ${block.startsAt}`)
+    if (Number.isNaN(end)) throw new Error(`block endsAt is not a parseable timestamp: ${block.endsAt}`)
+    if (end <= start) throw new Error(`block endsAt must be later than startsAt: ${block.startsAt} >= ${block.endsAt}`)
+    return { start, end }
+  })
+
   // §11: slot_minutes must divide the provider zone's DST shift. A
   // no-shift zone (dstShiftMinutes === 0) passes for any slotMinutes the
   // schema permits, since 0 % n is always 0 — there is nothing to divide.
@@ -148,11 +160,6 @@ export function generateSlots(input: {
       }
     }
   }
-
-  const blockRanges = input.blocks.map((block) => ({
-    start: new Date(block.startsAt).getTime(),
-    end: new Date(block.endsAt).getTime(),
-  }))
 
   const kept = candidates.filter(({ startInstant, endInstant }) => {
     const startMs = startInstant.getTime()

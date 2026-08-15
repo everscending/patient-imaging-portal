@@ -39,6 +39,11 @@ async function loadAvailability(overrides: Record<string, string | undefined> = 
 const CHICAGO = 'America/Chicago'
 const LORD_HOWE = 'Australia/Lord_Howe'
 const TOKYO = 'Asia/Tokyo' // no DST (ARCHITECTURE.md §11) — accepts any schema-legal slotMinutes
+// The 2026-03-08 spring-forward gap starts exactly at local midnight (unlike
+// Chicago's 02:00 gap) — a nonexistent-local-time anchor here lands on the
+// *previous* local date, not just the previous hour, so a backward-resolving
+// bug drops the whole day instead of just the transition hour.
+const HAVANA = 'America/Havana'
 
 const RFC3339_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/
 
@@ -351,5 +356,40 @@ describe('generateSlots — mandatory adversarial tests (JOR-242)', () => {
     expect(source).not.toMatch(/Intl\.DateTimeFormat/)
     expect(source).not.toMatch(/getTimezoneOffset/)
     expect(source).toMatch(/from '\.\.\/time\/zones'/)
+  })
+
+  test('MAT15 (dst-gap-slot-loss): a zone whose spring-forward gap starts at local midnight loses no day — America/Havana 00:00-06:00, 30-min slots: 12/10/12, not 12/0/12', async () => {
+    const { generateSlots } = await loadAvailability()
+    const havanaHours = allWeekdays([{ startsLocal: '00:00', endsLocal: '06:00' }])
+    const call = (date: string): Array<{ startsAt: string; endsAt: string }> =>
+      generateSlots({ timeZone: HAVANA, slotMinutes: 30, workingHours: havanaHours, blocks: [], fromDate: date, toDate: date })
+
+    expect(call('2026-03-07')).toHaveLength(12)
+    const gapDay = call('2026-03-08')
+    expect(gapDay).toHaveLength(10)
+    expect(gapDay.map((s) => localTimePart(s.startsAt))).toEqual([
+      '01:00:00', '01:30:00', '02:00:00', '02:30:00', '03:00:00',
+      '03:30:00', '04:00:00', '04:30:00', '05:00:00', '05:30:00',
+    ])
+    expect(gapDay.every((s) => localDatePart(s.startsAt) === '2026-03-08')).toBe(true)
+    expect(call('2026-03-09')).toHaveLength(12)
+  })
+
+  test('MAT16 (FR-10): a block with an unparseable or backwards timestamp is rejected, not silently ignored', async () => {
+    const { generateSlots } = await loadAvailability()
+    const base = { timeZone: TOKYO, slotMinutes: 30, workingHours, fromDate: '2026-06-15', toDate: '2026-06-15' }
+
+    expect(() =>
+      generateSlots({ ...base, blocks: [{ startsAt: '10:00', endsAt: '11:00' }] }),
+    ).toThrow()
+    expect(() =>
+      generateSlots({ ...base, blocks: [{ startsAt: 'not-a-date', endsAt: localInstant(TOKYO, '2026-06-15', '11:00') }] }),
+    ).toThrow()
+    expect(() =>
+      generateSlots({
+        ...base,
+        blocks: [{ startsAt: localInstant(TOKYO, '2026-06-15', '11:00'), endsAt: localInstant(TOKYO, '2026-06-15', '10:00') }],
+      }),
+    ).toThrow()
   })
 })
