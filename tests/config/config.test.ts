@@ -276,11 +276,17 @@ describe('repo-wide guards', () => {
     // ARCHITECTURE.md §8 names `TEST_PG_PORT`'s reader as "test harness", not
     // lib/config.ts — JOR-195's tests/setup/postgres.ts and the test files
     // that exercise it are the other legitimate readers this guard allows.
+    // JOR-197's eslint.config.mjs and tests/lint/forbidden-imports.test.ts
+    // join the list too: they name process.env in a lint rule's message,
+    // comments, and a planted-violation fixture — enforcing this very row —
+    // never as a real read outside lib/config.ts.
     expect(hits.sort()).toEqual([
+      'eslint.config.mjs',
       'lib/config.ts',
       'tests/config/config.test.ts',
       'tests/gate/gate.test.ts',
       'tests/integration/postgres-harness.test.ts',
+      'tests/lint/forbidden-imports.test.ts',
       'tests/setup/postgres.ts',
     ])
   })
