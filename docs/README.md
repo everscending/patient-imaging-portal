@@ -32,3 +32,10 @@ link.
 - [Domain Docs](agents/domain.md)
 - [Issue tracker: Linear](agents/issue-tracker.md)
 - [Triage Labels](agents/triage-labels.md)
+
+## Operational notes
+
+- **Session timeout.** The inactivity timeout ADR-0012 #6 states is a
+  Supabase Auth project setting (Supabase dashboard → Authentication →
+  Sessions), not an application variable — `lib/config.ts` carries no such
+  key, and `/login` and `/register` only state the number, never read it.
