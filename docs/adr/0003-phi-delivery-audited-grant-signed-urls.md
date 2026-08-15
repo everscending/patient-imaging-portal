@@ -33,7 +33,7 @@ come straight from storage over short-lived signed URLs.**
 One authorized API call per study, clip, or report:
 
 1. verifies the session (FR-1),
-2. verifies the identity unlock is present and unexpired (FR-2, ADR-0004),
+2. verifies the account is linked to a patient record (FR-2, ADR-0011),
 3. verifies ownership of the target resource server-side (FR-6, FR-9, SEC-2),
 4. writes **one** append-only audit row recording actor, action, target and
    timestamp (SEC-4),
@@ -42,7 +42,7 @@ One authorized API call per study, clip, or report:
 ```
 GET /api/studies/:studyId/clips/:clipId
   → session valid?            401
-  → identity unlocked?        403
+  → identity linked?          403
   → patient owns study?       404   (never 403 — see below)
   → INSERT audit_log(...)           one row per grant
   → 200 { manifest, frames: [{ index, url, expiresAt }, … ] }

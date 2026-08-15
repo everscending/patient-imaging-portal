@@ -28,11 +28,15 @@ PATCH /api/providers/:providerId/availability
 200 OK
 {
   removedOpenSlots: 14,
+  generatedOpenSlots: 22,
   preservedOutOfHours: [
     { appointmentId, startsAt, endsAt, patientRef }
   ]
 }
 ```
+
+`ARCHITECTURE.md` §6 is the pinned wire shape; this is a copy of it and must not
+drift from it.
 
 - Open slots inside the removed range are deleted.
 - Slots holding an appointment are **not** deleted. The appointment keeps its

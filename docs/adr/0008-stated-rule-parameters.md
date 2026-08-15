@@ -19,7 +19,6 @@ and the UI copy drift apart.
 | Share-link lifetime | **48 hours** | FR-5, FR-8, EC-5, SEC-8 |
 | Minimum change notice | **24 hours** | FR-13 |
 | Reminder lead time | **24 hours** before start | FR-15, EC-9, PF-8 |
-| Identity-unlock lifetime | **45 minutes** | FR-2 |
 | Failed-attempt lockout | **3 failures → 5-minute lock** | EC-1 |
 
 These values are single-sourced in application config, surfaced in the README,
@@ -47,12 +46,14 @@ interval is all FR-15 asks for. The `pg_cron` job (ADR-0002) runs far more often
 than the interval, and correctness comes from the unique constraint, never from
 the schedule.
 
-**Identity-unlock lifetime — 45 minutes.** Long enough that a patient can verify
+**Identity-unlock lifetime — withdrawn by ADR-0011.** The paragraph below is
+kept for the record; the parameter no longer exists, because verification links
+an account once and nothing expires. ~~Long enough that a patient can verify
 once, then browse images, play a cine clip, read a report and share it without
 being challenged mid-flow. Short enough to be a real second factor. Note the
 interaction with SEC-8: a share link created during an unlock outlives that
 unlock by design — the link's own 48 h expiry and revocation are what bound it,
-not the unlock.
+not the unlock.~~
 
 **Failed-attempt lockout — 3 failures, 5-minute lock.** Stricter on attempts than
 a typical login lockout, and deliberately so: FR-2 is an identity-matching gate

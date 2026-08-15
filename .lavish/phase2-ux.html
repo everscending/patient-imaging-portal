@@ -1,13 +1,86 @@
 <!doctype html>
-<html lang="en" data-theme="luxury">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UX spec — Patient Imaging Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
 <style>
+  /* ── palettes, derived from as-software.com ────────────
+     Extracted from their theme stylesheet:
+       #873fe0  primary violet   (most-used brand colour)
+       #36195a  deep plum        (dark surfaces, headings)
+       #00c0dd  cyan             (accent)
+       #c39eef / #f9f5fe / #f3ecfc  violet tints
+       niveau-grotesk (Adobe Typekit) — geometric sans     */
+
+  body, .pal-1 {                         /* P1 · AS Brand, muted — page default */
+    --color-base-100: #ffffff;
+    --color-base-200: #f7f5fb;
+    --color-base-300: #ebe6f4;
+    --color-base-content: #241b31;
+    --color-primary: #6b46a8;            /* AS #873fe0, desaturated toward their plum */
+    --color-primary-content: #ffffff;
+    --color-secondary: #3b2a54;
+    --color-secondary-content: #ffffff;
+    --color-accent: #1d8fa5;             /* AS cyan, darkened for contrast */
+    --color-accent-content: #ffffff;
+    --color-neutral: #3b2a54;
+    --color-neutral-content: #ffffff;
+    --color-info: #2f5fb8;   --color-info-content: #ffffff;
+    --color-success: #16785c; --color-success-content: #ffffff;
+    --color-warning: #9a5b12; --color-warning-content: #ffffff;
+    --color-error: #a63a4b;  --color-error-content: #ffffff;
+  }
+  .pal-2 {                               /* P2 · Clinical Neutral, violet held right back */
+    --color-base-100: #ffffff;
+    --color-base-200: #f5f6f9;
+    --color-base-300: #e3e7ee;
+    --color-base-content: #1d2733;
+    --color-primary: #5f4b96;
+    --color-primary-content: #ffffff;
+    --color-secondary: #4a5766;
+    --color-secondary-content: #ffffff;
+    --color-accent: #2c6f7d;
+    --color-accent-content: #ffffff;
+    --color-neutral: #3a4655;
+    --color-neutral-content: #ffffff;
+    --color-info: #2f5fb8;   --color-info-content: #ffffff;
+    --color-success: #16785c; --color-success-content: #ffffff;
+    --color-warning: #8a5a13; --color-warning-content: #ffffff;
+    --color-error: #9e3126;  --color-error-content: #ffffff;
+  }
+  .pal-3 {                               /* P3 · athenahealth, from their own brand guide */
+    --color-base-100: #ffffff;
+    --color-base-200: #f6f6f7;
+    --color-base-300: #ededee;           /* their "digital gray" */
+    --color-base-content: #111111;       /* their guide: black for large amounts of copy */
+    --color-primary: #582c83;            /* their Purple, PMS 268 — WCAG AA rated */
+    --color-primary-content: #ffffff;
+    --color-secondary: #6e6e6e;          /* their Gray — WCAG AA rated */
+    --color-secondary-content: #ffffff;
+    --color-accent: #0093b2;             /* their Teal */
+    --color-accent-content: #ffffff;
+    --color-neutral: #582c83;
+    --color-neutral-content: #ffffff;
+    --color-info: #0093b2;   --color-info-content: #ffffff;
+    --color-success: #62bb46; --color-success-content: #10250a;  /* their CTA green */
+    --color-warning: #f26522; --color-warning-content: #2a0e02;  /* their Alert orange */
+    --color-error: #a50050;  --color-error-content: #ffffff;     /* their Ruby — AA rated */
+  }
+
+  body { font-family: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+  .swatches { display: flex; gap: 4px; flex-wrap: wrap; }
+  .sw { width: 34px; height: 34px; border-radius: 6px; flex: none;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+  .swlabel { font-size: .6rem; opacity: .6; text-align: center; margin-top: 2px; width: 34px; }
+
   *, *::before, *::after { box-sizing: border-box; }
   :where(.grid, .flex) > * { min-width: 0; }
   :where(p, h1, h2, h3, h4, li, td, th, .badge) { overflow-wrap: anywhere; }
@@ -73,14 +146,17 @@
   <div class="flex flex-wrap items-center gap-2">
     <span class="badge badge-primary badge-sm">Loom · phase 2</span>
     <span class="badge badge-soft badge-sm">UX spec</span>
-    <span class="badge badge-soft badge-warning badge-sm">17 screens · 2 viewports</span>
+    <span class="badge badge-soft badge-warning badge-sm">12 screens · 2 viewports</span>
+    <span class="badge badge-soft badge-sm">brand-sourced palettes</span>
   </div>
-  <h1 class="text-3xl sm:text-4xl font-bold tracking-tight">Every screen, mobile and desktop</h1>
+  <h1 class="text-3xl sm:text-4xl font-bold tracking-tight">The look, then every screen</h1>
   <p class="max-w-3xl text-base-content/70">
-    The whole application surface, drawn at <strong>390&nbsp;px</strong> (the phone width CQ-4 and
-    EC-4 are graded at) and at desktop. Part 1 is the five open decisions. Part 2 is the full screen
-    gallery — every route in the URL map, including the failure states a happy-path build forgets.
-    Annotate any screen you want changed.
+    Now themed from <strong>as-software.com</strong>'s own stylesheet rather than a generic template.
+    <strong>Part 0</strong> is the palette — answer it first, since it re-renders everything below.
+    <strong>Part 1</strong> is the five interaction decisions. <strong>Part 2</strong> is the full
+    screen gallery: every route in the URL map, drawn at <strong>390&nbsp;px</strong> (the phone width
+    CQ-4 and EC-4 are graded at) and at desktop, including the failure states a happy-path build
+    forgets. Annotate any screen you want changed.
   </p>
 </header>
 
@@ -91,7 +167,16 @@
       <button role="tab" class="tab" data-view-btn="mobile">Mobile only</button>
       <button role="tab" class="tab" data-view-btn="desktop">Desktop only</button>
     </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs opacity-60">Palette</span>
+      <div role="tablist" class="tabs tabs-box tabs-sm">
+        <button role="tab" class="tab tab-active" data-pal-btn="pal-1">P1 AS muted</button>
+        <button role="tab" class="tab" data-pal-btn="pal-2">P2 Clinical</button>
+        <button role="tab" class="tab" data-pal-btn="pal-3">P3 athena</button>
+      </div>
+    </div>
     <div class="flex flex-wrap gap-1 text-xs">
+      <a href="#palette" class="btn btn-xs btn-ghost">Palette</a>
       <a href="#decisions" class="btn btn-xs btn-ghost">Decisions</a>
       <a href="#foundation" class="btn btn-xs btn-ghost">Foundation</a>
       <a href="#imaging" class="btn btn-xs btn-ghost">Imaging</a>
@@ -103,13 +188,234 @@
 </div>
 
 <!-- ══════════════════ PART 1 · DECISIONS ══════════════════ -->
+<div class="divider text-sm text-base-content/50" id="palette">part 0 · the look</div>
+
+<section class="card card-border bg-base-100" id="p0">
+  <div class="card-body gap-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="card-title text-xl">P-0 · Colour and aesthetic</h2>
+          <div class="mt-1"><span class="badge badge-success badge-sm">Resolved · bottom tab bar on mobile, sidebar on desktop</span></div>
+        <p class="text-sm text-base-content/60 mt-1">
+          Answer this first — every screen below is re-rendered in whichever palette you pick.
+        </p>
+      </div>
+      <div class="flex gap-1"><span class="badge badge-soft badge-sm">CQ-5</span><span class="badge badge-soft badge-sm">contrast</span></div>
+    </div>
+
+    <div role="alert" class="alert alert-soft alert-info text-sm">
+      <span>
+        <strong>Both palettes come from primary sources, not from screenshots.</strong>
+        P1 and P2 are derived from <strong>AS Software's own theme stylesheet</strong>
+        (<code>#873fe0</code> violet, <code>#36195a</code> plum, <code>#00c0dd</code> cyan), with the
+        violet <strong>desaturated</strong> in both — the raw brand violet is a marketing-site colour
+        and reads as a highlighter across a whole application. P3 comes from
+        <strong>athenahealth's published brand guide</strong> (<em>our brand colors</em>, Nov 2017),
+        which gives exact PMS, CMYK, RGB and HEX values <em>and</em> states which of them pass WCAG AA.
+        <br><br>
+        Type: AS Software use <strong>niveau-grotesk</strong> (Adobe Typekit, licensed), so the build
+        substitutes <strong>Figtree</strong> — the closest free geometric sans, on Google Fonts. This
+        page is already rendering in it.
+      </span>
+    </div>
+
+    <form data-lavish-question="p0"
+      onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('p0');if(!v)return;qp('P-0 palette: '+v,{tag:'ux',text:'P-0: '+v,element:event.currentTarget,queueKey:'p0',data:{q:'p0',a:v}});">
+      <div class="gallery">
+
+        <!-- P1 -->
+        <label class="opt">
+          <div class="flex items-center gap-2 mb-2">
+            <input type="radio" name="p0" value="P1 AS Brand Muted — desaturated violet primary, plum secondary, muted cyan accent" class="radio radio-primary radio-sm" checked>
+            <span class="text-xs font-semibold opacity-70">Choose this option</span>
+          </div>
+          <div class="pal-1">
+            <div class="swatches mb-2">
+              <div><div class="sw" style="background:#6b46a8"></div><div class="swlabel">6b46a8</div></div>
+              <div><div class="sw" style="background:#3b2a54"></div><div class="swlabel">3b2a54</div></div>
+              <div><div class="sw" style="background:#1d8fa5"></div><div class="swlabel">1d8fa5</div></div>
+              <div><div class="sw" style="background:#ebe6f4"></div><div class="swlabel">ebe6f4</div></div>
+              <div><div class="sw" style="background:#f7f5fb"></div><div class="swlabel">f7f5fb</div></div>
+              <div><div class="sw" style="background:#241b31"></div><div class="swlabel">241b31</div></div>
+            </div>
+            <div class="flex gap-3">
+              <div class="phone only-mob"><div class="screen">
+                <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 1/2</span></div>
+                <div class="flex-1 frameimg">frame 34 / 100</div>
+                <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+                  <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+                  <div class="flex items-center justify-between">
+                    <div class="flex gap-1.5"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+                    <div class="btn btn-xs">12 fps</div>
+                  </div>
+                  <div class="alert alert-warning alert-soft py-1 px-2" style="font-size:9px">2 frames unavailable</div>
+                </div>
+              </div></div>
+              <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+                <div class="screen" style="flex-direction:row">
+                  <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+                    <div class="sideitem on">Imaging</div><div class="sideitem">Reports</div><div class="sideitem">Appointments</div><div class="sideitem">Shared links</div>
+                    <div class="mt-3 badge badge-success badge-xs">Unlocked 45m</div></div>
+                  <div class="flex-1 body">
+                    <div class="font-bold mb-2" style="font-size:12px">My imaging</div>
+                    <div class="grid grid-cols-3 gap-2">
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun · 6 img</div></div>
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Renal</div><div class="opacity-60">3 Apr · 4 img</div></div>
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Thyroid</div><div class="opacity-60">18 Jan · 8 img</div></div>
+                    </div>
+                    <div class="mt-2 flex gap-1"><div class="btn btn-xs btn-primary">Share</div><div class="btn btn-xs btn-outline">Book a visit</div></div>
+                  </div>
+                </div></div>
+            </div>
+          </div>
+          <div class="mt-2 flex items-center gap-2"><span class="optlabel text-sm">P1 · AS Brand, muted</span><span class="badge badge-success badge-xs">Recommended</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            AS Software's violet pulled back from <code>#873fe0</code> to <code>#6b46a8</code> — same
+            hue, desaturated toward their own plum, so it reads as brand rather than as a highlighter.
+            Cyan comes down to <code>#1d8fa5</code>: their <code>#00c0dd</code> is about 2:1 on white
+            and fails CQ-5 as a text colour. Still recognisably an AS Software product; now quiet
+            enough to sit behind a greyscale image for an hour.
+          </p>
+        </label>
+
+        <!-- P2 -->
+        <label class="opt">
+          <div class="flex items-center gap-2 mb-2">
+            <input type="radio" name="p0" value="P2 Clinical Neutral — cool grey system, muted violet used sparingly" class="radio radio-primary radio-sm">
+            <span class="text-xs font-semibold opacity-70">Choose this option</span>
+          </div>
+          <div class="pal-2">
+            <div class="swatches mb-2">
+              <div><div class="sw" style="background:#5f4b96"></div><div class="swlabel">5f4b96</div></div>
+              <div><div class="sw" style="background:#4a5766"></div><div class="swlabel">4a5766</div></div>
+              <div><div class="sw" style="background:#2c6f7d"></div><div class="swlabel">2c6f7d</div></div>
+              <div><div class="sw" style="background:#e3e7ee"></div><div class="swlabel">e3e7ee</div></div>
+              <div><div class="sw" style="background:#f5f6f9"></div><div class="swlabel">f5f6f9</div></div>
+              <div><div class="sw" style="background:#1d2733"></div><div class="swlabel">1d2733</div></div>
+            </div>
+            <div class="flex gap-3">
+              <div class="phone only-mob"><div class="screen">
+                <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 1/2</span></div>
+                <div class="flex-1 frameimg">frame 34 / 100</div>
+                <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+                  <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+                  <div class="flex items-center justify-between">
+                    <div class="flex gap-1.5"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+                    <div class="btn btn-xs">12 fps</div>
+                  </div>
+                  <div class="alert alert-warning alert-soft py-1 px-2" style="font-size:9px">2 frames unavailable</div>
+                </div>
+              </div></div>
+              <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+                <div class="screen" style="flex-direction:row">
+                  <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+                    <div class="sideitem on">Imaging</div><div class="sideitem">Reports</div><div class="sideitem">Appointments</div><div class="sideitem">Shared links</div>
+                    <div class="mt-3 badge badge-success badge-xs">Unlocked 45m</div></div>
+                  <div class="flex-1 body">
+                    <div class="font-bold mb-2" style="font-size:12px">My imaging</div>
+                    <div class="grid grid-cols-3 gap-2">
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun · 6 img</div></div>
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Renal</div><div class="opacity-60">3 Apr · 4 img</div></div>
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Thyroid</div><div class="opacity-60">18 Jan · 8 img</div></div>
+                    </div>
+                    <div class="mt-2 flex gap-1"><div class="btn btn-xs btn-primary">Share</div><div class="btn btn-xs btn-outline">Book a visit</div></div>
+                  </div>
+                </div></div>
+            </div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">P2 · Clinical Neutral</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            A cool grey system with the violet muted further still — <code>#5f4b96</code>, and used
+            only on primary actions. This is how real imaging software looks, and a neutral surround
+            is genuinely better for judging greyscale ultrasound, because a tinted chrome shifts how
+            the image reads. Safest contrast of the three. Costs the brand recognition P1 buys.
+          </p>
+        </label>
+
+        <!-- P3 -->
+        <label class="opt">
+          <div class="flex items-center gap-2 mb-2">
+            <input type="radio" name="p0" value="P3 athenahealth — their official brand purple, teal, CTA green and alert orange" class="radio radio-primary radio-sm">
+            <span class="text-xs font-semibold opacity-70">Choose this option</span>
+          </div>
+          <div class="pal-3">
+            <div class="swatches mb-2">
+              <div><div class="sw" style="background:#582c83"></div><div class="swlabel">582c83</div></div>
+              <div><div class="sw" style="background:#0093b2"></div><div class="swlabel">0093b2</div></div>
+              <div><div class="sw" style="background:#62bb46"></div><div class="swlabel">62bb46</div></div>
+              <div><div class="sw" style="background:#f26522"></div><div class="swlabel">f26522</div></div>
+              <div><div class="sw" style="background:#a50050"></div><div class="swlabel">a50050</div></div>
+              <div><div class="sw" style="background:#ededee"></div><div class="swlabel">ededee</div></div>
+            </div>
+            <div class="flex gap-3">
+              <div class="phone only-mob"><div class="screen">
+                <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 1/2</span></div>
+                <div class="flex-1 frameimg">frame 34 / 100</div>
+                <div class="p-2 space-y-2" style="background:var(--color-base-200)">
+                  <div class="h-1 rounded" style="background:color-mix(in oklch,var(--color-base-content) 20%,transparent)"><div class="h-1 rounded bg-primary" style="width:34%"></div></div>
+                  <div class="flex items-center justify-between">
+                    <div class="flex gap-1.5"><div class="btn btn-xs btn-square">‹</div><div class="btn btn-xs btn-square btn-primary">▶</div><div class="btn btn-xs btn-square">›</div></div>
+                    <div class="btn btn-xs">12 fps</div>
+                  </div>
+                  <div class="alert alert-warning alert-soft py-1 px-2" style="font-size:9px">2 frames unavailable</div>
+                </div>
+              </div></div>
+              <div class="desk only-desk"><div class="deskbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="deskurl">/studies</span></div>
+                <div class="screen" style="flex-direction:row">
+                  <div class="sidebar"><div class="font-bold mb-2" style="font-size:10px">Rosa Delgado</div>
+                    <div class="sideitem on">Imaging</div><div class="sideitem">Reports</div><div class="sideitem">Appointments</div><div class="sideitem">Shared links</div>
+                    <div class="mt-3 badge badge-success badge-xs">Unlocked 45m</div></div>
+                  <div class="flex-1 body">
+                    <div class="font-bold mb-2" style="font-size:12px">My imaging</div>
+                    <div class="grid grid-cols-3 gap-2">
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">OB ultrasound</div><div class="opacity-60">12 Jun · 6 img</div></div>
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Renal</div><div class="opacity-60">3 Apr · 4 img</div></div>
+                      <div class="tile p-2 space-y-1"><div class="rounded" style="height:44px;background:#000"></div><div class="font-semibold">Thyroid</div><div class="opacity-60">18 Jan · 8 img</div></div>
+                    </div>
+                    <div class="mt-2 flex gap-1"><div class="btn btn-xs btn-primary">Share</div><div class="btn btn-xs btn-outline">Book a visit</div></div>
+                  </div>
+                </div></div>
+            </div>
+          </div>
+          <div class="mt-2"><span class="optlabel text-sm">P3 · athenahealth</span></div>
+          <p class="note text-base-content/60 mt-1" style="max-width:560px">
+            Straight from athenahealth's published brand guide (<em>our brand colors</em>, Nov 2017),
+            not sampled from a screenshot: Purple <code>#582c83</code> (PMS 268) with white as the
+            primary pair, Teal <code>#0093b2</code> as accent, and their digital-only action colours —
+            CTA green <code>#62bb46</code> for positive, Alert orange <code>#f26522</code> for
+            notification, Ruby <code>#a50050</code> for error. A deeper, more restrained purple than
+            AS Software's, and it reads as established healthcare software rather than as a startup.
+            <strong>One catch their own guide states:</strong> only Purple, Ruby, Brown, Gray and
+            Black pass WCAG AA — Teal, Spring, Yellow and both action colours do not. So green and
+            orange are fills and indicators only, and any status <em>text</em> has to be near-black,
+            purple or ruby. That is a constraint on every status chip in the build (CQ-5).
+          </p>
+        </label>
+
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm mt-3">Queue this answer</button>
+    </form>
+  </div>
+</section>
+
 <div class="divider text-sm text-base-content/50" id="decisions">part 1 · five open decisions</div>
+
+<div role="alert" class="alert alert-soft alert-success text-sm">
+  <span>
+    <strong>How to answer.</strong> Each option has a <strong>Choose this option</strong> radio above
+    its mockups — the selected one gets a coloured outline. Clicking anywhere on an option selects it.
+    Then press <strong>Queue this answer</strong> at the bottom of that card. Nothing is sent until
+    you press <strong>Send to Agent</strong>, so you can change your mind. Part 2 below has no
+    controls by design — those screens are already specified; annotate any of them instead.
+  </span>
+</div>
 
 <!-- U-1 -->
 <section class="card card-border bg-base-100">
   <div class="card-body gap-4">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 class="card-title text-xl">U-1 · The patient navigation shell</h2>
+          <div class="mt-1"><span class="badge badge-success badge-sm">Resolved · bottom tab bar on mobile, sidebar on desktop</span></div>
       <p class="text-sm text-base-content/60 mt-1">Wraps every patient flow. Changes every patient page ticket.</p></div>
       <div class="flex gap-1"><span class="badge badge-soft badge-sm">CQ-4</span><span class="badge badge-soft badge-sm">CQ-5</span></div>
     </div>
@@ -117,7 +423,7 @@
       onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u1');if(!v)return;qp('U-1 patient shell: '+v,{tag:'ux',text:'U-1: '+v,element:event.currentTarget,queueKey:'u1',data:{q:'u1',a:v}});">
       <div class="gallery">
         <label class="opt">
-          <input type="radio" name="u1" value="Bottom tab bar on mobile, left sidebar on desktop" class="sr-only" checked>
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u1" value="Bottom tab bar on mobile, left sidebar on desktop" class="radio radio-primary radio-sm" checked><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar flex justify-between"><span class="font-bold">My imaging</span><span class="badge badge-success badge-xs">45m</span></div>
@@ -152,7 +458,7 @@
         </label>
 
         <label class="opt">
-          <input type="radio" name="u1" value="Top navbar with a slide-out drawer at both sizes" class="sr-only">
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u1" value="Top navbar with a slide-out drawer at both sizes" class="radio radio-primary radio-sm"><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar flex gap-2"><span>☰</span><span class="font-bold">My imaging</span></div>
@@ -188,6 +494,7 @@
   <div class="card-body gap-4">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 class="card-title text-xl">U-2 · Where the identity check happens</h2>
+          <div class="mt-1"><span class="badge badge-success badge-sm">Resolved · dedicated /verify route</span></div>
       <p class="text-sm text-base-content/60 mt-1">The 45-minute unlock expires mid-session, so this screen reappears. Where it appears is the decision.</p></div>
       <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-2</span><span class="badge badge-soft badge-sm">EC-1</span></div>
     </div>
@@ -195,7 +502,7 @@
       onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u2');if(!v)return;qp('U-2 identity gate: '+v,{tag:'ux',text:'U-2: '+v,element:event.currentTarget,queueKey:'u2',data:{q:'u2',a:v}});">
       <div class="gallery">
         <label class="opt">
-          <input type="radio" name="u2" value="Dedicated /verify route, redirect with return-to" class="sr-only" checked>
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u2" value="Dedicated /verify route, redirect with return-to" class="radio radio-primary radio-sm" checked><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar font-bold">Verify your identity</div>
@@ -229,7 +536,7 @@
         </label>
 
         <label class="opt">
-          <input type="radio" name="u2" value="Inline sheet or modal over the page that triggered it" class="sr-only">
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u2" value="Inline sheet or modal over the page that triggered it" class="radio radio-primary radio-sm"><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar font-bold">My imaging</div>
@@ -273,6 +580,7 @@
   <div class="card-body gap-4">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 class="card-title text-xl">U-3 · Cine controls</h2>
+          <div class="mt-1"><span class="badge badge-success badge-sm">Resolved · always-visible docked control bar</span></div>
       <p class="text-sm text-base-content/60 mt-1">The highest-value screen in the build. Priority 1 is 25 points and this is its centrepiece.</p></div>
       <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-4</span><span class="badge badge-soft badge-sm">EC-2</span><span class="badge badge-soft badge-sm">EC-4</span></div>
     </div>
@@ -280,7 +588,7 @@
       onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u3');if(!v)return;qp('U-3 cine controls: '+v,{tag:'ux',text:'U-3: '+v,element:event.currentTarget,queueKey:'u3',data:{q:'u3',a:v}});">
       <div class="gallery">
         <label class="opt">
-          <input type="radio" name="u3" value="Always-visible docked control bar" class="sr-only" checked>
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u3" value="Always-visible docked control bar" class="radio radio-primary radio-sm" checked><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar flex justify-between"><span>‹ OB ultrasound</span><span class="opacity-60">Clip 1/2</span></div>
@@ -321,7 +629,7 @@
         </label>
 
         <label class="opt">
-          <input type="radio" name="u3" value="Fading overlay controls, tap or move to summon" class="sr-only">
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u3" value="Fading overlay controls, tap or move to summon" class="radio radio-primary radio-sm"><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="flex-1 frameimg" style="position:relative">frame 34 / 100
@@ -350,7 +658,7 @@
         </label>
 
         <label class="opt">
-          <input type="radio" name="u3" value="Filmstrip scrubber with per-frame thumbnails" class="sr-only">
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u3" value="Filmstrip scrubber with per-frame thumbnails" class="radio radio-primary radio-sm"><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar">‹ OB ultrasound</div>
@@ -399,6 +707,7 @@
   <div class="card-body gap-4">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 class="card-title text-xl">U-4 · Sharing, and taking it back</h2>
+          <div class="mt-1"><span class="badge badge-success badge-sm">Resolved · item action + standing Shared links screen</span></div>
       <p class="text-sm text-base-content/60 mt-1">SEC-8 says a share link is never a permanent exposure — so revocation must be findable.</p></div>
       <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-5</span><span class="badge badge-soft badge-sm">FR-8</span><span class="badge badge-soft badge-sm">SEC-8</span></div>
     </div>
@@ -406,7 +715,7 @@
       onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u4');if(!v)return;qp('U-4 share flow: '+v,{tag:'ux',text:'U-4: '+v,element:event.currentTarget,queueKey:'u4',data:{q:'u4',a:v}});">
       <div class="gallery">
         <label class="opt">
-          <input type="radio" name="u4" value="Share action on the item, plus a standing Shared links screen" class="sr-only" checked>
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u4" value="Share action on the item, plus a standing Shared links screen" class="radio radio-primary radio-sm" checked><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar font-bold">Shared links</div>
@@ -442,7 +751,7 @@
         </label>
 
         <label class="opt">
-          <input type="radio" name="u4" value="One dedicated Share page that also lists active links" class="sr-only">
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u4" value="One dedicated Share page that also lists active links" class="radio radio-primary radio-sm"><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar font-bold">Share</div>
@@ -486,6 +795,7 @@
   <div class="card-body gap-4">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div><h2 class="card-title text-xl">U-5 · The provider availability editor</h2>
+          <div class="mt-1"><span class="badge badge-success badge-sm">Resolved · form + post-save outcome summary</span></div>
       <p class="text-sm text-base-content/60 mt-1">It must make ADR-0006's accept-and-flag outcome legible: what was removed, and which booked appointments now sit outside hours.</p></div>
       <div class="flex gap-1"><span class="badge badge-soft badge-sm">FR-10</span><span class="badge badge-soft badge-sm">EC-8</span></div>
     </div>
@@ -493,7 +803,7 @@
       onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('u5');if(!v)return;qp('U-5 availability editor: '+v,{tag:'ux',text:'U-5: '+v,element:event.currentTarget,queueKey:'u5',data:{q:'u5',a:v}});">
       <div class="gallery">
         <label class="opt">
-          <input type="radio" name="u5" value="Form-based weekday list with a post-save outcome summary" class="sr-only" checked>
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u5" value="Form-based weekday list with a post-save outcome summary" class="radio radio-primary radio-sm" checked><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar font-bold">Availability</div>
@@ -541,7 +851,7 @@
         </label>
 
         <label class="opt">
-          <input type="radio" name="u5" value="Interactive weekly calendar grid, drag to set hours" class="sr-only">
+          <div class="flex items-center gap-2 mb-2"><input type="radio" name="u5" value="Interactive weekly calendar grid, drag to set hours" class="radio radio-primary radio-sm"><span class="text-xs font-semibold opacity-70">Choose this option</span></div>
           <div class="flex gap-3">
             <div class="phone only-mob"><div class="screen">
               <div class="bar font-bold">Availability</div>
@@ -587,10 +897,34 @@
 <!-- ══════════════════ PART 2 · SCREEN GALLERY ══════════════════ -->
 <div class="divider text-sm text-base-content/50">part 2 · the full screen set</div>
 
+<div class="card card-border bg-base-100">
+  <div class="card-body gap-3">
+    <h3 class="card-title text-base">What the gallery below is now drawing</h3>
+    <div class="overflow-x-auto rounded-box border border-base-content/10">
+      <table class="table table-sm">
+        <thead><tr><th class="w-24">Decision</th><th>Resolved as</th><th class="w-28">State</th></tr></thead>
+        <tbody>
+          <tr><td class="font-semibold">P-0 palette</td><td><strong>P1 · AS Brand, muted</strong> — violet #6b46a8, plum #3b2a54, cyan #1d8fa5, Figtree</td><td><span class="badge badge-success badge-sm">Resolved</span></td></tr>
+          <tr><td class="font-semibold">U-1 shell</td><td>Bottom tab bar on mobile, left sidebar on desktop</td><td><span class="badge badge-success badge-sm">Resolved</span></td></tr>
+          <tr><td class="font-semibold">U-2 identity</td><td>Dedicated <code>/verify</code> route, redirect with return-to</td><td><span class="badge badge-success badge-sm">Resolved</span></td></tr>
+          <tr><td class="font-semibold">U-3 cine</td><td>Always-visible docked control bar</td><td><span class="badge badge-success badge-sm">Resolved</span></td></tr>
+          <tr><td class="font-semibold">U-4 sharing</td><td>Share action on the item, plus a standing Shared links screen</td><td><span class="badge badge-success badge-sm">Resolved</span></td></tr>
+          <tr><td class="font-semibold">U-5 availability</td><td>Form-based weekday list with a post-save outcome summary</td><td><span class="badge badge-success badge-sm">Resolved</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-sm text-base-content/60">
+      All six are resolved, and the gallery below draws every one of them. These answers are now
+      written into <code>UX_SPEC.md</code> and <code>docs/adr/0010</code> — the source of truth the
+      build's UI gate checks against. The <strong>Palette</strong> switcher in the bar above still
+      works if you want to sanity-check P1 against the other two on real screens.
+    </p>
+  </div>
+</div>
+
 <div role="alert" class="alert alert-soft alert-info text-sm">
   <span>
-    <strong>These are drawn as specified, not as options.</strong> They show what the recommended
-    decisions above produce. Annotate any screen you want changed and it becomes a correction to
+    <strong>These are drawn as specified, not as options.</strong> Annotate any screen you want changed and it becomes a correction to
     <code>UX_SPEC.md</code>. Failure and empty states are included deliberately — the PRD grades
     them (EC-1 to EC-12) and a happy-path-only submission is meant to visibly fail there.
   </span>
@@ -1258,6 +1592,14 @@
 
 </main>
 <script>
+  document.querySelectorAll('[data-pal-btn]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('[data-pal-btn]').forEach(function (x) { x.classList.remove('tab-active'); });
+      b.classList.add('tab-active');
+      document.body.classList.remove('pal-1', 'pal-2', 'pal-3');
+      document.body.classList.add(b.dataset.palBtn);
+    });
+  });
   document.querySelectorAll('[data-view-btn]').forEach(function (b) {
     b.addEventListener('click', function () {
       document.querySelectorAll('[data-view-btn]').forEach(function (x) { x.classList.remove('tab-active'); });
