@@ -1,4 +1,7 @@
 // lib/config.ts — the ONLY module reading process.env (ARCHITECTURE.md §2, §8)
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+
 export type Config = {
   supabaseUrl: string
   supabaseAnonKey: string
@@ -75,7 +78,34 @@ function optionalPositiveInt(name: string): number | null {
   return parsePositiveInt(name, raw)
 }
 
+// Backs the four required variables with .env.test placeholders, but only
+// when Playwright's own CLI is the one requiring this module — never for
+// `next build`/`next start`/`next dev`, and never for Vitest, which manages
+// its own env per test (tests/config/config.test.ts relies on being able to
+// unset a required variable and see loadConfig reject). A variable already
+// set in the real environment always wins (fallback only fills gaps), so a
+// real deployment that's missing one still fails loudly.
+function applyTestEnvFallback(): void {
+  const isPlaywright = process.argv[1]?.includes('playwright') ?? false
+  if (!isPlaywright) return
+
+  const envTestPath = path.resolve(__dirname, '..', '.env.test')
+  if (!existsSync(envTestPath)) return
+
+  for (const line of readFileSync(envTestPath, 'utf8').split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    const separatorIndex = trimmed.indexOf('=')
+    if (separatorIndex === -1) continue
+    const key = trimmed.slice(0, separatorIndex).trim()
+    const value = trimmed.slice(separatorIndex + 1).trim()
+    if (process.env[key] === undefined) process.env[key] = value
+  }
+}
+
 function loadConfig(): Config {
+  applyTestEnvFallback()
+
   const supabaseUrl = requireString('NEXT_PUBLIC_SUPABASE_URL')
   const supabaseAnonKey = requireString('NEXT_PUBLIC_SUPABASE_ANON_KEY')
   const supabaseServiceRoleKey = requireString('SUPABASE_SERVICE_ROLE_KEY')

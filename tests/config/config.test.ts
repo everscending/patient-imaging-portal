@@ -261,6 +261,41 @@ describe('.env.example — acceptance + adversarial: complete, ordered, placehol
   })
 })
 
+describe('.env.test fallback — acceptance: Playwright gets a usable value without weakening the real check (JOR-270)', () => {
+  const originalArgv1 = process.argv[1]
+
+  afterEach(() => {
+    process.argv[1] = originalArgv1
+  })
+
+  test('a process whose entrypoint looks like Playwright resolves the four required vars from .env.test when unset', async () => {
+    process.argv[1] = '/repo/node_modules/.bin/playwright'
+    const { config } = await loadConfig({
+      NEXT_PUBLIC_SUPABASE_URL: undefined,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: undefined,
+      SUPABASE_SERVICE_ROLE_KEY: undefined,
+      SOURCE_REF_SALT: undefined,
+    })
+    expect(config.supabaseUrl).toBe('https://test-project.supabase.co')
+    expect(config.supabaseAnonKey).toBe('test-anon-key')
+    expect(config.supabaseServiceRoleKey).toBe('test-service-role-key')
+    expect(config.sourceRefSalt).toBe('test-source-ref-salt')
+  })
+
+  test('adversarial: a real value already set always wins over .env.test, even under Playwright', async () => {
+    process.argv[1] = '/repo/node_modules/.bin/playwright'
+    const { config } = await loadConfig({ NEXT_PUBLIC_SUPABASE_URL: 'https://real-prod.supabase.co' })
+    expect(config.supabaseUrl).toBe('https://real-prod.supabase.co')
+  })
+
+  test('adversarial: a non-Playwright entrypoint (e.g. a real deployment) still fails loudly when a required var is missing', async () => {
+    process.argv[1] = '/repo/node_modules/.bin/next'
+    await expect(loadConfig({ NEXT_PUBLIC_SUPABASE_URL: undefined })).rejects.toThrow(
+      /NEXT_PUBLIC_SUPABASE_URL/,
+    )
+  })
+})
+
 describe('repo-wide guards', () => {
   test('process.env appears only in lib/config.ts and this test file', () => {
     // lib/config.ts is production code's sole reader (ARCHITECTURE.md §2).
