@@ -132,7 +132,7 @@ describe('repo-wide guards', () => {
     // table's own "published 0:5432" value contains the literal. What must
     // never be 5432 is the resolved *host* port, covered by the
     // TEST_PG_PORT-unset adversarial test in tests/integration.
-    const candidates = ['scripts/gate.sh', '.loom.yml', 'vitest.config.ts', 'playwright.config.ts', 'k6/README.md']
+    const candidates = ['scripts/gate.sh', '.loom.yml', 'vitest.config.ts', 'playwright.config.ts', 'k6/README.md', 'vercel.json']
     for (const file of candidates) {
       const content = readFileSync(path.join(REPO_ROOT, file), 'utf8')
       for (const port of ['3000', '5432', '5433', '8080']) {
