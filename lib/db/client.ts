@@ -37,3 +37,30 @@ export function serviceClient(): SupabaseClient {
 export function authClient(): SupabaseClient {
   return createClient(config.supabaseUrl, config.supabaseAnonKey)
 }
+
+/** Updates the caller's own Auth metadata with the caller's bearer token.
+ *
+ * Supabase JS's auth.updateUser() requires a locally persisted full session,
+ * including the refresh token. The app deliberately stores only the access
+ * token in its HTTP-only session cookie, so the server uses the equivalent
+ * GoTrue wire call directly. This stays account-scoped: the service role is
+ * not involved and Auth derives the target account from the bearer token.
+ */
+export async function updateOwnAccountMetadata(
+  accessToken: string,
+  metadata: { full_name: string; phone: string | null },
+): Promise<boolean> {
+  if (!accessToken) throw new Error('updateOwnAccountMetadata: accessToken is required')
+
+  const response = await fetch(`${config.supabaseUrl}/auth/v1/user`, {
+    method: 'PUT',
+    headers: {
+      apikey: config.supabaseAnonKey,
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ data: metadata }),
+    cache: 'no-store',
+  })
+  return response.ok
+}

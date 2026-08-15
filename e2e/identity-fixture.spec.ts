@@ -3,13 +3,28 @@
 // behavior belongs to e2e/verify.spec.ts; these checks stay at the fixture seam.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
+const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
+
+async function acquireIdentityFixture(): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(IDENTITY_FIXTURE_LOCK)
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  throw new Error('identity fixture lock timed out')
+}
 
 async function fakeServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -29,6 +44,9 @@ async function registerAndSignIn(request: APIRequestContext): Promise<void> {
 
 test.describe('JOR-273 shared identity/profile fixture', () => {
   test.describe.configure({ mode: 'serial' })
+
+  test.beforeAll(acquireIdentityFixture)
+  test.afterAll(async () => rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true }))
 
   test.beforeEach(async ({ request }) => {
     await resetIdentity(request)

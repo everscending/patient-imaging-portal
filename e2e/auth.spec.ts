@@ -325,14 +325,15 @@ test.describe('Registering, signing in, and reaching a session-only page', () =>
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
   })
 
-  // /profile's page.tsx belongs to JOR-263 — this only proves middleware
-  // itself never blocks a session-only route it doesn't own the content of.
-  test('acceptance: sessionOnlyRoute_profile_isNotBlockedByMiddleware (404, not a redirect)', async ({
+  // /profile's page.tsx belongs to JOR-263 — this proves middleware keeps
+  // treating the now-implemented page as session-only rather than requiring
+  // an identity link.
+  test('acceptance: sessionOnlyRoute_profile_isNotBlockedByMiddleware', async ({
     request,
   }) => {
     await registerAndSignIn(request)
     const response = await request.get('/profile', { maxRedirects: 0 })
-    expect(response.status()).toBe(404)
+    expect(response.status()).toBe(200)
   })
 })
 
