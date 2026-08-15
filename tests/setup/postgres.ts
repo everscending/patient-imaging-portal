@@ -163,13 +163,40 @@ function runMigrations(dbName: string, dir: string = MIGRATIONS_DIR): void {
   }
 }
 
+// db/migrations/001_core.sql (the first real migration) references
+// auth.users(id) — a table Supabase provides and stock postgres:16-alpine
+// does not. Stubbed here, once, for every fresh run, so any migration set
+// that names auth.* applies clean. `create role app_user nologin` (also
+// pinned, no `if not exists`) is cluster-global, not per-database, so it
+// outlives DROP DATABASE and collides with the next run's `create role` in
+// this same shared container — dropped first for the same reason.
+const AUTH_STUB_SQL = `
+create schema if not exists auth;
+create table if not exists auth.users (
+  id uuid primary key default gen_random_uuid()
+);
+create or replace function auth.uid() returns uuid
+language sql stable
+as $$ select null::uuid $$;
+`
+
+function prepareClusterForRun(): void {
+  psql(MAINTENANCE_DB, 'drop role if exists app_user;')
+}
+
+function stubAuth(dbName: string): void {
+  psqlFile(dbName, AUTH_STUB_SQL)
+}
+
 // Creates a fresh, migrated pip_run_<random> database and registers it so
 // the startup sweep can find it if this run never calls stopRun. Two calls —
 // concurrent or not — never collide: each generates its own random name.
 export async function startRun(container: Container, migrationsDir?: string): Promise<Run> {
   const dbName = randomDbName()
+  prepareClusterForRun()
   psql(MAINTENANCE_DB, `CREATE DATABASE "${dbName}";`)
   psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
+  stubAuth(dbName)
   runMigrations(dbName, migrationsDir)
   return {
     dbName,
