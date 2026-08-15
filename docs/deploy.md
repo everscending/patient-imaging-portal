@@ -86,3 +86,19 @@ guessed object path in `phi`, both made after the run record above.
 | --- | --- | --- | --- | --- |
 | 2026-08-15T18:23:53Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
 | 2026-08-15T18:23:53Z | Guessed object in `phi` | 400 | — | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
+
+## E0 wiring confirmation (JOR-217)
+
+Appended by `e2e/e0-wiring.spec.ts`, the wiring ticket's own live check —
+never edited after the fact, one entry per run.
+
+| Timestamp (UTC) | Commit | Gate tiers (exit code) | Scratch clone's ui-tier port | Deployed URL check |
+| --- | --- | --- | --- | --- |
+| 2026-08-15T19:24:26.460Z | `dbfbad8533fe522d5faace95ef550dc5171ce26a` | logic: 0, api: 0, ui: 0 | 51790 | https://patient-imaging-portal.vercel.app — HTTP 200, matches origin/main HEAD: true |
+
+Running skeleton checked on `config.port` (`PORT=4310` in this environment,
+ADR-0013 default); the scratch clone's own nested `ui` tier ran its Next
+server on the ephemeral port above, never 4310, to avoid claiming the port
+this very test run was already using (§9). The test Postgres harness
+(`pip-testpg`) published its own ephemeral host port, read back by
+`tests/setup/postgres.ts`, for every gate tier above that touched it.
