@@ -14,6 +14,7 @@ import {
 
 const runsToClean: Awaited<ReturnType<typeof startRun>>[] = []
 const CORE_MIGRATION_PATH = join(process.cwd(), 'db', 'migrations', '001_core.sql')
+const HARNESS_TEST_TIMEOUT_MS = 15_000
 
 function psql(dbName: string, sql: string): string {
   // -q suppresses command completion tags ("SET", "INSERT 0 1") that -tA
@@ -39,14 +40,14 @@ describe('container — acceptance: pip-testpg on postgres:16-alpine, ephemeral 
       encoding: 'utf8',
     }).trim()
     expect(image).toBe('postgres:16-alpine')
-  })
+  }, HARNESS_TEST_TIMEOUT_MS)
 
   test('adversarial: TEST_PG_PORT unset — the resolved port is never 5432', async () => {
     expect(process.env.TEST_PG_PORT).toBeUndefined()
     const container = await ensureContainer()
     expect(container.port).not.toBe(5432)
     expect(container.port).toBeGreaterThan(0)
-  })
+  }, HARNESS_TEST_TIMEOUT_MS)
 })
 
 describe('isolation — acceptance + adversarial: a database per run, never shared', () => {
@@ -66,8 +67,9 @@ describe('isolation — acceptance + adversarial: a database per run, never shar
     // Two full `startRun`s (each: CREATE DATABASE, registry insert, auth
     // stub, migrations) queue behind each other on this single Node
     // process's synchronous docker-exec calls — no real thread-level
-    // parallelism to shrink this. Default 5000ms has no headroom left once a
-    // nested scratch-clone gate run contends for the same Docker daemon.
+    // parallelism to shrink this. HARNESS_TEST_TIMEOUT_MS has no headroom
+    // left once a nested scratch-clone gate run contends for the same
+    // Docker daemon.
     20_000,
   )
 
@@ -103,7 +105,7 @@ describe('isolation — acceptance + adversarial: a database per run, never shar
       if (first) await stopRun(first).catch(() => {})
       rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, HARNESS_TEST_TIMEOUT_MS)
 })
 
 describe('migrations — acceptance: db/migrations/*.sql applied in filename order', () => {
@@ -141,7 +143,7 @@ describe('migrations — acceptance: db/migrations/*.sql applied in filename ord
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, HARNESS_TEST_TIMEOUT_MS)
 })
 
 describe('sweep — acceptance + adversarial: a leaked pip_run_* database is dropped on startup', () => {
@@ -158,5 +160,5 @@ describe('sweep — acceptance + adversarial: a leaked pip_run_* database is dro
     expect(swept).toContain(stale.dbName)
     expect(_databaseExistsForTest(stale.dbName)).toBe(false)
     expect(_databaseExistsForTest(fresh.dbName)).toBe(true)
-  })
+  }, HARNESS_TEST_TIMEOUT_MS)
 })
