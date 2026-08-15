@@ -28,3 +28,12 @@ export function anonClient(accessToken: string): SupabaseClient {
 export function serviceClient(): SupabaseClient {
   return createClient(config.supabaseUrl, config.supabaseServiceRoleKey)
 }
+
+/** Unauthenticated client for Supabase Auth flows only — register and login
+ *  (JOR-229, ADR-0012 #15). No session exists yet to attach as a bearer
+ *  token, and none of these calls touch a table RLS would gate, so neither
+ *  anonClient nor serviceClient fits. Legal nowhere but the two auth routes
+ *  and the middleware session check. */
+export function authClient(): SupabaseClient {
+  return createClient(config.supabaseUrl, config.supabaseAnonKey)
+}

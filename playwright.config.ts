@@ -8,4 +8,12 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${config.port}`,
   },
+  // Boots the fake Supabase Auth server plus the real Next app against it
+  // (e2e/fixtures/start-test-server.mjs, JOR-229) — first `next dev` compile
+  // can be slow, hence the generous timeout.
+  webServer: {
+    command: 'node e2e/fixtures/start-test-server.mjs',
+    url: `http://localhost:${config.port}`,
+    timeout: 120_000,
+  },
 })

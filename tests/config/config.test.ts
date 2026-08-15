@@ -311,7 +311,13 @@ describe('repo-wide guards', () => {
     // ARCHITECTURE.md §8 names `TEST_PG_PORT`'s reader as "test harness", not
     // lib/config.ts — JOR-195's tests/setup/postgres.ts and the test files
     // that exercise it are the other legitimate readers this guard allows.
+    // JOR-229's e2e/fixtures/start-test-server.mjs joins them: it spawns the
+    // Next server as a child process and must pass that child an environment
+    // with NEXT_PUBLIC_SUPABASE_URL overridden to the fake auth server it
+    // just started — not a config.ts concern, since nothing here is read by
+    // application code, only forwarded to a child process's own environment.
     expect(hits.sort()).toEqual([
+      'e2e/fixtures/start-test-server.mjs',
       'lib/config.ts',
       'tests/config/config.test.ts',
       'tests/gate/gate.test.ts',
