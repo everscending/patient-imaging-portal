@@ -84,6 +84,19 @@ test.describe('GET /api/health — acceptance: the pinned §6 shape, always 200'
     expect(source).not.toMatch(/cookies\(/)
     expect(source).not.toMatch(/getSessionToken/)
   })
+
+  test('acceptance (static): health_dependencyDownWritesOneStructuredLogLineNamingDependencyAndOutcomeNoPHI', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'app/api/health/route.ts'), 'utf8')
+    // One console.error call per down dependency, each a JSON object naming
+    // only the dependency and the outcome — never the caught error, so the
+    // line can never carry a connection string, a host name or PHI.
+    const logCalls = source.match(/console\.error\(JSON\.stringify\(\{[^}]*\}\)\)/g) ?? []
+    expect(logCalls.length).toBe(1)
+    expect(logCalls[0]).toMatch(/dependency/)
+    expect(logCalls[0]).toMatch(/outcome:\s*'down'/)
+    expect(source).toMatch(/if \(database === 'down'\) logDependencyDown\('database'\)/)
+    expect(source).toMatch(/if \(storage === 'down'\) logDependencyDown\('storage'\)/)
+  })
 })
 
 test.describe('GET /api/health — mandatory adversarial tests', () => {
