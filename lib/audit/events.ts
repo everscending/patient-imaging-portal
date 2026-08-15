@@ -1,7 +1,10 @@
 // lib/audit/events.ts — the ONLY writer to audit_events (ARCHITECTURE.md §2, §3).
 import 'server-only'
 
-import { serviceClient } from '../db/client'
+import { cookies } from 'next/headers'
+
+import { anonClient } from '../db/client'
+import { SESSION_COOKIE_NAME } from '../session-cookie'
 
 // §3's CHECK constraint carries the same 22 strings, verbatim
 // (tests/db/migration-002.test.ts proves the migration and this type agree).
@@ -39,10 +42,10 @@ export type RecordAuditEventInput = {
   detail?: Record<string, string | number | boolean> // never PHI (SEC-6)
 }
 
-// The same type serviceClient() already returns — reusing it via ReturnType
+// The same type anonClient() already returns — reusing it via ReturnType
 // keeps this file from having to import a Supabase SDK type directly, which
 // only lib/db/client.ts may do (ARCHITECTURE.md §2 row 3).
-type WriteClient = ReturnType<typeof serviceClient>
+type WriteClient = ReturnType<typeof anonClient>
 
 // SEC-6: detail carries identifiers, counts and outcomes only. These are the
 // PHI-shaped keys a caller could plausibly reach for by mistake — a closed
@@ -72,6 +75,23 @@ function logWriteFailure(action: AuditAction, error: string): void {
   console.error(JSON.stringify({ event: 'audit_events.write_failed', action, error }))
 }
 
+// The pinned recordAuditEvent signature carries no accessToken parameter, so
+// the caller's session is read off the request the same way middleware.ts
+// reads it — the session cookie (lib/session-cookie.ts) — except here there
+// is no NextRequest in scope, so it comes from next/headers instead. This is
+// the ticket's non-relitigable design decision: writes go through the
+// caller's own client (P2 anonClient), never serviceClient(), so the
+// audit_events append-only grant (§3, §4) is what's actually enforcing
+// append-only — not the accident of nothing calling UPDATE/DELETE yet.
+async function callerAccessToken(): Promise<string> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (!token) {
+    throw new Error('recordAuditEvent: no caller session token available')
+  }
+  return token
+}
+
 /**
  * Appends one row to audit_events. Resolves void either way: a failed
  * append is logged (SEC-6: no PHI) and never rethrown into the caller's
@@ -87,7 +107,8 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
   }
 
   try {
-    const client: WriteClient = serviceClient()
+    const accessToken = await callerAccessToken()
+    const client: WriteClient = anonClient(accessToken)
     const { error } = await client.from('audit_events').insert({
       actor_kind: input.actorKind,
       actor_ref: input.actorRef,

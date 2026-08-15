@@ -1,13 +1,17 @@
 // tests/audit/events.test.ts — the audit writer's own tests (JOR-238).
 //
-// lib/audit/events.ts's only production dependency is lib/db/client.ts's
-// serviceClient(), which itself talks to Supabase's REST layer. There is no
-// PostgREST server in this repo's test harness (tests/setup/postgres.ts
-// starts a bare postgres:16-alpine container for schema-level tests) and this
-// ticket has no live route to exercise one against (ADR-0012, "No live-app
-// contact in this ticket"). So — exactly like tests/notify/email.test.ts
-// stubs the Resend SDK — this file stubs lib/db/client.ts's serviceClient()
-// with an in-memory fake table and asserts against that.
+// lib/audit/events.ts's only production dependencies are lib/db/client.ts's
+// anonClient() and next/headers's cookies() (recordAuditEvent's pinned
+// signature carries no accessToken parameter, so it reads the caller's
+// session cookie itself, the same way middleware.ts reads it off a request).
+// anonClient() itself talks to Supabase's REST layer. There is no PostgREST
+// server in this repo's test harness (tests/setup/postgres.ts starts a bare
+// postgres:16-alpine container for schema-level tests) and this ticket has no
+// live route to exercise one against (ADR-0012, "No live-app contact in this
+// ticket"). So — exactly like tests/notify/email.test.ts stubs the Resend
+// SDK — this file stubs lib/db/client.ts's anonClient() with an in-memory
+// fake table, and next/headers's cookies() with a fake session cookie, and
+// asserts against those.
 //
 // Bullet → test function (this ticket's "Mandatory adversarial tests"):
 //   an action string outside the 22-value set, rejected at the type boundary
@@ -42,11 +46,26 @@ vi.mock('server-only', () => ({}))
 
 type FakeAuditRow = Record<string, unknown>
 
-const { auditRows, serviceClientMock, resetFakeAuditTable, setInsertBehavior } = vi.hoisted(() => {
+const {
+  auditRows,
+  anonClientMock,
+  resetFakeAuditTable,
+  setInsertBehavior,
+  setCallerHasSession,
+  hasCallerSession,
+  FAKE_SESSION_COOKIE_NAME,
+  FAKE_ACCESS_TOKEN,
+} = vi.hoisted(() => {
   const rows: FakeAuditRow[] = []
   let behavior: 'ok' | 'pg-error' | 'throw' = 'ok'
+  let callerHasSession = true
+  // Must match lib/session-cookie.ts's SESSION_COOKIE_NAME — kept as a
+  // literal here rather than an import, since a vi.mock factory can only see
+  // names hoisted alongside it, not the module's regular top-level imports.
+  const cookieName = 'pip_session'
+  const accessToken = 'fake-caller-access-token'
 
-  const serviceClientMock = vi.fn(() => ({
+  const anonClientMock = vi.fn(() => ({
     from(table: string) {
       if (table !== 'audit_events') throw new Error(`fake client: unexpected table "${table}"`)
       return {
@@ -62,21 +81,53 @@ const { auditRows, serviceClientMock, resetFakeAuditTable, setInsertBehavior } =
 
   return {
     auditRows: rows,
-    serviceClientMock,
+    anonClientMock,
     resetFakeAuditTable: () => {
       rows.length = 0
       behavior = 'ok'
+      callerHasSession = true
     },
     setInsertBehavior: (next: 'ok' | 'pg-error' | 'throw') => {
       behavior = next
     },
+    setCallerHasSession: (next: boolean) => {
+      callerHasSession = next
+    },
+    // A function, not a plain value, so the next/headers mock factory below
+    // (hoisted alongside this block) reads the live flag on every call
+    // rather than a snapshot taken at module-init time.
+    hasCallerSession: () => callerHasSession,
+    FAKE_SESSION_COOKIE_NAME: cookieName,
+    FAKE_ACCESS_TOKEN: accessToken,
   }
 })
 
 vi.mock('../../lib/db/client', () => ({
-  serviceClient: serviceClientMock,
-  anonClient: vi.fn(),
+  serviceClient: vi.fn(),
+  anonClient: anonClientMock,
   authClient: vi.fn(),
+}))
+
+// lib/session-cookie.ts itself imports lib/config.ts, which requires four
+// real environment variables at module load (lib/config.ts's loadConfig) —
+// irrelevant to this file, which only wants the cookie name constant, so it
+// gets stubbed like lib/db/client.ts above rather than pulling config's
+// requirements into a test that has nothing to do with them.
+vi.mock('../../lib/session-cookie', () => ({
+  SESSION_COOKIE_NAME: FAKE_SESSION_COOKIE_NAME,
+}))
+
+// recordAuditEvent has no accessToken parameter (the pinned signature), so it
+// reads the caller's session cookie via next/headers itself — the same thing
+// a real request-scoped Server Component/Route Handler would return.
+vi.mock('next/headers', () => ({
+  cookies: async () => ({
+    get: (name: string) => {
+      if (name !== FAKE_SESSION_COOKIE_NAME) return undefined
+      if (!hasCallerSession()) return undefined
+      return { value: FAKE_ACCESS_TOKEN }
+    },
+  }),
 }))
 
 import type { AuditAction, RecordAuditEventInput } from '../../lib/audit/events'
@@ -87,7 +138,7 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 
 beforeEach(() => {
   resetFakeAuditTable()
-  serviceClientMock.mockClear()
+  anonClientMock.mockClear()
 })
 
 afterEach(() => {
@@ -119,6 +170,11 @@ describe('AC: recordAuditEvent appends one row inside the pinned action/outcome 
       outcome: 'granted',
       detail: null,
     })
+  })
+
+  test('recordAuditEventWritesThroughAnonClientWithTheCallerSessionToken', async function recordAuditEventWritesThroughAnonClientWithTheCallerSessionToken() {
+    await recordAuditEvent(baseInput())
+    expect(anonClientMock).toHaveBeenCalledWith(FAKE_ACCESS_TOKEN)
   })
 
   test('outcomeOutsideGrantedDeniedRejectedAtTypeBoundary', function outcomeOutsideGrantedDeniedRejectedAtTypeBoundary() {
@@ -253,6 +309,15 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
     expect(errorSpy).toHaveBeenCalledTimes(1)
+  })
+
+  test('aCallWithNoCallerSessionCookieIsLoggedAndSwallowedNotRethrown', async function aCallWithNoCallerSessionCookieIsLoggedAndSwallowedNotRethrown() {
+    setCallerHasSession(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(0)
   })
 })
 
