@@ -641,8 +641,16 @@ append-only claim true:
 ```sql
 -- The role is created here, in the first migration that references it. §4's
 -- grant block runs later and assumes it exists — declared in the wrong order,
--- migration 001 dies on `role "app_user" does not exist`.
-create role app_user nologin;                -- on Supabase this is `authenticated`
+-- migration 001 dies on `role "app_user" does not exist`. The test Postgres
+-- is shared across run databases, so repeat migration runs must preserve the
+-- cluster-global role once any live database grants privileges to it.
+do $$
+begin
+  create role app_user nologin;              -- on Supabase this is `authenticated`
+exception when duplicate_object then
+  null;
+end
+$$;
 
 revoke all on audit_events from public;
 grant select, insert on audit_events to app_user;

@@ -11,8 +11,21 @@ create type actor_kind          as enum ('account','share_recipient','system');
 
 -- The role is created here, in the first migration that references it. §4's
 -- grant block runs later and assumes it exists — declared in the wrong order,
--- migration 001 dies on `role "app_user" does not exist`.
-create role app_user nologin;                -- on Supabase this is `authenticated`
+-- migration 001 dies on `role "app_user" does not exist`. Idempotent via a
+-- duplicate_object rescue rather than an `if not exists (select ... from
+-- pg_roles)` check, because a pre-check would itself name `app_user` before
+-- this statement does, and tests/db/migration-001.test.ts's
+-- appUserRoleCreatedFirst pins this as the first reference. The role is
+-- cluster-global and shared across concurrent runs (see
+-- tests/setup/postgres.ts) — it must survive a repeat CREATE, never be
+-- dropped and recreated.
+do $$
+begin
+  create role app_user nologin;                -- on Supabase this is `authenticated`
+exception when duplicate_object then
+  null;
+end
+$$;
 
 -- ── people ──────────────────────────────────────────────────────────────
 create table patients (

@@ -166,15 +166,17 @@ function runMigrations(dbName: string, dir: string = MIGRATIONS_DIR): void {
 // db/migrations/001_core.sql (the first real migration) references
 // auth.users(id) — a table Supabase provides and stock postgres:16-alpine
 // does not. Stubbed here, once, for every fresh run, so any migration set
-// that names auth.* applies clean. `create role app_user nologin` (also
-// pinned, no `if not exists`) is cluster-global, not per-database, so it
-// outlives DROP DATABASE and collides with the next run's `create role` in
-// this same shared container — dropped first for the same reason. Per
-// ADR-0013 this container is shared across concurrent lanes/worktrees, so
-// the drop-then-recreate span is held under a session-level Postgres
-// advisory lock (see withRoleLock below) rather than run bare: otherwise
-// another worktree's startRun() could drop the role out from under a run
-// that already migrated and is relying on it existing.
+// that names auth.* applies clean. `create role app_user nologin` is
+// cluster-global, not per-database, so it outlives DROP DATABASE — migration
+// 001 provisions it idempotently (a duplicate_object rescue) and this
+// harness never drops it. Once any live pip_run_* database holds a GRANT on
+// it (JOR-222), `DROP ROLE` fails cluster-wide with
+// dependent_objects_still_exist for every other live run, so dropping it
+// between runs is never safe. Per ADR-0013 this container is shared across
+// concurrent lanes/worktrees, so the first-time CREATE ROLE is still held
+// under a session-level Postgres advisory lock (see withRoleLock below):
+// two concurrent first-time provisioning attempts on the same role name
+// would otherwise race the same way a drop-then-recreate used to.
 const AUTH_STUB_SQL = `
 create schema if not exists auth;
 create table if not exists auth.users (
@@ -185,18 +187,18 @@ language sql stable
 as $$ select null::uuid $$;
 `
 
-// Arbitrary fixed key identifying "the app_user role reset" as a cluster-wide
-// critical section. Any process — this one or another worktree's — blocks on
-// pg_advisory_lock until whoever holds it finishes dropping and recreating
-// the role, so no process ever observes the role mid-reset.
-const ROLE_RESET_LOCK_KEY = 5942177
+// Arbitrary fixed key identifying "first-time app_user provisioning" as a
+// cluster-wide critical section. Any process — this one or another
+// worktree's — blocks on pg_advisory_lock until whoever holds it finishes
+// applying migrations, so two processes never race to CREATE ROLE at once.
+const ROLE_PROVISION_LOCK_KEY = 5942177
 
 // Holds a session-level Postgres advisory lock across `fn`, serializing it
-// against any other process's concurrent role reset — including another
-// worktree's vitest process hitting this same shared container (ADR-0013).
-// Needs one persistent connection (the lock is per-session), so this can't
-// go through the one-shot `psql()`/`dockerExec()` helpers, which spawn a
-// fresh connection per call.
+// against any other process's concurrent role provisioning — including
+// another worktree's vitest process hitting this same shared container
+// (ADR-0013). Needs one persistent connection (the lock is per-session), so
+// this can't go through the one-shot `psql()`/`dockerExec()` helpers, which
+// spawn a fresh connection per call.
 async function withRoleLock<T>(fn: () => T): Promise<T> {
   const proc = spawn('docker', ['exec', '-i', CONTAINER_NAME, 'psql', '-U', PG_USER, '-d', MAINTENANCE_DB, '-v', 'ON_ERROR_STOP=1', '-tA'])
 
@@ -231,14 +233,14 @@ async function withRoleLock<T>(fn: () => T): Promise<T> {
 
   try {
     const acquired = nextResponse()
-    proc.stdin.write('select pg_advisory_lock(' + ROLE_RESET_LOCK_KEY + ');\n')
+    proc.stdin.write('select pg_advisory_lock(' + ROLE_PROVISION_LOCK_KEY + ');\n')
     await acquired
 
     try {
       return fn()
     } finally {
       const released = nextResponse()
-      proc.stdin.write('select pg_advisory_unlock(' + ROLE_RESET_LOCK_KEY + ');\n')
+      proc.stdin.write('select pg_advisory_unlock(' + ROLE_PROVISION_LOCK_KEY + ');\n')
       await released
       proc.stdin.end()
       await new Promise((resolve) => proc.once('close', resolve))
@@ -247,10 +249,6 @@ async function withRoleLock<T>(fn: () => T): Promise<T> {
     proc.kill()
     throw err
   }
-}
-
-function prepareClusterForRun(): void {
-  psql(MAINTENANCE_DB, 'drop role if exists app_user;')
 }
 
 function stubAuth(dbName: string): void {
@@ -269,7 +267,6 @@ export async function startRun(container: Container, migrationsDir?: string): Pr
   psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
   stubAuth(dbName)
   await withRoleLock(() => {
-    prepareClusterForRun()
     runMigrations(dbName, migrationsDir)
   })
   return {
