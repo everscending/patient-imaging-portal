@@ -432,17 +432,34 @@ describe("AC: every index the pinned block declares exists (pg_indexes)", () => 
 })
 
 describe('AC: 001 creates no policy and enables RLS on no table', () => {
-  test('noRlsNoPolicies', function noRlsNoPolicies() {
-    const rlsEnabledTables = psql(
-      mainRun.dbName,
-      `select relname from pg_class
-       where relnamespace = 'public'::regnamespace and relrowsecurity = true;`,
-    )
-    expect(rlsEnabledTables).toBe('')
+  test(
+    'noRlsNoPolicies',
+    async function noRlsNoPolicies() {
+      // Scoped to 001 alone via its own migrationsDir — `mainRun` applies the
+      // whole db/migrations directory, and JOR-234's 003_rls.sql (which lands
+      // after this ticket) enables RLS and adds policies on top of 001+002.
+      // That is 003's own AC, not a regression here; this test's name promises
+      // "001 creates no policy", so it has to isolate 001 to keep meaning that.
+      const dir = buildMigrationDir({ '001_core.sql': MIGRATION_SQL })
+      let run: Run | undefined
+      try {
+        run = await startRun(container, dir)
+        const rlsEnabledTables = psql(
+          run.dbName,
+          `select relname from pg_class
+           where relnamespace = 'public'::regnamespace and relrowsecurity = true;`,
+        )
+        expect(rlsEnabledTables).toBe('')
 
-    const policyCount = psql(mainRun.dbName, `select count(*) from pg_policies where schemaname = 'public';`)
-    expect(policyCount).toBe('0')
-  })
+        const policyCount = psql(run.dbName, `select count(*) from pg_policies where schemaname = 'public';`)
+        expect(policyCount).toBe('0')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+        if (run) await stopRun(run)
+      }
+    },
+    30_000,
+  )
 })
 
 describe('adversarial: applying 001 to a database where btree_gist was dropped mid-file', () => {
