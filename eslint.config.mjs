@@ -27,8 +27,13 @@ const MODULE_TREE = [
 // The guard row's explicit non-PHI allowlist (ARCHITECTURE.md §2, §5).
 // Login and register are unauthenticated entrypoints — §5's PhiTarget union
 // has no auth-shaped variant, and ADR-0011 confirms registration links no
-// patient record. Neither route has a PHI target to guard.
-const GUARD_ALLOWLIST = ['app/api/auth/login/route.ts', 'app/api/auth/register/route.ts']
+// patient record. Health is an unauthenticated dependency-liveness probe
+// over metadata. None of these routes has a PHI target to guard.
+const GUARD_ALLOWLIST = [
+  'app/api/auth/login/route.ts',
+  'app/api/auth/register/route.ts',
+  'app/api/health/route.ts',
+]
 
 const APP_IMPORT_RE = /(^|\/)app\//
 const GUARD_IMPORT_RE = /(^|\/)lib\/access\/guard(\.ts)?$/
@@ -193,11 +198,16 @@ const localPlugin = {
 const eslintConfig = [
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
   {
+    // next-env.d.ts is Next.js-generated and carries a note not to hand-edit
+    // it; its triple-slash reference is the framework's own boilerplate, not
+    // something this repo authored, so it is excluded rather than the
+    // @typescript-eslint/triple-slash-reference rule weakened project-wide.
     ignores: [
       '.next/**',
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',
+      'next-env.d.ts',
       // Planted violations for tests/lint/forbidden-imports.test.ts — linted
       // in-process against a scoped fixture root, never against this tree.
       'tests/lint/fixtures/**',
