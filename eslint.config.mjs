@@ -28,11 +28,18 @@ const MODULE_TREE = [
 // Login and register are unauthenticated entrypoints — §5's PhiTarget union
 // has no auth-shaped variant, and ADR-0011 confirms registration links no
 // patient record. Health is an unauthenticated dependency-liveness probe
-// over metadata. None of these routes has a PHI target to guard.
+// over metadata. The identity routes are the FR-2 match itself, not a PHI
+// read — §5's PhiTarget union has no identity-shaped variant either, and
+// lib/access/identity.ts is its own single-purpose seam for this one write
+// (ARCHITECTURE.md §4), audited directly via lib/audit/events.ts rather than
+// through lib/access/guard.ts. None of these routes has a PHI target to guard.
 const GUARD_ALLOWLIST = [
   'app/api/auth/login/route.ts',
   'app/api/auth/register/route.ts',
   'app/api/health/route.ts',
+  'app/api/identity/verify/route.ts',
+  'app/api/identity/status/route.ts',
+  'app/api/profile/route.ts',
 ]
 
 const APP_IMPORT_RE = /(^|\/)app\//
