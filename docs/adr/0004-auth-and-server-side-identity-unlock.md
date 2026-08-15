@@ -1,6 +1,6 @@
 # ADR-0004 — Supabase Auth for login; a server-side record for the identity unlock
 
-- **Status:** Accepted
+- **Status:** Accepted, with the expiring-unlock half **superseded by ADR-0011**
 - **Date:** 2026-08-14
 - **Requirements touched:** FR-1, FR-2, FR-7, EC-1, SEC-2, SEC-4, SEC-7
 
@@ -18,8 +18,16 @@ birth that matches a seeded record. It mirrors the patient-matching step real
 imaging portals use. EC-1 adds that a mismatch reveals nothing about which field
 was wrong, and that repeated failures rate-limit or lock the attempt.
 
-So there are two gates, and the second one needs to be *revocable*, *auditable*,
-and *lockable mid-window* — otherwise EC-1's lockout is unenforceable.
+So there are two gates, and the second one needs to be *auditable* and
+*lockable* — otherwise EC-1's lockout is unenforceable.
+
+> **Superseded in part (ADR-0011, 2026-08-14).** Everything below about Supabase
+> Auth, derived lockout, per-reference-and-per-source counting, the one generic
+> error and RLS keying on `auth.uid()` still stands. What no longer stands is the
+> **expiring `identity_unlocks` row**: the PRD never asks the FR-2 match to
+> expire, so verification now writes the permanent `patients.user_id` link and
+> nothing else. Read every "unlock" below as "link", and ignore `expires_at`,
+> `revoked_at` and the revocable-mid-window consequence.
 
 ## Decision
 

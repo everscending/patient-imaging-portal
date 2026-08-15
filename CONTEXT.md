@@ -19,7 +19,7 @@ why the shapes are what they are.
 | **Provider** | The clinician who performs visits and owns a schedule. Sees only their own schedule and their own patients' data. |
 | **Admin** | Front-desk staff. Scoped access, and every access is logged. |
 | **Account** | The login identity — an email and password held by Supabase Auth. One account maps to at most one patient record. |
-| **Patient reference** | The pre-existing Patient/Account identifier a patient types during identity verification (FR-2). It exists on the seeded record *before* the account does; it is never the primary key, and it is never derived from a sequence. |
+| **Patient reference** | The pre-existing Patient/Account identifier a patient types during identity verification (FR-2). It exists on the seeded record *before* the account does, and it is never the primary key. Format: `PT-` plus four digits, assigned in sequence (`PT-0001`), matching the worked examples in `ARCHITECTURE.md`. An earlier draft of this file forbade a sequence; that rule had no stated reason and was withdrawn by decision on 2026-08-14. What guards the reference is EC-1's lockout — three failed attempts inside five minutes, counted per reference **and** per source — not the size of the number space. |
 
 An **account** is who you are logged in as. A **patient** is whose data you are
 looking at. They are linked, and the link is verified, never assumed.
@@ -29,7 +29,7 @@ looking at. They are linked, and the link is verified, never assumed.
 | Term | Meaning |
 |------|---------|
 | **Identity verification** | The FR-2 second-factor step: patient reference plus date of birth, matched against a seeded record. |
-| **Identity unlock** | The server-side record produced by a successful verification. It has an expiry and can be revoked. It is state on the server, never a credential in the browser (ADR-0004). |
+| **Identity link** | The permanent connection between an account and one patient record, written by the first successful identity verification and by nothing else (ADR-0011). An account with no link reaches no images and no reports. There is no expiring "unlock": the link does not lapse, and a returning patient is not asked again. |
 | **Attempt** | One identity-verification try, successful or not. Attempts are counted per patient reference and per source, which is what makes the EC-1 lockout real. |
 | **Lockout** | The state after too many failed attempts, during which further attempts are refused regardless of correctness. |
 

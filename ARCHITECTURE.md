@@ -67,7 +67,7 @@ lib/
   config.ts                  reads + validates env; the ONLY reader of process.env
   validation/                request-body schemas — EVERY route, auth included
   db/client.ts               the ONLY module constructing a Supabase client
-  access/guard.ts            session + unlock + ownership + audit, in one call
+  access/guard.ts            session + identity link + ownership + audit, in one call
   access/identity.ts         FR-2 verification, attempts, lockout
   imaging/studies.ts         studies, images, clips, manifests
   imaging/signing.ts         mints signed Storage URLs
@@ -129,7 +129,7 @@ create type actor_kind          as enum ('account','share_recipient','system');
 create table patients (
   id              uuid primary key default gen_random_uuid(),
   user_id         uuid unique references auth.users(id) on delete set null,
-  patient_ref     text not null unique,          -- typed at FR-2; NOT a sequence
+  patient_ref     text not null unique,          -- typed at FR-2; 'PT-' + 4 digits (CONTEXT.md)
   date_of_birth   date not null,
   full_name       text not null,
   email           text not null,
@@ -190,16 +190,11 @@ create table provider_services (
 );
 
 -- ── FR-2 identity verification ──────────────────────────────────────────
-create table identity_unlocks (
-  id              uuid primary key default gen_random_uuid(),
-  user_id         uuid not null references auth.users(id) on delete cascade,
-  patient_id      uuid not null references patients(id) on delete cascade,
-  unlocked_at     timestamptz not null default now(),
-  expires_at      timestamptz not null,
-  revoked_at      timestamptz
-);
-create index on identity_unlocks (user_id, expires_at desc);
-
+-- There is no `identity_unlocks` table. An earlier draft carried one, with a
+-- 45-minute expiry re-read on every PHI request; ADR-0011 removed it. FR-2's
+-- whole persistent effect is `patients.user_id`, written once by a successful
+-- verification (§4). Attempts are still recorded, because EC-1's lockout is
+-- derived from them.
 create table identity_attempts (
   id                    uuid primary key default gen_random_uuid(),
   attempted_patient_ref text not null,           -- as typed; never resolved
@@ -471,15 +466,59 @@ create index on share_links (patient_id, created_at desc);
 -- caller gets a 404 rather than a constraint error — but the constraint is what
 -- makes the guarantee true, and CQ-2's adversarial suite asserts both layers.
 
+-- ── slot regeneration (ADR-0006, ADR-0012) ──────────────────────────────
+-- §4 grants the application role no DELETE anywhere, and that property is what
+-- makes the audit log and the appointment history safe. An availability edit
+-- still has to remove open slots that no longer fit. So removal is one
+-- SECURITY DEFINER function with a narrow, reviewed job: it deletes only slots
+-- in range that are still `open` and that no live appointment references, then
+-- inserts the new grid. The app role gains no privilege of its own.
+create or replace function regenerate_provider_slots(
+  p_provider_id uuid,
+  p_from        timestamptz,
+  p_to          timestamptz,
+  p_slots       tstzrange[]
+) returns table (removed int, generated int)
+language plpgsql security definer set search_path = public as $$
+declare v_removed int; v_generated int;
+begin
+  delete from slots s
+   where s.provider_id = p_provider_id
+     and s.starts_at >= p_from and s.starts_at < p_to
+     and s.status = 'open'
+     and not exists (select 1 from appointments a
+                      where a.slot_id = s.id
+                        and a.status in ('requested','confirmed'));
+  get diagnostics v_removed = row_count;
+
+  -- Skip any proposed slot that OVERLAPS a survivor, not merely one that shares
+  -- its start instant. Verified by execution: with `on conflict (provider_id,
+  -- starts_at) do nothing` alone, a booked 00:30–01:00 slot and a new hourly
+  -- 00:00–01:00 slot have different starts, so the exclusion constraint fires
+  -- and the whole rebuild aborts — a provider changing their slot length on a
+  -- day holding one appointment could not save at all.
+  insert into slots (provider_id, starts_at, ends_at)
+  select p_provider_id, lower(r), upper(r)
+    from unnest(p_slots) r
+   where not exists (select 1 from slots s
+                      where s.provider_id = p_provider_id
+                        and tstzrange(s.starts_at, s.ends_at) && r)
+  on conflict (provider_id, starts_at) do nothing;   -- backstop under concurrency
+  get diagnostics v_generated = row_count;
+
+  return query select v_removed, v_generated;
+end $$;
+
+revoke all on function regenerate_provider_slots(uuid, timestamptz, timestamptz, tstzrange[]) from public;
+
 -- ── indexes on foreign keys ─────────────────────────────────────────────
 -- Postgres does not create these automatically. Without them the guard's
--- unlock lookup, the appointments list and every `on delete cascade` are
+-- link lookup, the appointments list and every `on delete cascade` are
 -- sequential scans at the DEL-4 seed scale — confirmed by EXPLAIN.
 create index on appointments (patient_id);
 create index on appointments (slot_id);
 create index on appointments (provider_id);
 create index on appointment_transitions (appointment_id);
-create index on identity_unlocks (patient_id);
 create index on cine_clips (study_id);
 create index on cine_frames (clip_id);
 create index on images (study_id);
@@ -502,6 +541,38 @@ create table reminder_sends (
   primary key (appointment_id, lead_hours)      -- EC-9: idempotency, structural
 );
 
+-- ── outbound email (CQ-3) ───────────────────────────────────────────────
+-- A failed send must be retried, not merely reported. The app runs as
+-- short-lived functions, so an in-process queue dies with the request that
+-- created it: the queue is a table, drained by the same 5-minute job that
+-- sends reminders (§12).
+create table email_outbox (
+  id              uuid primary key default gen_random_uuid(),
+  recipient       text not null,
+  subject         text not null,
+  body            text not null,               -- generic notice + link; no PHI (SEC-9)
+  attempts        int  not null default 0,
+  last_error      text,                        -- never PHI
+  next_attempt_at timestamptz not null default now(),
+  sent_at         timestamptz,
+  created_at      timestamptz not null default now()
+);
+create index on email_outbox (next_attempt_at) where sent_at is null;
+
+-- ── deletion requests (SEC-5) ───────────────────────────────────────────
+-- The PRD asks that a patient can *request* deletion, not that a button erases
+-- records — which would collide with the append-only audit log above.
+create table deletion_requests (
+  id              uuid primary key default gen_random_uuid(),
+  patient_id      uuid not null references patients(id) on delete cascade,
+  requested_by    uuid not null references auth.users(id),
+  requested_at    timestamptz not null default now(),
+  status          text not null default 'received'
+                  check (status in ('received','in_review','completed','declined')),
+  unique (patient_id, status) deferrable initially deferred
+);
+create index on deletion_requests (patient_id, requested_at desc);
+
 -- ── audit (SEC-4) ───────────────────────────────────────────────────────
 create table audit_events (
   id              bigserial primary key,
@@ -511,11 +582,11 @@ create table audit_events (
   action          text not null check (action in (
                     'identity.verify','identity.lockout','identity.link',
                     'study.view','image.view','clip.view','report.view',
-                    'share.create','share.use','share.revoke',
+                    'share.create','share.use','share.revoke','share.view',
                     'booking.create','booking.reschedule','booking.cancel',
                     'appointment.view','appointment.transition','schedule.view',
                     'availability.update','availability.collision',
-                    'reminder.dispatch','audit.view')),
+                    'reminder.dispatch','audit.view','profile.deletion_request')),
   target_kind     text not null,
   target_id       uuid,
   outcome         text not null check (outcome in ('granted','denied')),
@@ -538,17 +609,23 @@ identity.verify        identity.lockout      identity.link
 study.view             image.view            clip.view
 report.view
 share.create           share.use             share.revoke
+share.view
 booking.create         booking.reschedule    booking.cancel
 appointment.view       appointment.transition
 schedule.view
 availability.update    availability.collision
 reminder.dispatch
-audit.view
+audit.view             profile.deletion_request
 ```
 
 `outcome` is `granted` or `denied`. **A denial is audited too** — FR-6 and FR-9
 require rejected attempts to be logged, so the guard writes on the way out of a
 failure, not only on success.
+
+`share.view` covers a patient reading their own list of share links, and every
+`*.view` action doubles as the **collection** form of itself (§5): a list read
+writes one row with `target_id` null and `target_kind` `<kind>_list`.
+`profile.deletion_request` records a SEC-5 deletion request.
 
 `schedule.view` and `appointment.view` exist because provider and admin reads
 are PHI reads. `audit.view` exists because an admin reading the audit log is
@@ -595,8 +672,8 @@ says which, the answer becomes "none of them".
 
 - **A successful FR-2 identity verification is the only writer.**
   `lib/access/identity.ts` sets `patients.user_id = auth.uid()` in the same
-  transaction that creates the `identity_unlocks` row, and only when the column
-  is currently null.
+  same transaction that records the successful attempt, and only when the column
+  is currently null. That link is permanent and does not expire (ADR-0011).
 - **Registration does not link anything.** Matching a self-registered account to
   a seeded patient by email address is spoofable — it would let anyone who knows
   a patient's email skip FR-2 entirely. Registration creates an account and
@@ -633,13 +710,18 @@ proves nothing.
 -- `create role app_user` already happened in §3, with the audit grants.
 grant usage on schema public to app_user;
 grant select on all tables in schema public to app_user;
-grant insert, update on appointments, identity_unlocks, identity_attempts,
+grant insert, update on appointments, identity_attempts,
                         share_links, reminder_sends to app_user;
 -- deliberately NOT granted: any write on `slots`. Its status is derived by the
 -- slots_follow_appointments trigger (§3), which is SECURITY DEFINER, so the app
 -- role never needs it — and therefore can never desynchronise it by hand.
 grant insert on slots to app_user;           -- generation only, never status
 grant insert on appointment_transitions, audit_events to app_user;
+grant insert, update on email_outbox to app_user;      -- drained by the job
+grant insert on deletion_requests to app_user;
+grant execute on function regenerate_provider_slots(uuid, timestamptz, timestamptz, tstzrange[]) to app_user;
+-- the function is SECURITY DEFINER, so this grant lets the app ask for that ONE
+-- narrow operation without holding DELETE on `slots` — or on anything else.
 grant usage, select on all sequences in schema public to app_user;
 -- deliberately NOT granted anywhere: delete
 -- deliberately NOT granted on audit_events: update, delete (§3)
@@ -688,9 +770,9 @@ alter table cine_frames         enable row level security;
 alter table reports             enable row level security;
 alter table appointments        enable row level security;
 alter table slots               enable row level security;
-alter table identity_unlocks    enable row level security;
 alter table identity_attempts   enable row level security;
 alter table share_links         enable row level security;
+alter table deletion_requests   enable row level security;
 ```
 
 **`patients` is the one that matters most.** `patient_ref` and `date_of_birth`
@@ -758,13 +840,13 @@ create policy slots_readable on slots for select
                   where a.slot_id = slots.id
                     and a.patient_id = current_patient_id()));
 
-create policy unlocks_self on identity_unlocks for select
-  using (user_id = auth.uid());
-
 create policy attempts_admin on identity_attempts for select
   using (is_admin());        -- a patient must not read attempt history
 
 create policy shares_own on share_links for select
+  using (patient_id = current_patient_id() or is_admin());
+
+create policy deletion_requests_own on deletion_requests for select
   using (patient_id = current_patient_id() or is_admin());
 ```
 
@@ -790,21 +872,25 @@ create policy appointments_update_own on appointments for update
   with check (patient_id = current_patient_id()
        or provider_id = current_provider_id() or is_admin());
 
-create policy unlocks_insert_self on identity_unlocks for insert
-  with check (user_id = auth.uid());
-create policy unlocks_update_self on identity_unlocks for update
-  using (user_id = auth.uid()) with check (user_id = auth.uid());
-
 create policy shares_insert_own on share_links for insert
   with check (patient_id = current_patient_id());
 create policy shares_update_own on share_links for update      -- revocation
   using (patient_id = current_patient_id())
   with check (patient_id = current_patient_id());
 
+create policy deletion_requests_insert_own on deletion_requests for insert
+  with check (patient_id = current_patient_id());
+
 -- slot generation runs as the owning provider
 create policy slots_insert_own on slots for insert
   with check (provider_id = current_provider_id() or is_admin());
 ```
+
+**`email_outbox` gets no RLS at all**, deliberately: it is written by server
+code on the patient's behalf and drained by the reminder job running as the
+service role, and it holds no patient identifier — a recipient address, a
+subject and a generic body. A policy keyed on `current_patient_id()` would
+refuse the job's own reads.
 
 **`identity_attempts` and `reminder_sends` get no app-role write policy**, because
 neither is written by a patient session: FR-2 verification runs through the
@@ -856,6 +942,7 @@ export type PhiTarget =
   | { kind: 'report';      id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule';    id: string }   // id = provider id
+  | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' }                 // no id — the whole log, admin only
 
 // `patientId` is null for targets that have no single patient: a provider
@@ -866,7 +953,7 @@ export type GuardResult =
   | { ok: false; status: 401 | 403 | 404 }
 
 /**
- * Verifies session, identity unlock, and ownership; writes exactly one
+ * Verifies session, identity link, and ownership; writes exactly one
  * audit event either way. Never throws for an authorization failure —
  * the caller maps `status` straight to a response.
  *
@@ -883,17 +970,31 @@ export async function guardPhiAccess(
 **Ownership means something different per actor kind, and the guard owns all
 four definitions** — no route handler writes its own:
 
-| Actor | Requires FR-2 unlock? | "Owns the target" means |
+| Actor | Requires the FR-2 link? | "Owns the target" means |
 |-------|:---------------------:|-------------------------|
 | `patient` | **yes** | the target's `patient_id` is the caller's patient |
 | `provider` | no | the target's `provider_id` is the caller's provider — for a study or report, via its visit |
 | `admin` | no | always true, and **always audited** (SEC-2 scopes admin access and requires it logged) |
 | `share_recipient` | n/a | the target is the exact resource the validated token names, and nothing else |
 
-**The identity unlock is a patient-only concept.** A provider has no
-`identity_unlocks` row and never will; requiring one would lock providers out of
-their own schedules. This is why the guard branches on actor kind rather than
-checking an unlock unconditionally.
+**The identity link is a patient-only concept.** A provider's account is never
+linked to a `patients` row and never will be; requiring one would lock providers
+out of their own schedules. This is why the guard branches on actor kind rather
+than checking the link unconditionally.
+
+**A list is a target too (ADR-0012).** `GET /api/studies`, `/api/reports`,
+`/api/appointments` and `/api/shares` name no single resource — finding out what
+exists *is* the request — so they pass `{ kind: 'collection', of: … }`. The guard
+checks the session, the link and the actor kind, returns
+`{ ok: true, patientId }`, and writes **one** audit row with `target_id` null and
+`target_kind` `<of>_list`. The rows themselves are still scoped by row-level
+security (§4), so a collection grant never widens what comes back. One row per
+list read, never one per item.
+
+**The link is checked, not an unlock.** There is no expiring unlock and nothing
+to re-read per request beyond `patients.user_id` (ADR-0011). A patient account
+that has never verified is refused with `403`; one that has verified stays
+verified.
 
 **Provider and admin PHI reads go through this guard too.** They are PHI reads
 (CONTEXT.md: appointments with named providers are PHI), so SEC-4 applies to
@@ -907,8 +1008,7 @@ Status meanings, pinned so three tickets do not invent three conventions:
 | Situation | Status |
 |-----------|--------|
 | No session, or expired session | `401` |
-| **Patient** actor, session valid, no live identity unlock | `403` with `{ error: 'identity_unlock_required' }` |
-| Unlock live but for a different patient | `404` |
+| **Patient** actor, session valid, account not linked to a patient record | `403` with `{ error: 'identity_verification_required' }` |
 | Target belongs to another patient (patient actor) | `404` |
 | Target belongs to another provider (provider actor) | `404` |
 | Resource does not exist | `404` |
@@ -937,12 +1037,38 @@ surface a security-minded reviewer probes. One shared `lib/validation` module,
 applied at the edge of every route handler, and a malformed, oversized or
 out-of-range body is rejected with `422 validation_failed`.
 
+### Authentication — FR-1, SEC-7, EC-12
+
+The browser never calls the auth provider directly (ADR-0012): both payloads are
+validated server-side through `lib/validation` like every other surface, and the
+route then calls Supabase Auth, which owns hashing and session issue (ADR-0004).
+
+```
+POST /api/auth/register
+  → { "email": "…", "password": "…" }
+  ← 201 { "userId": "uuid" }
+  ← 409 { "error": "email_in_use", "message": "…" }
+  ← 422 { "error": "validation_failed", "message": "…" }
+
+POST /api/auth/login
+  → { "email": "…", "password": "…" }
+  ← 200 { "userId": "uuid", "expiresAt": "…" }
+  ← 401 { "error": "invalid_credentials", "message": "…" }   ← a wrong email and a
+                                                                wrong password are
+                                                                one response
+  ← 422 { "error": "validation_failed", "message": "…" }
+```
+
+**Sessions expire after 60 minutes of inactivity** (ADR-0012), stated in plain
+words on both screens. That is a Supabase Auth project setting, not an
+application variable, and the README records it.
+
 ### Identity — FR-2, EC-1
 
 ```
 POST /api/identity/verify
   → { "patientRef": "PT-4471", "dateOfBirth": "1988-03-14" }
-  ← 200 { "unlockedUntil": "2026-08-14T18:45:00Z" }
+  ← 200 { "patientRef": "PT-4471", "linkedAt": "2026-08-14T18:00:00Z" }
   ← 400 { "error": "identity_mismatch", "message": "…" }     ← also the lockout response
 ```
 
@@ -969,8 +1095,19 @@ are Supabase Auth's own flows, and the patient link is written once by identity
 verification and never by the profile form.
 
 ```
+POST /api/profile/deletion-request
+  → {}
+  ← 202 { "status": "received", "requestedAt": "…" }
+  ← 409 { "error": "request_already_open", "message": "…" }
+```
+
+SEC-5 asks that a patient can *request* deletion; the request is recorded and
+audited as `profile.deletion_request`, and the policy in
+`docs/retention-and-deletion.md` states what happens next.
+
+```
 GET  /api/identity/status
-  ← 200 { "unlocked": true, "unlockedUntil": "…" } | { "unlocked": false }
+  ← 200 { "linked": true, "patientRef": "PT-4471", "linkedAt": "…" } | { "linked": false }
 ```
 
 ### Imaging — FR-3, FR-4
@@ -1026,7 +1163,7 @@ GET /api/reports/:reportId
 POST /api/shares
   → { "resourceKind": "image" | "report", "resourceId": "uuid",
       "recipientEmail": "dr@example.com" }
-  ← 201 { "id","expiresAt","recipientEmail" }
+  ← 201 { "id","url","expiresAt","recipientEmail" }
 
 GET    /api/shares                 ← 200 { "shares": [ { "id","resourceKind","resourceId",
                                                         "recipientEmail","expiresAt",
@@ -1035,8 +1172,17 @@ DELETE /api/shares/:id             ← 204                        (revoke)
 
 GET /api/s/:token
   ← 200 { "resourceKind","payload": { … }, "expiresAt" }
+       payload for an image  = one entry of GET /api/studies/:studyId's `images`
+                               array — { id, width, height, ordinal, url,
+                               thumbUrl, expiresAt }
+       payload for a report  = the body of GET /api/reports/:reportId
   ← 410 { "error": "share_unavailable", "message": "This link is no longer available." }
 ```
+
+`url` is the absolute share link (`APP_BASE_URL` + `/s/<token>`) and is returned
+**once, to the sharer, at creation** — it is never in the list response, because
+only its hash is stored (ADR-0012). It is what UX_SPEC §4.14's copy-the-link
+fallback offers when a send fails.
 
 `state` is `active | expired | revoked`. **Expired and revoked are
 indistinguishable to the recipient** — both are `410 share_unavailable`, and an
@@ -1219,12 +1365,12 @@ POST /api/jobs/reminders          header: x-cron-secret
 | `/register`, `/login` | anonymous | FR-1 |
 | `/profile` | signed-in patient | FR-1 · basic profile management |
 | `/verify` | signed-in patient | FR-2 |
-| `/studies` | unlocked patient | FR-3 |
-| `/studies/[studyId]` | unlocked patient | FR-3 · image viewer, zoom/pan |
-| `/studies/[studyId]/clips/[clipId]` | unlocked patient | FR-4 · cine viewer |
-| `/reports` | unlocked patient | FR-7 |
-| `/reports/[reportId]` | unlocked patient | FR-7 |
-| `/shares` | unlocked patient | FR-5, FR-8 · list + revoke |
+| `/studies` | verified patient | FR-3 |
+| `/studies/[studyId]` | verified patient | FR-3 · image viewer, zoom/pan |
+| `/studies/[studyId]/clips/[clipId]` | verified patient | FR-4 · cine viewer |
+| `/reports` | verified patient | FR-7 |
+| `/reports/[reportId]` | verified patient | FR-7 |
+| `/shares` | verified patient | FR-5, FR-8 · list + revoke |
 | `/s/[token]` | **anonymous recipient** | FR-5, FR-8, EC-5 |
 | `/appointments` | patient | FR-11, FR-13, FR-14 |
 | `/book` | patient | FR-11 |
@@ -1257,13 +1403,24 @@ letting a missing value surface as a runtime null. All of these appear in
 | `SHARE_LINK_TTL_HOURS` | `48` | `lib/share/links.ts` | ADR-0008 |
 | `MIN_CHANGE_NOTICE_HOURS` | `24` | `lib/scheduling/booking.ts` | ADR-0008 |
 | `REMINDER_LEAD_HOURS` | `24` | reminder job | ADR-0008 |
-| `IDENTITY_UNLOCK_TTL_MINUTES` | `45` | `lib/access/identity.ts` | ADR-0008 |
 | `IDENTITY_MAX_ATTEMPTS` | `3` | `lib/access/identity.ts` | ADR-0008 |
 | `IDENTITY_LOCKOUT_MINUTES` | `5` | `lib/access/identity.ts` | ADR-0008 |
 | `SIGNED_URL_TTL_SECONDS` | `300` | `lib/imaging/signing.ts` | ADR-0003 |
+| `SLOT_HORIZON_DAYS` | `60` | `lib/scheduling/availability.ts` | ADR-0012 · every availability write regenerates today → +60 days |
+| `MAX_REQUEST_BODY_BYTES` | `65536` | `lib/validation/` | ADR-0012 · 64 KiB; larger bodies are `422 validation_failed` |
+| `SOURCE_REF_SALT` | — | `lib/access/identity.ts` | required · ADR-0012 · salts the hashed client address behind EC-1's per-source lockout |
+| `REMINDER_WINDOW_MINUTES` | `30` | reminder job | ADR-0012 · the due band §12 scans |
+| `REMINDER_CRON_MINUTES` | `5` | reminder job + `db/migrations` | ADR-0012 · **must be smaller than the window**, asserted at startup |
 | `SEED_SOURCE_SEED` | `patient-imaging-portal` | `db/seed/**` | deterministic assets (ADR-0009) |
 | `PORT` | `4310` | Next dev/start | §9 |
-| `TEST_PG_PORT` | `54310` | test harness | §9 |
+| `TEST_PG_PORT` | *(unset)* | test harness | ADR-0013 · **optional pin.** Unset means the OS picks a free port and the harness reads it back. Set it only to attach a database client during a debugging session. |
+
+---
+
+**One value lives outside this table.** The 60-minute session expiry (ADR-0012)
+is a Supabase Auth project setting, not an application variable — the app reads
+no session TTL. `docs/deploy.md` records where it is set and the README states
+the number, because `/login` and `/register` promise it in plain words.
 
 ---
 
@@ -1275,13 +1432,23 @@ in a compose file, not in a test fixture, not in a script default. The collision
 is temporal: whoever boots second loses, and running the file once proves
 nothing.
 
+**And a namespaced port is still a claimed port.** An earlier draft named the
+test container `pip-testpg-${TEST_PG_PORT}` and called that collision-proof —
+but nothing assigned a distinct `TEST_PG_PORT` per worktree, so every worktree
+resolved to one container and parallel lanes silently shared a database.
+ADR-0013 removes the guess instead of improving it: the OS picks the port, the
+harness reads it back, and each run gets its own database inside the one
+container. The rule generalises — **anything that would claim a port number
+asks for a free one instead.**
+
 | Resource | Value | Rule |
 |----------|-------|------|
 | App listen port | `PORT`, default **4310** | never `3000` |
-| Test Postgres | `TEST_PG_PORT`, default **54310** | never `5432` |
-| Test container name | `pip-testpg-${TEST_PG_PORT}` | port-namespaced, so two worktrees never collide |
+| Test Postgres | **an ephemeral port**, published `0:5432` and read back | never `5432`, and never a computed number (ADR-0013) |
+| Test container name | `pip-testpg` | one per machine; isolation is the per-run database, not the container |
+| Test database | `pip_run_<random>`, created and dropped per run | two lanes — or two runs in one worktree — never share state |
 | Playwright base URL | derived from `PORT` | never hardcoded |
-| Test fixtures that listen | **bind port 0**, pass the assigned port to the client | no fixed port, ever |
+| Test fixtures that listen | **bind port 0**, pass the assigned port to the client | no fixed port, ever — the test database follows this same rule |
 | Supabase Storage bucket | `phi` | one bucket, private, no public policy |
 
 ---
@@ -1549,16 +1716,28 @@ query looks at a fixed **30-minute** window, so a job running hourly leaves a
 no `reminder_sends` row is written, and **nothing detects it** — the absence of a
 row is indistinguishable from an appointment that was never due.
 
-So the rule is: **the schedule interval must be shorter than the window.** The
-5-minute `pg_cron` schedule is a correctness requirement, not a convenience, and
-widening the interval without widening the window silently drops reminders.
+So the rule is: **the schedule interval must be shorter than the window.** Both
+are configuration — `REMINDER_CRON_MINUTES` (5) and `REMINDER_WINDOW_MINUTES`
+(30) — and `lib/config.ts` **refuses to start** when the cadence is greater than
+or equal to the window (ADR-0012). The 5-minute schedule is a correctness
+requirement, not a convenience, and the startup check is what stops someone
+widening the interval and silently dropping reminders.
 
-The insert happens **before** the send, so a crash mid-send loses a reminder
-rather than duplicating one — the direction PF-8 tolerates ("0 duplicates" is
+**The pre-send row is written with `outcome = 'failed'`** and updated to `sent`
+with its `sent_at` once the provider accepts it (ADR-0012). The schema forbids
+`sent` without a `sent_at`, and a crash between the two therefore leaves a
+`failed` row — which the next pass clears and retries, exactly as an ordinary
+failure. The insert happens **before** the send, so a crash mid-send loses a
+reminder rather than duplicating one — the direction PF-8 tolerates ("0 duplicates" is
 absolute; "≥99% sent" has slack). A `failed` outcome is recorded and retried on
 the next pass by clearing that row, which is the one place a delete is allowed.
 
 The email body carries **no PHI** — a generic notice plus a link (SEC-9).
+
+**The same job drains `email_outbox`** (§3, ADR-0012). Share emails are enqueued
+rather than sent inline: the row is durable across function shutdowns, `attempts`
+and `next_attempt_at` carry the backoff, and `last_error` never holds PHI. A
+share link is never rolled back because its email failed.
 
 **A failed send is queued and retried, not merely reported** (CQ-3). Reminder
 retries happen on the next pass by clearing the `failed` row. Share-link emails
@@ -1623,7 +1802,7 @@ the claims above**. Both were defects in this document, not in the tests.
 
 | Finding | Before | After |
 |---------|--------|-------|
-| **RLS enabled on 1 table of 8** — §4 said "policy shape, applied to [seven tables]" and only ever showed `alter table studies`. A policy on a table without RLS enabled is **inert**: accepted silently, never evaluated. | `reports` policy created and dead; every patient's reports, images and appointments readable | 13 policies across 13 tables; **0 tables with RLS enabled and no policy** |
+| **RLS enabled on 1 table of 8** — §4 said "policy shape, applied to [seven tables]" and only ever showed `alter table studies`. A policy on a table without RLS enabled is **inert**: accepted silently, never evaluated. | `reports` policy created and dead; every patient's reports, images and appointments readable | a policy on every table that holds PHI; **0 tables with RLS enabled and no policy** (the count dropped by one when ADR-0011 removed `identity_unlocks`) |
 | **`patients` had no RLS at all** — and `patient_ref` + `date_of_birth` are exactly what `POST /api/identity/verify` accepts, so ADR-0008's 3-attempt lockout guarded a search space of zero | all 50 patient references and dates of birth readable by any authenticated session | PT-0001 sees 1 patient, 0 foreign DOBs |
 | Isolation as a **non-superuser** (superusers and table owners bypass RLS, so a test as `postgres` proves nothing) | reports: 151 rows, 50 distinct patients, preliminary included | reports: 1 row, 1 patient, 0 preliminary |
 | Unauthenticated session (no JWT claim) | policy raised `invalid input syntax for type uuid` → 500 | 0 rows |
@@ -1650,6 +1829,36 @@ had itself introduced a defect, which execution confirmed immediately.
 | `GET /api/admin/audit` | screen, action name and URL all specified; **no endpoint anywhere** | pinned, 404 for non-admins |
 | `GuardResult` | `{ ok: true; patientId: string }` — unsatisfiable for a provider schedule or the audit log, which have no single patient | `patientId: string \| null`, with an `audit_log` target kind |
 | **Share-link ownership**, previously written off as "no constraint can express this" | polymorphic `resource_id`, no FK possible; a link against another patient's report was refused only by application code | two typed nullable columns with **composite FKs through `(id, patient_id)`**; verified cross-patient share, dangling reference, zero targets and two targets are all refused by the database |
+
+### Sixth execution — 2026-08-14, after ADR-0012's closures
+
+Two new tables, two new audit actions and one new function, so the whole schema
+was re-applied and the function exercised against a 384-slot dataset — far more
+rows than any single rebuild should touch.
+
+| Artifact | Executed | Result |
+|----------|:--------:|--------|
+| §3 + §4 full DDL with `email_outbox`, `deletion_requests`, `share.view`, `profile.deletion_request` and `regenerate_provider_slots` | ✅ | Applies clean on stock Postgres 16. |
+| `regenerate_provider_slots` bound check — did it touch more than it should? | ✅ | Rebuilt one provider's 2-day window: 95 open slots removed, 47 generated, **the booked slot survived**, the other provider's 192 slots and the same provider's 96 out-of-range slots untouched. |
+| The app role's privileges after the grant | ✅ | `app_user` still has **no DELETE on `slots`**, and can execute the function. |
+| **A preserved appointment that _overlaps_ a proposed slot** | ✅ | **Found a real defect.** With `on conflict (provider_id, starts_at) do nothing` alone, a booked 00:30–01:00 slot and a proposed hourly 00:00–01:00 slot have different start instants, so the exclusion constraint fired and the whole rebuild aborted — a provider changing their slot length on a day holding one appointment could not save at all. Fixed by skipping proposed ranges that overlap a survivor; re-run gives 47 removed, 23 generated, the booked slot intact, and **zero overlapping pairs** in the table. |
+| `email_outbox`, `deletion_requests`, and both new audit actions | ✅ | Accept their intended writes; the CHECK-constrained action set admits the two new strings and nothing else. |
+
+**The defect class was the usual one:** the case one step outside the one that
+was tested. Identical start instants were handled; overlapping ranges were not,
+and only a rebuild at a different slot length exposes it.
+
+### Fifth execution — 2026-08-14, after ADR-0011 removed the expiring unlock
+
+Dropping `identity_unlocks` touches the §3 DDL, §4's grant block, the enable
+list and two policy pairs, so the whole schema was re-applied from scratch.
+
+| Artifact | Executed | Result |
+|----------|:--------:|--------|
+| §3 + §4 full DDL with `identity_unlocks` and its policies removed | ✅ | Applies clean on stock Postgres 16. Nothing else referenced the table. |
+| RLS coverage after the removal | ✅ | 13 tables with RLS enabled, **0 enabled with no policy**, 19 policies of which 6 are write policies. |
+| The two deliberate non-grants | ✅ | `app_user` still has no `UPDATE` on `audit_events` and none on `slots`. |
+| `identity_unlocks` | ✅ | `to_regclass` returns null — the table, its indexes and its policies are gone, not orphaned. |
 
 **The pattern across all four executions.** Every defect lived one step outside
 the case that was tested: the concurrent form of something checked sequentially,
@@ -1714,10 +1923,15 @@ same runner, so they cannot drift.
 
 | Tier | Runs |
 |------|------|
-| `docs` | markdown lint + link check |
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
 | `ui` | `api` + `playwright test` |
+
+**There are three tiers, not four.** An earlier draft carried a `docs` tier
+running a markdown linter and a link checker. It traced to no requirement — CQ-8
+asks that the linter and the tests run on every push, not that documents be
+linted — so ADR-0012 removed it. A document-only ticket takes `logic`, and the
+reviewer walkthrough (DEL-5) is what judges the documentation.
 
 `scripts/gate.sh` is a **repo-bootstrap-epic deliverable** and must merge before
 any ticket carrying a tier that invokes it.

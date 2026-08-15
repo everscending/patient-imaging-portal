@@ -1,6 +1,6 @@
 # Issue tracker: Linear
 
-Team: Jordan
+Team: JOR
 Project: Patient Imaging Portal
 
 Issues for this repo live in **Linear**. The two lines above are machine-read —

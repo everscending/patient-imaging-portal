@@ -205,18 +205,20 @@ Fixed by **ADR-0008**, single-sourced in application config, and quoted in the
 acceptance criteria of every ticket that enforces one. No ticket may hardcode a
 duplicate or pick its own value.
 
-The first four are values the PRD leaves open but requires to be *stated* and
-then enforced. **The identity-unlock lifetime is different: the PRD never asks
-the FR-2 unlock to expire at all.** It is a design decision from ADR-0004 —
-keeping the unlock revocable and lockable — and it is marked below so no one
-mistakes it for a PRD obligation. Removing it would not fail any PRD item.
+The three timing values below are ones the PRD leaves open but requires to be
+*stated* and then enforced.
+
+**There is deliberately no identity-unlock lifetime.** An earlier draft carried
+one (45 minutes, ADR-0004/ADR-0008). The PRD never asks the FR-2 match to expire,
+so **ADR-0011 removed the expiring unlock entirely**: verification links the
+account to the patient record once, and nothing re-locks. FR-2 is still a gate
+in front of the first unlock, and EC-1's lockout is unchanged.
 
 | Parameter | Value | Governs |
 |-----------|-------|---------|
 | Share-link lifetime | **48 hours** | FR-5, FR-8, EC-5, SEC-8 |
 | Minimum change notice | **24 hours** | FR-13 |
 | Reminder lead time | **24 hours** before start | FR-15, EC-9, PF-8 |
-| Identity-unlock lifetime | **45 minutes** | FR-2 — *our design decision, not a PRD requirement* |
 | Failed-attempt lockout | **3 failures → 5-minute lock**, counted per patient reference and per source | EC-1 |
 
 ---

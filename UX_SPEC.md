@@ -52,16 +52,16 @@ inside the thumb arc: **Imaging · Reports · Visits · Shares**. Every destinat
 is one tap from every other, which is what the DEL-6 demo walkthrough needs.
 
 **Desktop (≥ 768 px) — left sidebar.** Same four destinations as a persistent
-list, patient name above them, unlock countdown below them.
+list, patient name above them.
 
 **Provider** uses the sidebar at both sizes: **Schedule · Availability**.
 **Admin** uses the sidebar with **Audit log** only — that is the whole of admin's
 surface in the URL map. Both are desk users; the phone-width bar is a patient
 affordance.
 
-**The unlock indicator is part of the shell.** Whenever an identity unlock is
-live, its remaining time is visible — a badge in the mobile top bar, under the
-sidebar on desktop. A patient must never be surprised by re-verification.
+**There is no unlock indicator, because nothing expires** (ADR-0011). Identity
+verification happens once, when the account is first linked to a patient record.
+A patient is never re-asked and is never mid-way through a countdown.
 
 **Tap targets** are at least 44 × 44 px on touch. The tab bar is the screen
 EC-4 is measured on first.
@@ -75,8 +75,13 @@ to prove. `data-testid` names are pinned in `ARCHITECTURE.md` §14.
 
 ### 4.1 Sign in and register — `/login`, `/register` · FR-1, SEC-7
 
-Email and password, session expiry stated in plain words. Signing in unlocks
-nothing on its own; every PHI route still requires §4.2.
+Email and password. Session expiry stated in plain words — **"You'll be signed
+out after 60 minutes of inactivity."** (ADR-0012). Both forms post to the app's
+own `/api/auth/register` and `/api/auth/login`, never to the auth provider
+directly, so the payloads are validated server-side like every other surface
+(EC-12). Signing in reaches no
+images or reports until the account is linked to a patient record (§4.2); once
+it is, signing in is all that is needed.
 
 ### 4.2 Identity verification — `/verify` · FR-2, EC-1
 
@@ -95,8 +100,10 @@ leak EC-1 exists to prevent. After 3 failures the submit button is disabled for
 5 minutes with a neutral "Try again in a few minutes"; the *response* is still
 the same string.
 
-The screen states the unlock lasts 45 minutes, so its later expiry is expected
-rather than alarming.
+The screen states that this is a one-time step: once the details match, the
+account is linked to that patient record and the patient is not asked again
+(ADR-0011). It is reached only while the account is unlinked; a linked patient
+sent here by a stale link is redirected straight on.
 
 ### 4.2a Profile — `/profile` · FR-1
 
@@ -316,6 +323,53 @@ Three shapes, all required:
 - **Health endpoint** — `GET /api/health` returns 200 with per-dependency state
   in the body, so an uptime check can tell "the app is gone" from "the app is up
   and reporting a degraded dependency" (PF-9).
+
+### 4.15 Email copy — FR-5, FR-8, FR-15, SEC-9
+
+Both messages carry a generic notice and a link, and nothing else. No patient
+name, no clinic name, no health context, no appointment time, no study
+description. Pinned (ADR-0012); a lane that rewrites these is wrong.
+
+**Share link — subject:** *Someone shared a secure medical file with you*
+
+> A patient has shared a secure file with you through their clinic's portal.
+>
+> {url}
+>
+> The link works until {expiry, in the recipient's words — e.g. "Friday 16 May at
+> 14:20 UTC"} and can be revoked by the person who shared it at any time.
+> Opening it is recorded.
+>
+> If you were not expecting this, ignore this message.
+
+**Appointment reminder — subject:** *Appointment reminder*
+
+> You have an appointment in 24 hours.
+>
+> {appUrl}/appointments
+>
+> Sign in to see the details, or to change or cancel it.
+
+**With no email key configured** the transport is `log` (GAP-3), and it writes
+the whole message — including the link — to `.local/mail/<id>.json`, which is
+gitignored. The application log line carries the message id and the recipient's
+**domain** only, never the address and never the token, so SEC-6 holds and the
+end-to-end tests can still read the link.
+
+### 4.16 Empty states and pinned error copy — EC-12, CQ-3
+
+`/studies` is pinned in §4.3. The rest, in the same voice (ADR-0012):
+
+| Screen | Copy |
+|--------|------|
+| `/reports`, empty | **No reports yet** — a report appears here once your clinician has signed it. |
+| `/appointments`, empty | **No appointments yet** — booked appointments appear here. |
+| `/shares`, empty | **You haven't shared anything yet** — sharing an image or a report creates a link here. |
+| Deletion request, submitted | **We've received your request.** The clinic will be in touch. Your images, reports and appointments stay available until then. |
+| Deletion request, already open | **You already have a request open.** The clinic will be in touch about it. |
+| Invalid status change (`422 invalid_transition`) | That change is not allowed from this appointment's current status. |
+
+---
 
 ---
 
