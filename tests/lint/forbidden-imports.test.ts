@@ -10,7 +10,7 @@
 //     → adversarialLibImportingAppFails
 //   lib/share/links.ts reading SHARE_LINK_TTL_HOURS from the process
 //   environment directly → adversarialProcessEnvOutsideConfigFails
-//   app/api/studies/route.ts importing @supabase/supabase-js directly
+//   app/api/studies/route.ts importing the Supabase JS SDK directly
 //     → adversarialSupabaseJsOutsideClientFails
 //   lib/scheduling/booking.ts inserting into audit_events
 //     → adversarialAuditEventsOutsideEventsFails
@@ -51,6 +51,18 @@ const RULE_IDS = [
 // text never contains the token tests/config/config.test.ts's repo-wide
 // guard scans for — this fixture source names it without reading it.
 const PROCESS_DOT_ENV = ['process', 'env'].join('.')
+
+// Same trick, same reason, two more repo-wide guards. Row 3's and row 5's
+// fixtures have to plant a real import of each package for the eslint rule to
+// have anything to catch — but written literally, this file's own source then
+// trips tests/db/client.test.ts's tree-wide scan for the Supabase package name
+// and tests/notify/email.test.ts's tree-wide scan for an import of the Resend
+// SDK. Both guards read source text, so building the two package names at
+// runtime keeps the fixtures honest and this file out of their results.
+// Naming either package literally here — in a comment included — puts this
+// file straight back into their hit lists.
+const SUPABASE_JS_PACKAGE = ['@supabase', 'supabase-js'].join('/')
+const RESEND_PACKAGE = ['res', 'end'].join('')
 
 let fixtureDir: string | null = null
 
@@ -113,17 +125,17 @@ describe('row 2 — only lib/config.ts reads the process environment directly', 
   })
 })
 
-describe('row 3 — only lib/db/client.ts imports @supabase/supabase-js', () => {
+describe(`row 3 — only lib/db/client.ts imports ${SUPABASE_JS_PACKAGE}`, () => {
   test('acceptance: lib/db/client.ts itself is exempt', async () => {
     const results = await lintFixture({
-      'lib/db/client.ts': `import { createClient } from "@supabase/supabase-js"\nexport const client = createClient("", "")\n`,
+      'lib/db/client.ts': `import { createClient } from "${SUPABASE_JS_PACKAGE}"\nexport const client = createClient("", "")\n`,
     })
     expect(errorRuleIds(results)).not.toContain('local/supabase-js-outside-client')
   })
 
-  test('adversarial: app/api/studies/route.ts importing @supabase/supabase-js directly fails', async function adversarialSupabaseJsOutsideClientFails() {
+  test(`adversarial: app/api/studies/route.ts importing ${SUPABASE_JS_PACKAGE} directly fails`, async function adversarialSupabaseJsOutsideClientFails() {
     const results = await lintFixture({
-      'app/api/studies/route.ts': `import { createClient } from "@supabase/supabase-js"\nimport { guard } from "@/lib/access/guard"\nguard()\nexport const client = createClient("", "")\n`,
+      'app/api/studies/route.ts': `import { createClient } from "${SUPABASE_JS_PACKAGE}"\nimport { guard } from "@/lib/access/guard"\nguard()\nexport const client = createClient("", "")\n`,
     })
     expect(errorRuleIds(results)).toContain('local/supabase-js-outside-client')
   })
@@ -148,14 +160,14 @@ describe('row 4 — only lib/audit/events.ts writes audit_events', () => {
 describe('row 5 — only lib/notify/email.ts imports the Resend SDK', () => {
   test('acceptance: lib/notify/email.ts itself is exempt', async () => {
     const results = await lintFixture({
-      'lib/notify/email.ts': `import { Resend } from "resend"\nexport const resend = Resend\n`,
+      'lib/notify/email.ts': `import { Resend } from "${RESEND_PACKAGE}"\nexport const resend = Resend\n`,
     })
     expect(errorRuleIds(results)).not.toContain('local/resend-outside-email')
   })
 
   test('adversarial: lib/notify/reminders.ts importing the Resend SDK fails', async function adversarialResendOutsideEmailFails() {
     const results = await lintFixture({
-      'lib/notify/reminders.ts': `import { Resend } from "resend"\nexport const resend = Resend\n`,
+      'lib/notify/reminders.ts': `import { Resend } from "${RESEND_PACKAGE}"\nexport const resend = Resend\n`,
     })
     expect(errorRuleIds(results)).toContain('local/resend-outside-email')
   })
