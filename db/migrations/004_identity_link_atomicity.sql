@@ -49,4 +49,17 @@ begin
   return 'claimed_by_other';
 end $$;
 
+-- `revoke ... from public` alone is not enough on Supabase: newly created
+-- functions in `public` get separate, explicit EXECUTE grants to `anon`,
+-- `authenticated` and `service_role` at creation time, none of which are
+-- inherited through `public` and so none of which this revoke touches.
+-- `security definer` plus PostgREST's auto-exposure of every public-schema
+-- function as `POST /rest/v1/rpc/<name>` means an ungated `authenticated`
+-- grant would let any signed-in caller link an arbitrary patient with no
+-- reference match, no date-of-birth check, no attempt row and no lockout —
+-- the exact bypass this ticket's "verification is the only writer of
+-- patients.user_id" rule forbids. Nobody but the service role may call this
+-- function; `app_user` is this project's local stand-in for `authenticated`
+-- (db/migrations/001_core.sql:24).
 revoke all on function link_patient_identity(uuid, uuid, text, text, timestamptz) from public;
+revoke execute on function link_patient_identity(uuid, uuid, text, text, timestamptz) from app_user;

@@ -40,6 +40,25 @@ function expectGuard(dbName: string, sql: string, sqlstateClass: string): void {
   psql(dbName, block)
 }
 
+// Runs `sqlScript` as a raw (un-wrapped) statement sequence and expects the
+// whole thing to fail with `sqlstate` — used for role-switch privilege
+// checks, where a plain script needs no cleanup because each call is its own
+// throwaway session (mirrors migration-002.test.ts's expectRawFailure).
+function expectRawFailure(dbName: string, sqlScript: string, sqlstate: string): void {
+  try {
+    execFileSync(
+      'docker',
+      ['exec', CONTAINER_NAME, 'psql', '-U', PG_USER, '-d', dbName, '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=sqlstate', '-tAq', '-c', sqlScript],
+      { encoding: 'utf8' },
+    )
+  } catch (err) {
+    const stderr = String((err as { stderr?: Buffer | string }).stderr ?? '')
+    expect(stderr).toContain(sqlstate)
+    return
+  }
+  throw new Error(`expected sqlstate ${sqlstate} but the statement(s) succeeded: ${sqlScript}`)
+}
+
 function insertAuthUser(dbName: string): string {
   return psql(dbName, `insert into auth.users default values returning id;`)
 }
@@ -165,5 +184,21 @@ describe('AC + adversarial: execute on link_patient_identity is revoked from pub
       `select has_function_privilege('public', 'link_patient_identity(uuid,uuid,text,text,timestamptz)', 'execute');`,
     )
     expect(hasPrivilege).toBe('f')
+  })
+})
+
+describe('AC + adversarial: execute on link_patient_identity is rejected for app_user (this suite\'s authenticated stand-in)', () => {
+  test('linkPatientIdentityExecuteRejectedForAppUser', function linkPatientIdentityExecuteRejectedForAppUser() {
+    // has_function_privilege against the raw postgres superuser connection
+    // (the test above) bypasses grants and never exercises the real
+    // PostgREST exposure path — Supabase grants EXECUTE to `authenticated`
+    // separately from `public` at function creation, so only a call made
+    // *as* that role proves the RPC is actually gated. `app_user` is this
+    // project's local stand-in for `authenticated`.
+    expectRawFailure(
+      mainRun.dbName,
+      `set role app_user; select link_patient_identity(gen_random_uuid(), gen_random_uuid(), 'PT-0000', 'source-hash-z', now());`,
+      '42501',
+    )
   })
 })
