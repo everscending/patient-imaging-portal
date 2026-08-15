@@ -154,6 +154,36 @@ const {
     return api
   }
 
+  // Mirrors db/migrations/004_identity_link_atomicity.sql's
+  // link_patient_identity(...) function: the conditional UPDATE and the
+  // succeeded=true insert happen together, synchronously, in this one call —
+  // the same all-or-nothing shape the real function gets from running as a
+  // single Postgres transaction. There is no PostgREST hop in between for a
+  // process death or a failed second call to land in, which is exactly what
+  // moving this behind one .rpc() call buys in production.
+  function fakeLinkPatientIdentity(args: {
+    p_patient_id: string
+    p_caller_id: string
+    p_attempted_patient_ref: string
+    p_source_ref: string
+    p_attempted_at: string
+  }): string {
+    const patient = patientRows.find((row) => row.id === args.p_patient_id)
+    if (patient && patient.user_id === null) {
+      patient.user_id = args.p_caller_id
+      attemptRows.push({
+        id: `row-${idCounter++}`,
+        attempted_patient_ref: args.p_attempted_patient_ref,
+        source_ref: args.p_source_ref,
+        user_id: args.p_caller_id,
+        succeeded: true,
+        attempted_at: args.p_attempted_at,
+      })
+      return 'linked_now'
+    }
+    return patient?.user_id === args.p_caller_id ? 'already_by_caller' : 'claimed_by_other'
+  }
+
   const fakeServiceClient = vi.fn(() => ({
     from(tableName: string) {
       const table = tableName === 'patients' ? patientRows : tableName === 'identity_attempts' ? attemptRows : null
@@ -163,6 +193,10 @@ const {
         insert: (row: FakeRow) => makeBuilder(table, 'insert', row),
         update: (patch: FakeRow) => makeBuilder(table, 'update', patch),
       }
+    },
+    async rpc(fnName: string, args: FakeRow) {
+      if (fnName !== 'link_patient_identity') throw new Error(`fake client: unexpected rpc "${fnName}"`)
+      return { data: fakeLinkPatientIdentity(args as Parameters<typeof fakeLinkPatientIdentity>[0]), error: null }
     },
   }))
 
@@ -716,20 +750,41 @@ describe('resolveCallerId', () => {
   })
 })
 
+// JOR-254 round 3: the write moved out of lib/access/identity.ts's own
+// PostgREST calls and into link_patient_identity (db/migrations/004_...),
+// so a source-grep for the literal `.from('patients').update(` pattern would
+// now find it nowhere at all — vacuously true, and no longer enforcing the
+// invariant it exists for. Enforced instead against the new shape: the SQL
+// write itself (only one migration may ever SET patients.user_id) and the
+// call site (only identity.ts may name the RPC function that reaches it).
 describe('AC: patients.user_id is written in no other file in the tree', () => {
-  test('onlyIdentityTsCallsUpdateOnThePatientsTable', function onlyIdentityTsCallsUpdateOnThePatientsTable() {
+  test('onlyTheLinkFunctionMigrationWritesPatientsUserId', function onlyTheLinkFunctionMigrationWritesPatientsUserId() {
     const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
     const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: REPO_ROOT })
       .toString()
       .trim()
       .split('\n')
-      .filter((relativePath) => /\.(ts|tsx)$/.test(relativePath) && !relativePath.startsWith('tests/') && !relativePath.startsWith('db/'))
 
-    const writers = tracked.filter((relativePath) => {
+    const sqlWriters = tracked.filter((relativePath) => {
+      if (!relativePath.endsWith('.sql')) return false
+      const source = readFileSync(path.join(REPO_ROOT, relativePath), 'utf8')
+      return /update\s+patients[\s\S]{0,60}set\s+user_id\s*=/i.test(source)
+    })
+    expect(sqlWriters).toEqual(['db/migrations/004_identity_link_atomicity.sql'])
+
+    const tsFiles = tracked.filter((relativePath) => /\.(ts|tsx)$/.test(relativePath) && !relativePath.startsWith('tests/') && !relativePath.startsWith('db/'))
+
+    const rpcCallers = tsFiles.filter((relativePath) => {
+      const source = readFileSync(path.join(REPO_ROOT, relativePath), 'utf8')
+      return source.includes('link_patient_identity')
+    })
+    expect(rpcCallers).toEqual(['lib/access/identity.ts'])
+
+    // The old PostgREST write pattern is gone everywhere, not just relocated.
+    const legacyPattern = tsFiles.filter((relativePath) => {
       const source = readFileSync(path.join(REPO_ROOT, relativePath), 'utf8')
       return /\.from\(['"]patients['"]\)\s*\.update\(/.test(source)
     })
-
-    expect(writers).toEqual(['lib/access/identity.ts'])
+    expect(legacyPattern).toEqual([])
   })
 })

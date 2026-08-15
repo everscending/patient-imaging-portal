@@ -124,19 +124,33 @@ async function recordIdentityAudit(
 
 type LinkOutcome = 'linked_now' | 'already_by_caller' | 'claimed_by_other'
 
-// The one write in the whole build that sets `patients.user_id` (§4). The
-// conditional `is('user_id', null)` makes the write itself the single source
-// of truth for "only when the column is currently null" — a second, unlucky
-// concurrent caller for the same never-before-linked patient loses the race
-// and is told so, rather than both callers reading back a false success.
-async function attemptLink(client: ServiceClient, patientId: string, callerId: string): Promise<LinkOutcome> {
-  const { data: updated, error } = await client.from('patients').update({ user_id: callerId }).eq('id', patientId).is('user_id', null).select('id')
-  if (error) throw new Error(`identity: failed to write patients.user_id: ${error.message}`)
-  if ((updated as { id: string }[] | null)?.length === 1) return 'linked_now'
-
-  const { data: current, error: readError } = await client.from('patients').select('user_id').eq('id', patientId).maybeSingle()
-  if (readError) throw new Error(`identity: failed to read patients: ${readError.message}`)
-  return (current as { user_id: string | null } | null)?.user_id === callerId ? 'already_by_caller' : 'claimed_by_other'
+// The one write in the whole build that sets `patients.user_id` (§4) — moved
+// into the `link_patient_identity` Postgres function (db/migrations/004_...)
+// so that write and its `identity_attempts` success row commit or fail
+// together in one transaction (ADR-0011's pinned design decision, AC1).
+// PostgREST gives no cross-call transaction, so two sequential `.from(...)`
+// calls here could not do that; a single `.rpc(...)` call runs the whole
+// function body, update and insert together, as one transaction. The
+// function's own conditional `where user_id is null` makes the write itself
+// the single source of truth for "only when the column is currently null" —
+// a second, unlucky concurrent caller for the same never-before-linked
+// patient loses the race and is told so, rather than both callers reading
+// back a false success.
+async function attemptLink(
+  client: ServiceClient,
+  patientId: string,
+  callerId: string,
+  fields: { attemptedPatientRef: string; sourceRef: string; attemptedAt: string },
+): Promise<LinkOutcome> {
+  const { data, error } = await client.rpc('link_patient_identity', {
+    p_patient_id: patientId,
+    p_caller_id: callerId,
+    p_attempted_patient_ref: fields.attemptedPatientRef,
+    p_source_ref: fields.sourceRef,
+    p_attempted_at: fields.attemptedAt,
+  })
+  if (error) throw new Error(`identity: failed to link patients.user_id: ${error.message}`)
+  return data as LinkOutcome
 }
 
 export type VerifyInput = { callerId: string; patientRef: string; dateOfBirth: string; sourceRef: string }
@@ -192,7 +206,7 @@ export async function verifyIdentity(input: VerifyInput): Promise<VerifyOutcome>
     return { ok: true, patientRef: matchedPatient.patient_ref, linkedAt: linkedAt ?? nowIso }
   }
 
-  const linkOutcome = await attemptLink(client, matchedPatient.id, callerId)
+  const linkOutcome = await attemptLink(client, matchedPatient.id, callerId, { attemptedPatientRef: patientRef, sourceRef, attemptedAt: nowIso })
 
   if (linkOutcome === 'claimed_by_other') {
     await recordAttempt(client, { attemptedPatientRef: patientRef, sourceRef, userId: callerId, succeeded: false, attemptedAt: nowIso })
@@ -205,8 +219,8 @@ export async function verifyIdentity(input: VerifyInput): Promise<VerifyOutcome>
     return { ok: true, patientRef: matchedPatient.patient_ref, linkedAt: linkedAt ?? nowIso }
   }
 
-  // linkOutcome === 'linked_now'
-  await recordAttempt(client, { attemptedPatientRef: patientRef, sourceRef, userId: callerId, succeeded: true, attemptedAt: nowIso })
+  // linkOutcome === 'linked_now' — the succeeded=true identity_attempts row
+  // was already written inside link_patient_identity's own transaction.
   await recordIdentityAudit(callerId, 'identity.verify', 'granted', matchedPatient.id)
   await recordIdentityAudit(callerId, 'identity.link', 'granted', matchedPatient.id)
 
