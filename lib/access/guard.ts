@@ -1,6 +1,11 @@
 // lib/access/guard.ts — the single PHI seam (ARCHITECTURE.md §5).
+import 'server-only'
+
+import { cookies } from 'next/headers'
 import type { AuditAction } from '../audit/events'
 import { recordAuditEvent } from '../audit/events'
+import { anonClient, authClient, serviceClient } from '../db/client'
+import { SESSION_COOKIE_NAME } from '../session-cookie'
 
 export type Actor =
   | { kind: 'patient'; userId: string }
@@ -60,6 +65,234 @@ function targetAuditFields(target: PhiTarget): { targetKind: string; targetId: s
   }
 }
 
+// Same type anonClient() and serviceClient() already return (both are
+// SupabaseClient) — reused via ReturnType so this file never has to name
+// the Supabase SDK type directly (only lib/db/client.ts may import it).
+type Client = ReturnType<typeof anonClient>
+
+type PatientLinkRow = { id: string }
+type ProviderRow = { id: string }
+type OwnedRow = { id: string; patient_id: string }
+type ReportRow = { id: string; patient_id: string; status: 'preliminary' | 'signed' }
+type ReportWithStudyRow = { id: string; patient_id: string; study_id: string }
+type StudyRow = { id: string; patient_id: string; visit_id: string }
+type VisitRow = { id: string }
+type ShareLinkRow = { id: string; patient_id: string; image_id: string | null; report_id: string | null }
+
+// study/image/clip/appointment share the same ownership shape for a patient
+// or an admin actor: one row, keyed by id (and by patient_id for a patient).
+const PATIENT_SCOPED_TABLES: Record<'study' | 'image' | 'clip' | 'appointment', string> = {
+  study: 'studies',
+  image: 'images',
+  clip: 'cine_clips',
+  appointment: 'appointments',
+}
+
+async function fetchRow<T>(client: Client, table: string, filters: Array<[string, string]>): Promise<T | null> {
+  let query = client.from(table).select('*')
+  for (const [column, value] of filters) {
+    query = query.eq(column, value)
+  }
+  const { data, error } = await query.maybeSingle()
+  if (error) throw new Error(`guard: failed to read ${table}: ${error.message}`)
+  return (data as T | null) ?? null
+}
+
+// Reads the caller's session the same way lib/audit/events.ts and
+// lib/access/identity.ts do — the session cookie, via next/headers, since
+// there is no NextRequest in scope here either.
+async function callerAccessToken(): Promise<string | null> {
+  const cookieStore = await cookies()
+  return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
+}
+
+async function decidePatientReport(client: Client, reportId: string, patientId: string): Promise<GuardResult> {
+  const report = await fetchRow<ReportRow>(client, 'reports', [
+    ['id', reportId],
+    ['patient_id', patientId],
+  ])
+  if (!report) return { ok: false, status: 404 }
+  // FR-7: the signed-only rule is a patient visibility rule — a provider or
+  // admin actor never reaches this function, so it never needs to check it.
+  if (report.status === 'preliminary') return { ok: false, status: 404 }
+  return { ok: true, patientId }
+}
+
+async function decidePatient(client: Client, userId: string, target: PhiTarget): Promise<GuardResult> {
+  // §4: the identity link is patients.user_id, read through the caller's own
+  // client under the patients_self policy — zero rows for an unlinked or
+  // deleted-underneath-them account, identical to "never linked" (ADR-0011).
+  const patient = await fetchRow<PatientLinkRow>(client, 'patients', [['user_id', userId]])
+  if (!patient) return { ok: false, status: 403 }
+  const patientId = patient.id
+
+  switch (target.kind) {
+    case 'collection':
+      // §5/ADR-0012: no per-item check — there is no named item. Rows
+      // themselves stay scoped by RLS; this grant never widens what returns.
+      return { ok: true, patientId }
+    case 'schedule':
+    case 'audit_log':
+      // No ownership definition for a patient actor on either target.
+      return { ok: false, status: 404 }
+    case 'report':
+      return decidePatientReport(client, target.id, patientId)
+    case 'study':
+    case 'image':
+    case 'clip':
+    case 'appointment': {
+      const row = await fetchRow<OwnedRow>(client, PATIENT_SCOPED_TABLES[target.kind], [
+        ['id', target.id],
+        ['patient_id', patientId],
+      ])
+      return row ? { ok: true, patientId } : { ok: false, status: 404 }
+    }
+    default:
+      return assertNever(target)
+  }
+}
+
+async function decideStudyForProvider(client: Client, studyId: string, providerId: string): Promise<GuardResult> {
+  const study = await fetchRow<StudyRow>(client, 'studies', [['id', studyId]])
+  if (!study) return { ok: false, status: 404 }
+  const visit = await fetchRow<VisitRow>(client, 'visits', [
+    ['id', study.visit_id],
+    ['provider_id', providerId],
+  ])
+  if (!visit) return { ok: false, status: 404 }
+  return { ok: true, patientId: study.patient_id }
+}
+
+async function decideReportForProvider(client: Client, reportId: string, providerId: string): Promise<GuardResult> {
+  const report = await fetchRow<ReportWithStudyRow>(client, 'reports', [['id', reportId]])
+  if (!report) return { ok: false, status: 404 }
+  const study = await fetchRow<StudyRow>(client, 'studies', [['id', report.study_id]])
+  if (!study) return { ok: false, status: 404 }
+  const visit = await fetchRow<VisitRow>(client, 'visits', [
+    ['id', study.visit_id],
+    ['provider_id', providerId],
+  ])
+  if (!visit) return { ok: false, status: 404 }
+  // §5: preliminary is a patient visibility rule (FR-7) — a provider reading
+  // their own patient's report sees it whatever its status.
+  return { ok: true, patientId: report.patient_id }
+}
+
+async function decideProvider(client: Client, userId: string, target: PhiTarget): Promise<GuardResult> {
+  switch (target.kind) {
+    case 'collection':
+      return { ok: true, patientId: null }
+    case 'audit_log':
+      return { ok: false, status: 404 }
+    case 'image':
+    case 'clip':
+      // §4 RLS grants a provider no read path to images or cine clips at all
+      // (images_own/clips_own key on patient_id only) — no ownership
+      // definition exists for this actor/target pair, so it always fails.
+      return { ok: false, status: 404 }
+    case 'schedule': {
+      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
+      if (!provider) return { ok: false, status: 404 }
+      return provider.id === target.id ? { ok: true, patientId: null } : { ok: false, status: 404 }
+    }
+    case 'appointment': {
+      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
+      if (!provider) return { ok: false, status: 404 }
+      const row = await fetchRow<OwnedRow>(client, 'appointments', [
+        ['id', target.id],
+        ['provider_id', provider.id],
+      ])
+      return row ? { ok: true, patientId: row.patient_id } : { ok: false, status: 404 }
+    }
+    case 'study': {
+      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
+      if (!provider) return { ok: false, status: 404 }
+      return decideStudyForProvider(client, target.id, provider.id)
+    }
+    case 'report': {
+      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
+      if (!provider) return { ok: false, status: 404 }
+      return decideReportForProvider(client, target.id, provider.id)
+    }
+    default:
+      return assertNever(target)
+  }
+}
+
+async function decideAdmin(client: Client, target: PhiTarget): Promise<GuardResult> {
+  switch (target.kind) {
+    case 'collection':
+    case 'audit_log':
+      // §5: admin ownership is "always true, and always audited" — the
+      // audit write happens unconditionally in guardPhiAccess below.
+      return { ok: true, patientId: null }
+    case 'schedule': {
+      const provider = await fetchRow<ProviderRow>(client, 'providers', [['id', target.id]])
+      return provider ? { ok: true, patientId: null } : { ok: false, status: 404 }
+    }
+    case 'study':
+    case 'image':
+    case 'clip':
+    case 'appointment': {
+      const row = await fetchRow<OwnedRow>(client, PATIENT_SCOPED_TABLES[target.kind], [['id', target.id]])
+      return row ? { ok: true, patientId: row.patient_id } : { ok: false, status: 404 }
+    }
+    case 'report': {
+      // Preliminary is allowed for admin (§5) — no status check needed.
+      const row = await fetchRow<ReportRow>(client, 'reports', [['id', target.id]])
+      return row ? { ok: true, patientId: row.patient_id } : { ok: false, status: 404 }
+    }
+    default:
+      return assertNever(target)
+  }
+}
+
+// A share recipient carries no session at all (UX_SPEC §4.8: "the only
+// PHI-bearing route reachable without a session"), so there is no auth.uid()
+// to key an anonClient read on. Reading the already-resolved share_links row
+// by its id is the guard's own layer of ARCHITECTURE.md §4's "share-link
+// resolution (where there is no auth.uid() to key on)" — one of the three
+// legal service-role uses. The raw-token-to-shareLinkId match, and any
+// expiry/revocation check, belong to the not-yet-built module that resolves
+// the token and calls this guard — this function only re-checks that the
+// target is the exact resource that shareLinkId names (FR-9).
+async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Promise<GuardResult> {
+  if (target.kind !== 'image' && target.kind !== 'report') return { ok: false, status: 404 }
+
+  const link = await fetchRow<ShareLinkRow>(serviceClient(), 'share_links', [['id', shareLinkId]])
+  if (!link) return { ok: false, status: 404 }
+
+  const namedId = target.kind === 'image' ? link.image_id : link.report_id
+  if (namedId !== target.id) return { ok: false, status: 404 }
+
+  return { ok: true, patientId: link.patient_id }
+}
+
+async function decide(actor: Actor, target: PhiTarget): Promise<GuardResult> {
+  if (actor.kind === 'share_recipient') {
+    return decideShareRecipient(actor.shareLinkId, target)
+  }
+
+  const token = await callerAccessToken()
+  if (!token) return { ok: false, status: 401 }
+
+  const { data, error } = await authClient().auth.getUser(token)
+  if (error || !data.user) return { ok: false, status: 401 }
+
+  const client = anonClient(token)
+
+  switch (actor.kind) {
+    case 'patient':
+      return decidePatient(client, actor.userId, target)
+    case 'provider':
+      return decideProvider(client, actor.userId, target)
+    case 'admin':
+      return decideAdmin(client, target)
+    default:
+      return assertNever(actor)
+  }
+}
+
 /**
  * Verifies session, identity link, and ownership; writes exactly one
  * audit event either way. Never throws for an authorization failure —
@@ -67,14 +300,21 @@ function targetAuditFields(target: PhiTarget): { targetKind: string; targetId: s
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
- *
- * Stub (JOR-238): always denies. T17 fills in the session, identity-link and
- * ownership checks; until then every call writes one denied row and returns
- * 401 — never throws, so no caller learns the wrong error path from it.
  */
 export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
+
+  // Never throws out of this function (never a 500): an unexpected failure
+  // anywhere in decide() — a dropped connection, a deleted-underneath-them
+  // row surfacing as something other than a clean zero-row read — collapses
+  // to the same conservative denial a missing session gets.
+  let decision: GuardResult
+  try {
+    decision = await decide(actor, target)
+  } catch {
+    decision = { ok: false, status: 401 }
+  }
 
   await recordAuditEvent({
     actorKind,
@@ -82,8 +322,8 @@ export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: Au
     action,
     targetKind,
     targetId,
-    outcome: 'denied',
+    outcome: decision.ok ? 'granted' : 'denied',
   })
 
-  return { ok: false, status: 401 }
+  return decision
 }

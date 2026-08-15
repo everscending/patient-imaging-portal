@@ -29,16 +29,17 @@
 //   UPDATE/DELETE on audit_events as app_user, rejected
 //     → tests/db/migration-002.test.ts's auditEventsAppUserInsertSelectOkUpdateDeleteFail
 //   a guard call that returns without an audit row, rejected
-//     → guardStubAppendsExactlyOneDeniedRowPerCall
+//     → tests/access/guard.test.ts's exactlyOneAuditRowPerCall (JOR-262 —
+//       lib/access/guard.ts stopped being a stub there; this file no longer
+//       carries guard-behavior coverage, only its own audit-write contract)
 //   a module other than lib/audit/events.ts writing audit_events, rejected
 //     → tests/lint/forbidden-imports.test.ts's adversarialAuditEventsOutsideEventsFails
-//     (this file also checks guard.ts's own source: guardImportsEventsNotDbClient)
+//     (this file also checks guard.ts's own source: guardWritesAuditEventsOnlyThroughRecordAuditEvent)
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Actor, PhiTarget } from '../../lib/access/guard'
 
 // server-only throws unconditionally under plain Node (no `react-server`
 // resolution condition) — tests/db/client.test.ts neutralizes it the same way.
@@ -132,7 +133,6 @@ vi.mock('next/headers', () => ({
 
 import type { AuditAction, RecordAuditEventInput } from '../../lib/audit/events'
 import { recordAuditEvent } from '../../lib/audit/events'
-import { guardPhiAccess } from '../../lib/access/guard'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
@@ -321,62 +321,22 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
   })
 })
 
-describe('AC: the stub always denies, and audits every call exactly once (§5 stub, JOR-238)', () => {
-  const actors: Actor[] = [
-    { kind: 'patient', userId: 'patient-1' },
-    { kind: 'provider', userId: 'provider-1' },
-    { kind: 'admin', userId: 'admin-1' },
-    { kind: 'share_recipient', shareLinkId: 'share-1' },
-  ]
-
-  const targets: PhiTarget[] = [
-    { kind: 'study', id: 'study-1' },
-    { kind: 'image', id: 'image-1' },
-    { kind: 'clip', id: 'clip-1' },
-    { kind: 'report', id: 'report-1' },
-    { kind: 'appointment', id: 'appt-1' },
-    { kind: 'schedule', id: 'provider-1' },
-    { kind: 'collection', of: 'study' },
-    { kind: 'collection', of: 'report' },
-    { kind: 'collection', of: 'appointment' },
-    { kind: 'collection', of: 'share' },
-    { kind: 'audit_log' },
-  ]
-
-  test('guardStubAppendsExactlyOneDeniedRowPerCall', async function guardStubAppendsExactlyOneDeniedRowPerCall() {
-    for (const actor of actors) {
-      for (const target of targets) {
-        const before = auditRows.length
-        const result = await guardPhiAccess(actor, target, 'study.view')
-        expect(result).toEqual({ ok: false, status: 401 })
-        expect(auditRows).toHaveLength(before + 1)
-        expect(auditRows[auditRows.length - 1]?.outcome).toBe('denied')
-      }
-    }
-  })
-
-  test('collectionTargetWritesUnderscoreListTargetKindWithNullId', async function collectionTargetWritesUnderscoreListTargetKindWithNullId() {
-    await guardPhiAccess({ kind: 'patient', userId: 'patient-1' }, { kind: 'collection', of: 'report' }, 'report.view')
-    const row = auditRows[auditRows.length - 1]
-    expect(row).toMatchObject({ target_kind: 'report_list', target_id: null })
-  })
-
-  test('shareRecipientActorKindMapsToShareRecipientAuditActorKind', async function shareRecipientActorKindMapsToShareRecipientAuditActorKind() {
-    await guardPhiAccess({ kind: 'share_recipient', shareLinkId: 'share-9' }, { kind: 'image', id: 'image-9' }, 'image.view')
-    const row = auditRows[auditRows.length - 1]
-    expect(row).toMatchObject({ actor_kind: 'share_recipient', actor_ref: 'share-9' })
-  })
-})
-
-describe('AC: lib/audit/events.ts is the only writer; lib/access/guard.ts imports it rather than a database client', () => {
-  test('guardImportsEventsNotDbClient', function guardImportsEventsNotDbClient() {
+// The "stub always denies every actor/target combination" coverage that used
+// to live here (JOR-238, guard.ts's original stub) is gone: JOR-262 replaced
+// the stub with real session/identity-link/ownership logic, so "always 401"
+// is no longer true of guardPhiAccess. That ticket's tests/access/guard.test.ts
+// is the guard's own behavior suite now; this file keeps only what is still
+// true of it — that it writes audit_events exclusively through
+// recordAuditEvent, never by hand.
+describe('AC: lib/audit/events.ts is the only writer; lib/access/guard.ts never inserts into audit_events itself', () => {
+  test('guardWritesAuditEventsOnlyThroughRecordAuditEvent', function guardWritesAuditEventsOnlyThroughRecordAuditEvent() {
     const source = readFileSync(path.join(REPO_ROOT, 'lib', 'access', 'guard.ts'), 'utf8')
     // Built at runtime, not spelled out literally, so this assertion itself
     // does not trip tests/db/client.test.ts's whole-tree scan for the same
     // package name (the same trick that file and tests/notify/email.test.ts use).
     const supabaseJsPackage = ['@supabase', 'supabase-js'].join('/')
     expect(source).toContain("from '../audit/events'")
-    expect(source).not.toContain("from '../db/client'")
     expect(source).not.toContain(supabaseJsPackage)
+    expect(source).not.toMatch(/\.from\(\s*['"]audit_events['"]\s*\)/)
   })
 })
