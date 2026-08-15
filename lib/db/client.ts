@@ -28,3 +28,12 @@ export function anonClient(accessToken: string): SupabaseClient {
 export function serviceClient(): SupabaseClient {
   return createClient(config.supabaseUrl, config.supabaseServiceRoleKey)
 }
+
+/** Anon key, no bearer token — the two auth routes' only legal caller of
+ *  Supabase Auth (ADR-0012 #15): register (signUp) and log in
+ *  (signInWithPassword) happen before a session exists, so anonClient's
+ *  required accessToken does not apply, and serviceClient stays reserved for
+ *  its three PHI-adjacent call sites above. */
+export function authClient(): SupabaseClient {
+  return createClient(config.supabaseUrl, config.supabaseAnonKey)
+}

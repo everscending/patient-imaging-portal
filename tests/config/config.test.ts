@@ -311,8 +311,17 @@ describe('repo-wide guards', () => {
     // ARCHITECTURE.md §8 names `TEST_PG_PORT`'s reader as "test harness", not
     // lib/config.ts — JOR-195's tests/setup/postgres.ts and the test files
     // that exercise it are the other legitimate readers this guard allows.
+    // JOR-229 adds two more of the same kind: playwright.config.ts's
+    // `reuseExistingServer: !process.env.CI` (the standard Playwright idiom)
+    // and e2e/fixtures/start-test-server.mjs, which — exactly like the
+    // Postgres harness — stands up a local double instead of depending on
+    // reachable cloud infra for tests, and needs the raw environment to
+    // decide whether a real Supabase project is already configured and to
+    // pass the local double's URL to the spawned app process.
     expect(hits.sort()).toEqual([
+      'e2e/fixtures/start-test-server.mjs',
       'lib/config.ts',
+      'playwright.config.ts',
       'tests/config/config.test.ts',
       'tests/gate/gate.test.ts',
       'tests/integration/postgres-harness.test.ts',
