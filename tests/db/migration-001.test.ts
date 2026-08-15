@@ -3,8 +3,8 @@
 // pins. auth.users / auth.uid() (§13) are stubbed by
 // tests/setup/postgres.ts's startRun() for every run in this shared
 // container — 001 is the first real migration to reference auth.*, so that
-// stub (and clearing the cluster-global app_user role between runs) lives
-// there, not duplicated per test file.
+// stub lives there, not duplicated per test file. The cluster-global
+// app_user role is provisioned idempotently and shared across run databases.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

@@ -35,6 +35,9 @@ chooses, with a database per test run.**
 - Each run creates its own database — `pip_run_<random>` — applies the
   migrations into it, and drops it at the end. Isolation is the database, not
   the container.
+- Cluster-global roles are provisioned idempotently and shared by those run
+  databases. The harness never drops a role between runs: database-local grants
+  in any live run make a cluster-wide drop both invalid and unsafe.
 - **`TEST_PG_PORT` becomes an optional pin, not the identity.** Unset (the
   normal case) means an ephemeral port. Set, it publishes on that port instead,
   for the one case that needs it: attaching a database client to look around

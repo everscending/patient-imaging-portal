@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
@@ -13,6 +13,18 @@ import {
 } from '../setup/postgres'
 
 const runsToClean: Awaited<ReturnType<typeof startRun>>[] = []
+const CORE_MIGRATION_PATH = join(process.cwd(), 'db', 'migrations', '001_core.sql')
+
+function psql(dbName: string, sql: string): string {
+  // -q suppresses command completion tags ("SET", "INSERT 0 1") that -tA
+  // alone does not — without it, a multi-statement call's tags land glued
+  // onto the actual result and corrupt anything comparing it exactly.
+  return execFileSync(
+    'docker',
+    ['exec', 'pip-testpg', 'psql', '-U', 'postgres', '-d', dbName, '-v', 'ON_ERROR_STOP=1', '-tAq', '-c', sql],
+    { encoding: 'utf8' },
+  ).trim()
+}
 
 afterAll(async () => {
   for (const run of runsToClean.splice(0)) {
@@ -48,6 +60,40 @@ describe('isolation — acceptance + adversarial: a database per run, never shar
     expect(b.dbName).toMatch(/^pip_run_[0-9a-f]+$/)
     expect(_databaseExistsForTest(a.dbName)).toBe(true)
     expect(_databaseExistsForTest(b.dbName)).toBe(true)
+  })
+
+  test('overlapping runs can share a granted cluster role without invalidating each other', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pip-granted-role-migrations-'))
+    let first: Awaited<ReturnType<typeof startRun>> | undefined
+    let second: Awaited<ReturnType<typeof startRun>> | undefined
+
+    try {
+      writeFileSync(join(dir, '001_core.sql'), readFileSync(CORE_MIGRATION_PATH, 'utf8'))
+      writeFileSync(
+        join(dir, '002_grant_app_user.sql'),
+        'CREATE TABLE grant_probe (id integer PRIMARY KEY); GRANT SELECT, INSERT ON grant_probe TO app_user;',
+      )
+
+      const container = await ensureContainer()
+      first = await startRun(container, dir)
+      second = await startRun(container, dir)
+
+      expect(psql(first.dbName, "SELECT rolcanlogin FROM pg_roles WHERE rolname = 'app_user';")).toBe('f')
+      expect(psql(first.dbName, 'SET ROLE app_user; INSERT INTO grant_probe VALUES (1); SELECT id FROM grant_probe;')).toBe(
+        '1',
+      )
+
+      await stopRun(first)
+      first = undefined
+
+      expect(psql(second.dbName, 'SET ROLE app_user; INSERT INTO grant_probe VALUES (2); SELECT id FROM grant_probe;')).toBe(
+        '2',
+      )
+    } finally {
+      if (second) await stopRun(second).catch(() => {})
+      if (first) await stopRun(first).catch(() => {})
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
