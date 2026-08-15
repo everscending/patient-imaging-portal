@@ -117,12 +117,21 @@ function insertAuthUser(dbName: string): string {
   return psql(dbName, `insert into auth.users default values returning id;`)
 }
 
+let patientReferenceSequence = 9000
+
+function nextPatientReference(): string {
+  if (patientReferenceSequence > 9999) {
+    throw new Error('RLS patient fixture exhausted its reserved reference range')
+  }
+  return `PT-${String(patientReferenceSequence++).padStart(4, '0')}`
+}
+
 function insertPatient(dbName: string, userId: string | null = null): string {
   const userLiteral = userId === null ? 'null' : `'${userId}'`
   return psql(
     dbName,
     `insert into patients (user_id, patient_ref, date_of_birth, full_name, email)
-     values (${userLiteral}, 'PT-${randomUUID().slice(0, 4)}', '1990-01-01', 'Patient ${randomUUID().slice(0, 4)}', 'p${randomUUID().slice(0, 8)}@example.com')
+     values (${userLiteral}, '${nextPatientReference()}', '1990-01-01', 'Patient ${randomUUID().slice(0, 4)}', 'p${randomUUID().slice(0, 8)}@example.com')
      returning id;`,
   )
 }
