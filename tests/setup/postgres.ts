@@ -4,7 +4,7 @@
 // per run, `pip_run_<random>`, so two lanes — or two runs in one worktree —
 // never share state. The harness applies db/migrations/*.sql and never
 // seeds; seeding is a later ticket's job.
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -163,14 +163,115 @@ function runMigrations(dbName: string, dir: string = MIGRATIONS_DIR): void {
   }
 }
 
+// db/migrations/001_core.sql (the first real migration) references
+// auth.users(id) — a table Supabase provides and stock postgres:16-alpine
+// does not. Stubbed here, once, for every fresh run, so any migration set
+// that names auth.* applies clean. `create role app_user nologin` (also
+// pinned, no `if not exists`) is cluster-global, not per-database, so it
+// outlives DROP DATABASE and collides with the next run's `create role` in
+// this same shared container — dropped first for the same reason. Per
+// ADR-0013 this container is shared across concurrent lanes/worktrees, so
+// the drop-then-recreate span is held under a session-level Postgres
+// advisory lock (see withRoleLock below) rather than run bare: otherwise
+// another worktree's startRun() could drop the role out from under a run
+// that already migrated and is relying on it existing.
+const AUTH_STUB_SQL = `
+create schema if not exists auth;
+create table if not exists auth.users (
+  id uuid primary key default gen_random_uuid()
+);
+create or replace function auth.uid() returns uuid
+language sql stable
+as $$ select null::uuid $$;
+`
+
+// Arbitrary fixed key identifying "the app_user role reset" as a cluster-wide
+// critical section. Any process — this one or another worktree's — blocks on
+// pg_advisory_lock until whoever holds it finishes dropping and recreating
+// the role, so no process ever observes the role mid-reset.
+const ROLE_RESET_LOCK_KEY = 5942177
+
+// Holds a session-level Postgres advisory lock across `fn`, serializing it
+// against any other process's concurrent role reset — including another
+// worktree's vitest process hitting this same shared container (ADR-0013).
+// Needs one persistent connection (the lock is per-session), so this can't
+// go through the one-shot `psql()`/`dockerExec()` helpers, which spawn a
+// fresh connection per call.
+async function withRoleLock<T>(fn: () => T): Promise<T> {
+  const proc = spawn('docker', ['exec', '-i', CONTAINER_NAME, 'psql', '-U', PG_USER, '-d', MAINTENANCE_DB, '-v', 'ON_ERROR_STOP=1', '-tA'])
+
+  // 'error' only fires for spawn-level failures (e.g. ENOENT) — it never
+  // fires if the process starts fine and then exits or errors afterward (bad
+  // connection, container restart mid-run, a rejected pg_advisory_lock
+  // query). Without an 'exit' listener too, that case leaves the pending
+  // promise unsettled forever instead of failing fast.
+  const nextResponse = () =>
+    new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        proc.stdout.off('data', onData)
+        proc.off('error', onError)
+        proc.off('exit', onExit)
+      }
+      const onData = () => {
+        cleanup()
+        resolve()
+      }
+      const onError = (err: Error) => {
+        cleanup()
+        reject(err)
+      }
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        cleanup()
+        reject(new Error(`psql process for advisory lock exited before responding (code=${code}, signal=${signal})`))
+      }
+      proc.stdout.once('data', onData)
+      proc.once('error', onError)
+      proc.once('exit', onExit)
+    })
+
+  try {
+    const acquired = nextResponse()
+    proc.stdin.write('select pg_advisory_lock(' + ROLE_RESET_LOCK_KEY + ');\n')
+    await acquired
+
+    try {
+      return fn()
+    } finally {
+      const released = nextResponse()
+      proc.stdin.write('select pg_advisory_unlock(' + ROLE_RESET_LOCK_KEY + ');\n')
+      await released
+      proc.stdin.end()
+      await new Promise((resolve) => proc.once('close', resolve))
+    }
+  } catch (err) {
+    proc.kill()
+    throw err
+  }
+}
+
+function prepareClusterForRun(): void {
+  psql(MAINTENANCE_DB, 'drop role if exists app_user;')
+}
+
+function stubAuth(dbName: string): void {
+  psqlFile(dbName, AUTH_STUB_SQL)
+}
+
 // Creates a fresh, migrated pip_run_<random> database and registers it so
 // the startup sweep can find it if this run never calls stopRun. Two calls —
 // concurrent or not — never collide: each generates its own random name.
 export async function startRun(container: Container, migrationsDir?: string): Promise<Run> {
   const dbName = randomDbName()
+  // CREATE DATABASE for a randomly-named database and the registry insert
+  // never collide between concurrent runs, so they run outside the lock.
+  // stubAuth writes only to this run's own dbName, so it's unlocked too.
   psql(MAINTENANCE_DB, `CREATE DATABASE "${dbName}";`)
   psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
-  runMigrations(dbName, migrationsDir)
+  stubAuth(dbName)
+  await withRoleLock(() => {
+    prepareClusterForRun()
+    runMigrations(dbName, migrationsDir)
+  })
   return {
     dbName,
     port: container.port,
