@@ -12,7 +12,11 @@ const compat = new FlatCompat({
 const eslintConfig = [
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
   {
-    ignores: ['.next/**', 'node_modules/**', 'playwright-report/**', 'test-results/**'],
+    // next-env.d.ts is Next.js-generated and carries a note not to hand-edit
+    // it; its triple-slash reference is the framework's own boilerplate, not
+    // something this repo authored, so it is excluded rather than the
+    // @typescript-eslint/triple-slash-reference rule weakened project-wide.
+    ignores: ['.next/**', 'node_modules/**', 'playwright-report/**', 'test-results/**', 'next-env.d.ts'],
   },
 ]
 
