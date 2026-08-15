@@ -75,7 +75,7 @@ Appended once per deploy run — never edited after the fact.
 
 | Date | Supabase project ref | Deployed URL | Deployed commit |
 | --- | --- | --- | --- |
-| 2026-08-15 | `dyvbopxzwkavhggawedt` | https://patient-imaging-portal.vercel.app | `PENDING` |
+| 2026-08-15 | `dyvbopxzwkavhggawedt` | https://patient-imaging-portal.vercel.app | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
 
 ## Live check
 
@@ -84,5 +84,5 @@ guessed object path in `phi`, both made after the run record above.
 
 | Timestamp (UTC) | Check | HTTP status | TLS certificate issuer | Commit |
 | --- | --- | --- | --- | --- |
-| PENDING | Deployed URL (`GET /`) | PENDING | PENDING | `PENDING` |
-| PENDING | Guessed object in `phi` | PENDING | — | `PENDING` |
+| 2026-08-15T18:23:53Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
+| 2026-08-15T18:23:53Z | Guessed object in `phi` | 400 | — | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
