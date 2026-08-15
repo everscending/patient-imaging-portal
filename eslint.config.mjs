@@ -27,8 +27,13 @@ const MODULE_TREE = [
 // The guard row's explicit non-PHI allowlist (ARCHITECTURE.md §2, §5).
 // Login and register are unauthenticated entrypoints — §5's PhiTarget union
 // has no auth-shaped variant, and ADR-0011 confirms registration links no
-// patient record. Neither route has a PHI target to guard.
-const GUARD_ALLOWLIST = ['app/api/auth/login/route.ts', 'app/api/auth/register/route.ts']
+// patient record. Health is an unauthenticated dependency-liveness probe
+// over metadata. None of these routes has a PHI target to guard.
+const GUARD_ALLOWLIST = [
+  'app/api/auth/login/route.ts',
+  'app/api/auth/register/route.ts',
+  'app/api/health/route.ts',
+]
 
 const APP_IMPORT_RE = /(^|\/)app\//
 const GUARD_IMPORT_RE = /(^|\/)lib\/access\/guard(\.ts)?$/
