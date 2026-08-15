@@ -7,12 +7,32 @@
 // there, not here).
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { ensureContainer, startRun, stopRun, type Container, type Run } from '../setup/postgres'
 
 const CONTAINER_NAME = 'pip-testpg'
 const PG_USER = 'postgres'
 const HOUR = 3_600_000
+const MIGRATIONS_001_AND_002 = ['001_core.sql', '002_scheduling_sharing_audit.sql'].map((name) =>
+  readFileSync(join(process.cwd(), 'db', 'migrations', name), 'utf8'),
+)
+
+// Scoped to exactly 001+002 via their own migrationsDir. `mainRun` applies
+// the whole db/migrations directory, and once JOR-234's 003_rls.sql lands
+// there it grants app_user EXECUTE on regenerate_provider_slots — the very
+// grant regenerateProviderSlotsExecuteRevokedFromPublic below asserts is
+// absent. That is 003's own AC, not a regression here; this helper keeps
+// that one test meaning what its name says regardless of what migrations
+// land after 002.
+function build001And002MigrationDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'pip-002-'))
+  writeFileSync(join(dir, '001_core.sql'), MIGRATIONS_001_AND_002[0])
+  writeFileSync(join(dir, '002_scheduling_sharing_audit.sql'), MIGRATIONS_001_AND_002[1])
+  return dir
+}
 
 function psql(dbName: string, sql: string): string {
   // -q suppresses command completion tags ("INSERT 0 1") that -tA alone
@@ -603,19 +623,31 @@ describe('AC + adversarial: a rebuild leaves another provider, and the same prov
 })
 
 describe('AC + adversarial: execute on regenerate_provider_slots is revoked from public', () => {
-  test('regenerateProviderSlotsExecuteRevokedFromPublic', function regenerateProviderSlotsExecuteRevokedFromPublic() {
-    const hasPrivilege = psql(
-      mainRun.dbName,
-      `select has_function_privilege('public', 'regenerate_provider_slots(uuid,timestamptz,timestamptz,tstzrange[])', 'execute');`,
-    )
-    expect(hasPrivilege).toBe('f')
+  test(
+    'regenerateProviderSlotsExecuteRevokedFromPublic',
+    async function regenerateProviderSlotsExecuteRevokedFromPublic() {
+      const dir = build001And002MigrationDir()
+      let run: Run | undefined
+      try {
+        run = await startRun(container, dir)
+        const hasPrivilege = psql(
+          run.dbName,
+          `select has_function_privilege('public', 'regenerate_provider_slots(uuid,timestamptz,timestamptz,tstzrange[])', 'execute');`,
+        )
+        expect(hasPrivilege).toBe('f')
 
-    expectRawFailure(
-      mainRun.dbName,
-      `set role app_user; select * from regenerate_provider_slots(gen_random_uuid(), now(), now(), ARRAY[]::tstzrange[]);`,
-      '42501',
-    )
-  })
+        expectRawFailure(
+          run.dbName,
+          `set role app_user; select * from regenerate_provider_slots(gen_random_uuid(), now(), now(), ARRAY[]::tstzrange[]);`,
+          '42501',
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+        if (run) await stopRun(run)
+      }
+    },
+    30_000,
+  )
 })
 
 describe('AC + adversarial: email_outbox defaults attempts/next_attempt_at and rejects null recipient, subject or body', () => {
@@ -702,18 +734,36 @@ describe('AC + adversarial: audit_events accepts the pinned actions, rejects an 
 })
 
 describe('AC + adversarial: as app_user, audit_events INSERT and SELECT succeed, UPDATE and DELETE both fail', () => {
-  test('auditEventsAppUserInsertSelectOkUpdateDeleteFail', function auditEventsAppUserInsertSelectOkUpdateDeleteFail() {
-    psql(
-      mainRun.dbName,
-      `set role app_user;
-       insert into audit_events (actor_kind, action, target_kind, outcome) values ('system', 'audit.view', 'audit_events', 'granted');`,
-    )
-    const selected = psql(mainRun.dbName, `set role app_user; select count(*) >= 1 from audit_events;`)
-    expect(selected).toBe('t')
+  // Scoped to exactly 001+002, like regenerateProviderSlotsExecuteRevokedFromPublic
+  // above: once JOR-234's 003_rls.sql lands in db/migrations, audit_events gets
+  // RLS with a read policy scoped to is_admin() (§4) — a non-admin app_user can
+  // still insert but can no longer read back its own row. That is 003's own AC
+  // (tests/db/rls.test.ts's patientReadsZeroAuditEventsAdminReadsAll), not a
+  // regression in 002's plain grant-level SELECT check.
+  test(
+    'auditEventsAppUserInsertSelectOkUpdateDeleteFail',
+    async function auditEventsAppUserInsertSelectOkUpdateDeleteFail() {
+      const dir = build001And002MigrationDir()
+      let run: Run | undefined
+      try {
+        run = await startRun(container, dir)
+        psql(
+          run.dbName,
+          `set role app_user;
+           insert into audit_events (actor_kind, action, target_kind, outcome) values ('system', 'audit.view', 'audit_events', 'granted');`,
+        )
+        const selected = psql(run.dbName, `set role app_user; select count(*) >= 1 from audit_events;`)
+        expect(selected).toBe('t')
 
-    expectRawFailure(mainRun.dbName, `set role app_user; update audit_events set outcome = 'denied' where true;`, '42501')
-    expectRawFailure(mainRun.dbName, `set role app_user; delete from audit_events where true;`, '42501')
-  })
+        expectRawFailure(run.dbName, `set role app_user; update audit_events set outcome = 'denied' where true;`, '42501')
+        expectRawFailure(run.dbName, `set role app_user; delete from audit_events where true;`, '42501')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+        if (run) await stopRun(run)
+      }
+    },
+    30_000,
+  )
 })
 
 describe('adversarial: a second reminder_sends row for the same (appointment_id, lead_hours) is rejected', () => {
