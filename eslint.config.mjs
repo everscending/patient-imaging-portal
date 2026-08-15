@@ -24,11 +24,11 @@ const MODULE_TREE = [
   'components/**/*.tsx',
 ]
 
-// The guard row's explicit non-PHI allowlist (ARCHITECTURE.md §2, §5). Empty
-// until a later ticket adds an app/api/** route that legitimately has no PHI
-// to guard — add its relative path (e.g. 'app/api/health/route.ts') here,
-// never an eslint-disable, when that happens.
-const GUARD_ALLOWLIST = []
+// The guard row's explicit non-PHI allowlist (ARCHITECTURE.md §2, §5).
+// Login and register are unauthenticated entrypoints — §5's PhiTarget union
+// has no auth-shaped variant, and ADR-0011 confirms registration links no
+// patient record. Neither route has a PHI target to guard.
+const GUARD_ALLOWLIST = ['app/api/auth/login/route.ts', 'app/api/auth/register/route.ts']
 
 const APP_IMPORT_RE = /(^|\/)app\//
 const GUARD_IMPORT_RE = /(^|\/)lib\/access\/guard(\.ts)?$/
