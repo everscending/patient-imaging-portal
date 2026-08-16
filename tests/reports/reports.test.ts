@@ -5,6 +5,8 @@
 //   a second patient's report in a list → rlsCrossPatientIsolationInList
 //   preliminary report included by the list query → signedOnlyListConsistency
 //   patient direct read of preliminary → patientPreliminaryDirectReadIs404
+//   valid nonexistent report detail read → nonexistentReportDetailReadIs404
+//   another patient's report detail read → crossPatientReportDetailReadIs404
 //   owning provider/admin preliminary reads → providerAndAdminCanReadPreliminary
 //   malformed report id → malformedReportIdIsValidationFailed
 //   no session / unlinked identity → noSessionAndUnlinkedIdentityResponses
@@ -240,6 +242,38 @@ describe('reports', () => {
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested report could not be found.' })
     expect(fromTables).not.toContain('reports')
+  })
+
+  test('nonexistentReportDetailReadIs404', async function nonexistentReportDetailReadIs404() {
+    const missingReportId = '33333333-3333-4333-8333-333333333333'
+
+    const response = await detailRoute(new Request(`http://test/api/reports/${missingReportId}`), {
+      params: Promise.resolve({ reportId: missingReportId }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(404)
+    expect(body).toEqual({ error: 'not_found', message: 'The requested report could not be found.' })
+    expect(Object.keys(body).sort()).toEqual(['error', 'message'])
+    expect(JSON.stringify(body)).not.toContain(missingReportId)
+    expect(guardCalls).toEqual([
+      { actor: { kind: 'patient', userId: 'patient-account' }, target: { kind: 'report', id: missingReportId }, action: 'report.view' },
+    ])
+  })
+
+  test('crossPatientReportDetailReadIs404', async function crossPatientReportDetailReadIs404() {
+    seedSigned(REPORT_B, '2026-08-16T11:00:00.000Z', false)
+
+    const response = await detailRoute(new Request(`http://test/api/reports/${REPORT_B}`), { params: Promise.resolve({ reportId: REPORT_B }) })
+    const body = await response.json()
+
+    expect(response.status).toBe(404)
+    expect(body).toEqual({ error: 'not_found', message: 'The requested report could not be found.' })
+    expect(Object.keys(body).sort()).toEqual(['error', 'message'])
+    expect(JSON.stringify(body)).not.toMatch(/${REPORT_B}|Findings|Impression|PT-1001|Dr\\. Rivera/)
+    expect(guardCalls).toEqual([
+      { actor: { kind: 'patient', userId: 'patient-account' }, target: { kind: 'report', id: REPORT_B }, action: 'report.view' },
+    ])
   })
 
   test('providerAndAdminCanReadPreliminary', async function providerAndAdminCanReadPreliminary() {

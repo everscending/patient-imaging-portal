@@ -63,6 +63,7 @@ run_api() {
 run_ui() {
   run_api
   step PLAYWRIGHT_PRODUCT npx playwright test --project=product
+  step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
 }
 
 run_certification() {

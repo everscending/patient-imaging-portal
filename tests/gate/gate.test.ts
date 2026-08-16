@@ -126,8 +126,9 @@ describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the 
   )
 
   test('adversarial: .loom.yml UI cannot bypass the ordinary product project', () => {
-    expect(declared.ui.at(-1)).toBe('npx playwright test --project=product')
-    expect(run(['ui', '--list']).stdout.trim().split('\n').at(-1)).toBe(declared.ui.at(-1))
+    const resolved = run(['ui', '--list']).stdout.trim().split('\n')
+    expect(declared.ui.at(-2)).toBe('npx playwright test --project=product')
+    expect(resolved.at(-2)).toBe(declared.ui.at(-2))
   })
 })
 
@@ -142,7 +143,7 @@ describe('Playwright project separation — acceptance + mandatory adversarial',
     // product project's structural ignores makes either proof appear here,
     // which turns the measured count non-zero before a recursive gate runs.
     expect(productGate.status).toBe(0)
-    expect(productGate.stdout.trim().split('\n').at(-1)).toBe('npx playwright test --project=product')
+    expect(productGate.stdout.trim().split('\n')).toContain('npx playwright test --project=product')
     expect(productSelection.status, productSelection.stdout + productSelection.stderr).toBe(0)
     expect(wiringSpecs.filter((spec) => productSelection.stdout.includes(spec))).toEqual([])
   })
@@ -167,6 +168,32 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
 
   test('adversarial: no hardcoded localhost port appears in baseURL', () => {
     expect(source).not.toMatch(/localhost:\d+/)
+  })
+
+  test('ui gate validates the JSON report artifact emitted by Playwright', () => {
+    const ui = run(['ui', '--list']).stdout.trim().split('\n')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+    )
+    expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
+  })
+})
+
+describe('anonymous health Playwright check — regression: uses its lane base URL', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'e2e/degraded.spec.ts'), 'utf8')
+  const healthNoSessionTest = source.match(
+    /test\('acceptance: health_noSessionNoCookies_returns200',[\s\S]*?\n  }\)\n\n  test\('acceptance \(static\)/,
+  )?.[0]
+
+  test('healthNoSessionNoCookies_usesFreshCookieFreeContextAtPlaywrightBaseUrl', () => {
+    expect(healthNoSessionTest).toBeDefined()
+    expect(healthNoSessionTest).toMatch(/async \(\{ baseURL, playwright \}\)/)
+    expect(healthNoSessionTest).toMatch(/playwright\.request\.newContext\(\{ baseURL \}\)/)
+    expect(healthNoSessionTest).toMatch(/anonymous\.get\('\/api\/health'\)/)
+  })
+
+  test('adversarial: healthNoSessionNoCookies_rejectsFixedApplicationPort', () => {
+    expect(healthNoSessionTest).not.toMatch(/localhost:\d+/)
   })
 })
 

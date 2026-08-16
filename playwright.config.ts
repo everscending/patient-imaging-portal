@@ -18,6 +18,7 @@ export default defineConfig({
       testMatch: ['e0-wiring.spec.ts', 'e1-wiring.spec.ts'],
     },
   ],
+  reporter: [['line'], ['json', { outputFile: 'test-results/playwright.json' }]],
   use: {
     baseURL: `http://localhost:${config.port}`,
   },
