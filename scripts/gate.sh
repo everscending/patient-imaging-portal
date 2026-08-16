@@ -63,6 +63,7 @@ run_api() {
 run_ui() {
   run_api
   step PLAYWRIGHT npx playwright test
+  step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
 }
 
 case "$TIER" in

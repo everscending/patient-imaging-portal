@@ -122,6 +122,14 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
   test('adversarial: no hardcoded localhost port appears in baseURL', () => {
     expect(source).not.toMatch(/localhost:\d+/)
   })
+
+  test('ui gate validates the JSON report artifact emitted by Playwright', () => {
+    const ui = run(['ui', '--list']).stdout.trim().split('\n')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+    )
+    expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
+  })
 })
 
 describe('repo-wide guards', () => {

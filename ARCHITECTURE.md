@@ -90,6 +90,8 @@ tests/                       Vitest — unit + integration
 e2e/                         Playwright
 k6/                          load scripts
 scripts/gate.sh              the repo's own definition of done
+scripts/validate-playwright-report.mjs
+                             verifies the UI artifact contains the E2 wiring suite
 ```
 
 ### Forbidden imports
@@ -1933,7 +1935,7 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test` |
+| `ui` | `api` + `playwright test` + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8
