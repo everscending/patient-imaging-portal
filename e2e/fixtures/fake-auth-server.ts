@@ -670,10 +670,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, 'linked_now')
   }
 
-  function appointmentFallsOutsideWorkingHours(hours: FakeWorkingHour[]): boolean {
+  function appointmentFallsOutsideWorkingHours(providerId: string, hours: FakeWorkingHour[]): boolean {
     const appointmentWeekday = 1
     const appointmentTime = '16:00:00'
-    return !hours.some(
+    return providerId === E2_PROVIDER_ID && !hours.some(
       (window) =>
         window.weekday === appointmentWeekday &&
         window.starts_local <= appointmentTime &&
@@ -724,7 +724,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     ]
     generatedSlotRangesByProvider.set(providerId, nextSlotRanges)
 
-    const preservedOutOfHours = appointmentFallsOutsideWorkingHours(nextHours)
+    const preservedOutOfHours = appointmentFallsOutsideWorkingHours(providerId, nextHours)
       ? [
           {
             appointmentId: '33773377-3377-4377-8377-337733773377',

@@ -63,7 +63,9 @@ export default function AvailabilityPage() {
   const { providerId, timeZone: shellTimeZone } = useProviderShell()
   if (!providerId || !shellTimeZone) throw new Error('Provider availability requires a provider identity')
 
-  const [loaded, setLoaded] = useState(false)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading')
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [timeZone, setTimeZone] = useState(shellTimeZone)
   const [slotMinutes, setSlotMinutes] = useState('30')
   const [workingHours, setWorkingHours] = useState<WorkingHour[]>([])
@@ -74,6 +76,8 @@ export default function AvailabilityPage() {
 
   useEffect(() => {
     let cancelled = false
+    setLoadState('loading')
+    setLoadError(null)
     void fetch(`/api/providers/${providerId}/availability`, { cache: 'no-store' })
       .then(async (response) => {
         const body = (await response.json()) as Availability | ErrorEnvelope
@@ -91,17 +95,17 @@ export default function AvailabilityPage() {
             reason: block.reason ?? '',
           })),
         )
-        setLoaded(true)
+        setLoadState('ready')
       })
       .catch((loadError: unknown) => {
         if (cancelled) return
-        setError(loadError instanceof Error && loadError.message ? loadError.message : 'Availability could not be loaded.')
-        setLoaded(true)
+        setLoadError(loadError instanceof Error && loadError.message ? loadError.message : 'Availability could not be loaded.')
+        setLoadState('failed')
       })
     return () => {
       cancelled = true
     }
-  }, [providerId])
+  }, [loadAttempt, providerId])
 
   function windowsFor(weekday: number): WorkingHour[] {
     return workingHours.filter((window) => window.weekday === weekday)
@@ -183,10 +187,18 @@ export default function AvailabilityPage() {
         Time zone: <strong>{timeZone}</strong>
       </p>
 
-      {!loaded ? <p>Loading availability…</p> : null}
-      {error ? <p className="pip-error" role="alert">{error}</p> : null}
+      {loadState === 'loading' ? <p>Loading availability…</p> : null}
+      {loadState === 'failed' ? (
+        <div className="pip-error" data-testid="availability-load-error" role="alert">
+          <p>{loadError}</p>
+          <button className="pip-button-secondary" type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+      {loadState === 'ready' && error ? <p className="pip-error" role="alert">{error}</p> : null}
 
-      {loaded ? (
+      {loadState === 'ready' ? (
         <form data-testid="availability-form" className="pip-availability-form" onSubmit={save}>
           <div className="pip-field">
             <label htmlFor="slot-minutes">Slot length in minutes</label>
@@ -196,7 +208,7 @@ export default function AvailabilityPage() {
               type="number"
               min="5"
               max="240"
-              step="5"
+              step="1"
               value={slotMinutes}
               onChange={(event) => setSlotMinutes(event.target.value)}
               required

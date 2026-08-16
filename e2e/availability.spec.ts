@@ -139,6 +139,33 @@ test.describe.serial('provider availability', () => {
     await expect(page.getByLabel('Monday start 2')).toHaveValue('10:00')
   })
 
+  test('an initial dependency failure replaces the form with a retryable error', async ({ page }) => {
+    await signInProvider(page.request)
+    let failNextLoad = true
+    await page.route(`**/api/providers/${E2_PROVIDER_ID}/availability`, async (route) => {
+      if (!failNextLoad) {
+        await route.continue()
+        return
+      }
+      failNextLoad = false
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'availability_unavailable',
+          message: 'Availability is temporarily unavailable.',
+        }),
+      })
+    })
+
+    await page.goto('/provider/availability')
+    const dependencyError = page.getByTestId('availability-load-error')
+    await expect(dependencyError).toContainText('Availability is temporarily unavailable.')
+    await expect(page.getByTestId('availability-form')).toHaveCount(0)
+    await dependencyError.getByRole('button', { name: 'Try again' }).click()
+    await expect(page.getByTestId('availability-form')).toBeVisible()
+  })
+
   test('patient sessions and cross-provider reads cannot reach this provider page or data', async ({ page }) => {
     await signInFreshPatient(page.request)
     const patientNavigation = await page.goto('/provider/availability')
