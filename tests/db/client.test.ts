@@ -95,7 +95,7 @@ describe('anonClient — pinned: default for every PHI read, caller\'s own sessi
   })
 })
 
-describe('serviceClient — pinned: legal in exactly three places (FR-2, share-token resolution, reminder job)', () => {
+describe('serviceClient — pinned: uses only the configured server-side service-role key', () => {
   test('acceptance: uses config.supabaseServiceRoleKey and config.supabaseUrl, read from lib/config.ts', async () => {
     const { serviceClient } = await loadClientModule({
       SUPABASE_SERVICE_ROLE_KEY: 'distinct-service-role-key',

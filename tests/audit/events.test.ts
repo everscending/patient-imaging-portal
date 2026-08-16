@@ -1,17 +1,11 @@
 // tests/audit/events.test.ts — the audit writer's own tests (JOR-238).
 //
-// lib/audit/events.ts's only production dependencies are lib/db/client.ts's
-// anonClient() and next/headers's cookies() (recordAuditEvent's pinned
-// signature carries no accessToken parameter, so it reads the caller's
-// session cookie itself, the same way middleware.ts reads it off a request).
-// anonClient() itself talks to Supabase's REST layer. There is no PostgREST
-// server in this repo's test harness (tests/setup/postgres.ts starts a bare
-// postgres:16-alpine container for schema-level tests) and this ticket has no
-// live route to exercise one against (ADR-0012, "No live-app contact in this
-// ticket"). So — exactly like tests/notify/email.test.ts stubs the Resend
-// SDK — this file stubs lib/db/client.ts's anonClient() with an in-memory
-// fake table, and next/headers's cookies() with a fake session cookie, and
-// asserts against those.
+// lib/audit/events.ts selects among lib/db/client.ts's caller-scoped,
+// authentication, and service-role clients, then writes through Supabase's
+// REST layer. There is no PostgREST server in this repo's test harness
+// (tests/setup/postgres.ts starts bare postgres:16-alpine), so this file
+// replaces that external boundary with an in-memory audit table and replaces
+// next/headers's cookies() with a fake session cookie.
 //
 // Bullet → test function (this ticket's "Mandatory adversarial tests"):
 //   an action string outside the 22-value set, rejected at the type boundary
@@ -24,21 +18,23 @@
 //   an outcome other than granted/denied, rejected at the type boundary
 //     → outcomeOutsideGrantedDeniedRejectedAtTypeBoundary
 //     (the CHECK-constraint half is the same migration test as above)
-//   a detail object carrying fullName/dateOfBirth/patientRef/email, rejected
+//   a detail object carrying PHI- or credential-shaped keys, rejected
 //     → detailCarryingPhiShapedKeyRejected
+//     → detailCarryingCredentialKeyRejectedAndNeverPersisted
 //   UPDATE/DELETE on audit_events as app_user, rejected
 //     → tests/db/migration-002.test.ts's auditEventsAppUserInsertSelectOkUpdateDeleteFail
 //   a guard call that returns without an audit row, rejected
-//     → guardStubAppendsExactlyOneDeniedRowPerCall
+//     → tests/access/guard.test.ts's exactlyOneAuditRowPerCall (JOR-262 —
+//       lib/access/guard.ts stopped being a stub there; this file no longer
+//       carries guard-behavior coverage, only its own audit-write contract)
 //   a module other than lib/audit/events.ts writing audit_events, rejected
 //     → tests/lint/forbidden-imports.test.ts's adversarialAuditEventsOutsideEventsFails
-//     (this file also checks guard.ts's own source: guardImportsEventsNotDbClient)
+//     (this file also checks guard.ts's own source: guardWritesAuditEventsOnlyThroughRecordAuditEvent)
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Actor, PhiTarget } from '../../lib/access/guard'
 
 // server-only throws unconditionally under plain Node (no `react-server`
 // resolution condition) — tests/db/client.test.ts neutralizes it the same way.
@@ -49,16 +45,22 @@ type FakeAuditRow = Record<string, unknown>
 const {
   auditRows,
   anonClientMock,
+  serviceClientMock,
+  authClientMock,
   resetFakeAuditTable,
   setInsertBehavior,
+  setInsertFailureMessage,
   setCallerHasSession,
+  setSessionTokenValid,
   hasCallerSession,
   FAKE_SESSION_COOKIE_NAME,
   FAKE_ACCESS_TOKEN,
 } = vi.hoisted(() => {
   const rows: FakeAuditRow[] = []
   let behavior: 'ok' | 'pg-error' | 'throw' = 'ok'
+  let insertFailureMessage = 'simulated audit write failure'
   let callerHasSession = true
+  let sessionTokenValid = true
   // Must match lib/session-cookie.ts's SESSION_COOKIE_NAME — kept as a
   // literal here rather than an import, since a vi.mock factory can only see
   // names hoisted alongside it, not the module's regular top-level imports.
@@ -70,8 +72,9 @@ const {
       if (table !== 'audit_events') throw new Error(`fake client: unexpected table "${table}"`)
       return {
         async insert(row: FakeAuditRow) {
-          if (behavior === 'throw') throw new Error('simulated network failure')
-          if (behavior === 'pg-error') return { error: { message: 'simulated postgres failure' } }
+          if (behavior === 'throw') throw new Error(insertFailureMessage)
+          if (behavior === 'pg-error') return { error: { message: insertFailureMessage } }
+          if (!sessionTokenValid) return { error: { message: 'invalid session JWT' } }
           rows.push(row)
           return { error: null }
         },
@@ -79,19 +82,50 @@ const {
     },
   }))
 
+  const serviceClientMock = vi.fn(() => ({
+    from(table: string) {
+      if (table !== 'audit_events') throw new Error(`fake client: unexpected table "${table}"`)
+      return {
+        async insert(row: FakeAuditRow) {
+          rows.push(row)
+          return { error: null }
+        },
+      }
+    },
+  }))
+
+  const authClientMock = vi.fn(() => ({
+    auth: {
+      async getUser(token: string) {
+        if (!sessionTokenValid || token !== accessToken) return { data: { user: null }, error: { message: 'invalid token' } }
+        return { data: { user: { id: 'session-user' } }, error: null }
+      },
+    },
+  }))
+
   return {
     auditRows: rows,
     anonClientMock,
+    serviceClientMock,
+    authClientMock,
     resetFakeAuditTable: () => {
       rows.length = 0
       behavior = 'ok'
+      insertFailureMessage = 'simulated audit write failure'
       callerHasSession = true
+      sessionTokenValid = true
     },
     setInsertBehavior: (next: 'ok' | 'pg-error' | 'throw') => {
       behavior = next
     },
+    setInsertFailureMessage: (message: string) => {
+      insertFailureMessage = message
+    },
     setCallerHasSession: (next: boolean) => {
       callerHasSession = next
+    },
+    setSessionTokenValid: (next: boolean) => {
+      sessionTokenValid = next
     },
     // A function, not a plain value, so the next/headers mock factory below
     // (hoisted alongside this block) reads the live flag on every call
@@ -103,9 +137,9 @@ const {
 })
 
 vi.mock('../../lib/db/client', () => ({
-  serviceClient: vi.fn(),
+  serviceClient: serviceClientMock,
   anonClient: anonClientMock,
-  authClient: vi.fn(),
+  authClient: authClientMock,
 }))
 
 // lib/session-cookie.ts itself imports lib/config.ts, which requires four
@@ -131,14 +165,15 @@ vi.mock('next/headers', () => ({
 }))
 
 import type { AuditAction, RecordAuditEventInput } from '../../lib/audit/events'
-import { recordAuditEvent } from '../../lib/audit/events'
-import { guardPhiAccess } from '../../lib/access/guard'
+import { recordAuditEvent, recordPhiAccessDecision } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
 beforeEach(() => {
   resetFakeAuditTable()
   anonClientMock.mockClear()
+  serviceClientMock.mockClear()
+  authClientMock.mockClear()
 })
 
 afterEach(() => {
@@ -155,6 +190,36 @@ function baseInput(overrides: Partial<RecordAuditEventInput> = {}): RecordAuditE
     outcome: 'granted',
     ...overrides,
   }
+}
+
+const SENSITIVE_LOG_SENTINELS = [
+  'PHI_PATIENT_DOB_1987-04-03',
+  'TOKEN_eyJhbGciOiJIUzI1NiJ9_DO_NOT_LOG',
+  'SECRET_service_role_key_DO_NOT_LOG',
+]
+
+function sensitiveFailureMessage(): string {
+  return `rejected audit row containing ${SENSITIVE_LOG_SENTINELS.join(' and ')}`
+}
+
+function expectRedactedWriteFailureLog(calls: unknown[][]): void {
+  expect(calls).toHaveLength(1)
+  expect(calls[0]).toHaveLength(1)
+
+  const serializedConsoleArguments = JSON.stringify(calls)
+  const logged = JSON.parse(calls[0]?.[0] as string)
+  const serializedStructuredFields = JSON.stringify(logged)
+
+  for (const sentinel of SENSITIVE_LOG_SENTINELS) {
+    expect(serializedConsoleArguments).not.toContain(sentinel)
+    expect(serializedStructuredFields).not.toContain(sentinel)
+  }
+
+  expect(logged).toEqual({
+    event: 'audit_events.write_failed',
+    action: 'study.view',
+    failureCategory: 'audit_write_failure',
+  })
 }
 
 describe('AC: recordAuditEvent appends one row inside the pinned action/outcome sets', () => {
@@ -175,6 +240,14 @@ describe('AC: recordAuditEvent appends one row inside the pinned action/outcome 
   test('recordAuditEventWritesThroughAnonClientWithTheCallerSessionToken', async function recordAuditEventWritesThroughAnonClientWithTheCallerSessionToken() {
     await recordAuditEvent(baseInput())
     expect(anonClientMock).toHaveBeenCalledWith(FAKE_ACCESS_TOKEN)
+    expect(serviceClientMock).not.toHaveBeenCalled()
+  })
+
+  test('authenticatedDeniedEventRemainsCallerScoped', async function authenticatedDeniedEventRemainsCallerScoped() {
+    await recordAuditEvent(baseInput({ outcome: 'denied' }))
+    expect(anonClientMock).toHaveBeenCalledWith(FAKE_ACCESS_TOKEN)
+    expect(serviceClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(1)
   })
 
   test('outcomeOutsideGrantedDeniedRejectedAtTypeBoundary', function outcomeOutsideGrantedDeniedRejectedAtTypeBoundary() {
@@ -235,7 +308,7 @@ describe('AC: AuditAction carries exactly the 22 pinned strings, including the t
 
 describe('AC: detail serialises to JSONB containing only strings, numbers and booleans', () => {
   test('detailWithOnlyPrimitiveValuesRoundTripsThroughJson', async function detailWithOnlyPrimitiveValuesRoundTripsThroughJson() {
-    const detail = { count: 3, note: 'reschedule', successful: true }
+    const detail = { count: 3, transport: 'log', successful: true }
     await recordAuditEvent(baseInput({ detail }))
     const stored = auditRows[0]?.detail
     expect(JSON.parse(JSON.stringify(stored))).toEqual(detail)
@@ -246,10 +319,29 @@ describe('mandatory adversarial: detail carrying a PHI-shaped key is rejected (S
   test.each(['fullName', 'dateOfBirth', 'patientRef', 'email'])(
     'detailCarryingPhiShapedKeyRejected: %s',
     async function detailCarryingPhiShapedKeyRejected(key) {
-      await expect(recordAuditEvent(baseInput({ detail: { [key]: 'x' } }))).rejects.toThrow(/PHI-shaped key/)
+      await expect(recordAuditEvent(baseInput({ detail: { [key]: 'x' } }))).rejects.toThrow(/unapproved key or value/)
       expect(auditRows).toHaveLength(0)
     },
   )
+
+  test.each(['token', 'shareToken', 'sessionToken', 'secret', 'password'])(
+    'detailCarryingCredentialKeyRejectedAndNeverPersisted: %s',
+    async function detailCarryingCredentialKeyRejectedAndNeverPersisted(key) {
+      const rawCredential = 'RAW_CREDENTIAL_MUST_NEVER_BE_STORED'
+
+      await expect(recordAuditEvent(baseInput({ detail: { [key]: rawCredential } }))).rejects.toThrow(/unapproved key or value/)
+      expect(JSON.stringify(auditRows)).not.toContain(rawCredential)
+      expect(auditRows).toHaveLength(0)
+    },
+  )
+
+  test('credentialValueHiddenUnderApprovedStringKeyRejectedAndNeverPersisted', async function credentialValueHiddenUnderApprovedStringKeyRejectedAndNeverPersisted() {
+    const rawCredential = 'RAW_CREDENTIAL_MUST_NEVER_BE_STORED'
+
+    await expect(recordAuditEvent(baseInput({ detail: { transport: rawCredential } }))).rejects.toThrow(/unapproved key or value/)
+    expect(JSON.stringify(auditRows)).not.toContain(rawCredential)
+    expect(auditRows).toHaveLength(0)
+  })
 })
 
 describe('AC: recordAuditEvent is callable by a domain module directly, targetId null, for actions with no PHI target', () => {
@@ -294,89 +386,104 @@ describe('AC: recordAuditEvent is callable by a domain module directly, targetId
 })
 
 describe('design decision: recordAuditEvent resolves void and never rethrows a write failure', () => {
-  test('aFailedInsertIsLoggedAndSwallowedNotRethrown', async function aFailedInsertIsLoggedAndSwallowedNotRethrown() {
+  test('returnedAdapterErrorIsRedactedLoggedAndSwallowed', async function returnedAdapterErrorIsRedactedLoggedAndSwallowed() {
     setInsertBehavior('pg-error')
+    setInsertFailureMessage(sensitiveFailureMessage())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
-    expect(errorSpy).toHaveBeenCalledTimes(1)
-    const logged = JSON.parse(errorSpy.mock.calls[0]?.[0] as string)
-    expect(logged.event).toBe('audit_events.write_failed')
-    expect(logged.action).toBe('study.view')
+    expectRedactedWriteFailureLog(errorSpy.mock.calls)
   })
 
-  test('aClientThatThrowsSynchronouslyIsLoggedAndSwallowedNotRethrown', async function aClientThatThrowsSynchronouslyIsLoggedAndSwallowedNotRethrown() {
+  test('thrownAdapterExceptionIsRedactedLoggedAndSwallowed', async function thrownAdapterExceptionIsRedactedLoggedAndSwallowed() {
     setInsertBehavior('throw')
+    setInsertFailureMessage(sensitiveFailureMessage())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
-    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expectRedactedWriteFailureLog(errorSpy.mock.calls)
   })
 
-  test('aCallWithNoCallerSessionCookieIsLoggedAndSwallowedNotRethrown', async function aCallWithNoCallerSessionCookieIsLoggedAndSwallowedNotRethrown() {
+  test('missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
+    setCallerHasSession(false)
+    await expect(recordPhiAccessDecision(baseInput({ actorRef: null, outcome: 'denied' }))).resolves.toBeUndefined()
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ outcome: 'denied' })
+  })
+
+  test('invalidSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function invalidSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
+    setSessionTokenValid(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordPhiAccessDecision(baseInput({ actorRef: null, outcome: 'denied' }))).resolves.toBeUndefined()
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ outcome: 'denied' })
+  })
+
+  test('missingSessionDeniedDomainEventCannotUseServiceRole', async function missingSessionDeniedDomainEventCannotUseServiceRole() {
     setCallerHasSession(false)
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
+
+    await expect(
+      recordAuditEvent(baseInput({ actorRef: null, action: 'booking.cancel', outcome: 'denied' })),
+    ).resolves.toBeUndefined()
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(serviceClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(0)
+  })
+
+  test('guardProvenanceAllowsAnyDeniedActionToUseAuditOnlyFallback', async function guardProvenanceAllowsAnyDeniedActionToUseAuditOnlyFallback() {
+    setCallerHasSession(false)
+
+    await expect(
+      recordPhiAccessDecision(baseInput({ actorRef: null, action: 'booking.cancel', outcome: 'denied' })),
+    ).resolves.toBeUndefined()
+
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ action: 'booking.cancel', outcome: 'denied' })
+  })
+
+  test('missingSessionGrantedAccountEventCannotUseServiceRole', async function missingSessionGrantedAccountEventCannotUseServiceRole() {
+    setCallerHasSession(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordAuditEvent(baseInput({ outcome: 'granted' }))).resolves.toBeUndefined()
     expect(errorSpy).toHaveBeenCalledTimes(1)
     expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(0)
+  })
+
+  test('missingSessionSystemEventCannotUseServiceRole', async function missingSessionSystemEventCannotUseServiceRole() {
+    setCallerHasSession(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordAuditEvent(baseInput({ actorKind: 'system', actorRef: null }))).resolves.toBeUndefined()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).not.toHaveBeenCalled()
     expect(auditRows).toHaveLength(0)
   })
 })
 
-describe('AC: the stub always denies, and audits every call exactly once (§5 stub, JOR-238)', () => {
-  const actors: Actor[] = [
-    { kind: 'patient', userId: 'patient-1' },
-    { kind: 'provider', userId: 'provider-1' },
-    { kind: 'admin', userId: 'admin-1' },
-    { kind: 'share_recipient', shareLinkId: 'share-1' },
-  ]
-
-  const targets: PhiTarget[] = [
-    { kind: 'study', id: 'study-1' },
-    { kind: 'image', id: 'image-1' },
-    { kind: 'clip', id: 'clip-1' },
-    { kind: 'report', id: 'report-1' },
-    { kind: 'appointment', id: 'appt-1' },
-    { kind: 'schedule', id: 'provider-1' },
-    { kind: 'collection', of: 'study' },
-    { kind: 'collection', of: 'report' },
-    { kind: 'collection', of: 'appointment' },
-    { kind: 'collection', of: 'share' },
-    { kind: 'audit_log' },
-  ]
-
-  test('guardStubAppendsExactlyOneDeniedRowPerCall', async function guardStubAppendsExactlyOneDeniedRowPerCall() {
-    for (const actor of actors) {
-      for (const target of targets) {
-        const before = auditRows.length
-        const result = await guardPhiAccess(actor, target, 'study.view')
-        expect(result).toEqual({ ok: false, status: 401 })
-        expect(auditRows).toHaveLength(before + 1)
-        expect(auditRows[auditRows.length - 1]?.outcome).toBe('denied')
-      }
-    }
-  })
-
-  test('collectionTargetWritesUnderscoreListTargetKindWithNullId', async function collectionTargetWritesUnderscoreListTargetKindWithNullId() {
-    await guardPhiAccess({ kind: 'patient', userId: 'patient-1' }, { kind: 'collection', of: 'report' }, 'report.view')
-    const row = auditRows[auditRows.length - 1]
-    expect(row).toMatchObject({ target_kind: 'report_list', target_id: null })
-  })
-
-  test('shareRecipientActorKindMapsToShareRecipientAuditActorKind', async function shareRecipientActorKindMapsToShareRecipientAuditActorKind() {
-    await guardPhiAccess({ kind: 'share_recipient', shareLinkId: 'share-9' }, { kind: 'image', id: 'image-9' }, 'image.view')
-    const row = auditRows[auditRows.length - 1]
-    expect(row).toMatchObject({ actor_kind: 'share_recipient', actor_ref: 'share-9' })
-  })
-})
-
-describe('AC: lib/audit/events.ts is the only writer; lib/access/guard.ts imports it rather than a database client', () => {
-  test('guardImportsEventsNotDbClient', function guardImportsEventsNotDbClient() {
+// The "stub always denies every actor/target combination" coverage that used
+// to live here (JOR-238, guard.ts's original stub) is gone: JOR-262 replaced
+// the stub with real session/identity-link/ownership logic, so "always 401"
+// is no longer true of guardPhiAccess. That ticket's tests/access/guard.test.ts
+// is the guard's own behavior suite now; this file keeps only what is still
+// true of it — that it writes audit_events exclusively through
+// recordAuditEvent, never by hand.
+describe('AC: lib/audit/events.ts is the only writer; lib/access/guard.ts never inserts into audit_events itself', () => {
+  test('guardWritesAuditEventsOnlyThroughRecordAuditEvent', function guardWritesAuditEventsOnlyThroughRecordAuditEvent() {
     const source = readFileSync(path.join(REPO_ROOT, 'lib', 'access', 'guard.ts'), 'utf8')
     // Built at runtime, not spelled out literally, so this assertion itself
     // does not trip tests/db/client.test.ts's whole-tree scan for the same
     // package name (the same trick that file and tests/notify/email.test.ts use).
     const supabaseJsPackage = ['@supabase', 'supabase-js'].join('/')
     expect(source).toContain("from '../audit/events'")
-    expect(source).not.toContain("from '../db/client'")
     expect(source).not.toContain(supabaseJsPackage)
+    expect(source).not.toMatch(/\.from\(\s*['"]audit_events['"]\s*\)/)
   })
 })

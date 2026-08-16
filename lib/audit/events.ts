@@ -3,7 +3,7 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 
-import { anonClient } from '../db/client'
+import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
 // §3's CHECK constraint carries the same 22 strings, verbatim
@@ -47,49 +47,64 @@ export type RecordAuditEventInput = {
 // only lib/db/client.ts may do (ARCHITECTURE.md §2 row 3).
 type WriteClient = ReturnType<typeof anonClient>
 
-// SEC-6: detail carries identifiers, counts and outcomes only. These are the
-// PHI-shaped keys a caller could plausibly reach for by mistake — a closed
-// blocklist, not a schema, because `detail`'s value type is already closed to
-// string | number | boolean by RecordAuditEventInput.
-const FORBIDDEN_DETAIL_KEYS = new Set(['fullName', 'name', 'dateOfBirth', 'dob', 'patientRef', 'email', 'phone', 'storageKey', 'error'])
+type DetailValue = string | number | boolean
 
-function forbiddenDetailKey(detail: RecordAuditEventInput['detail']): string | null {
-  if (!detail) return null
-  for (const key of Object.keys(detail)) {
-    if (FORBIDDEN_DETAIL_KEYS.has(key)) return key
-  }
-  return null
+// SEC-6/SEC-7: detail is a closed schema, not a denylist. An exact key alone
+// is not enough for string fields: restricting transport to its public enum
+// also prevents a credential from being hidden under an approved key.
+const AUDIT_DETAIL_VALUE_RULES: Record<string, (value: DetailValue) => boolean> = {
+  count: (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
+  successful: (value) => typeof value === 'boolean',
+  transport: (value) => value === 'log' || value === 'resend',
+  leadHours: (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
 }
 
-const MAX_LOGGED_ERROR_LENGTH = 300
-
-function shortError(error: unknown): string {
-  if (error instanceof Error) return error.message.slice(0, MAX_LOGGED_ERROR_LENGTH)
-  if (typeof error === 'string') return error.slice(0, MAX_LOGGED_ERROR_LENGTH)
-  return 'audit_events insert failed'
+function detailIsApproved(detail: RecordAuditEventInput['detail']): boolean {
+  if (!detail) return true
+  return Object.entries(detail).every(([key, value]) => AUDIT_DETAIL_VALUE_RULES[key]?.(value) === true)
 }
 
-// Never PHI (SEC-6): only the action and a short adapter-side error string —
-// never `detail`, never a raw Postgres error string.
-function logWriteFailure(action: AuditAction, error: string): void {
-  console.error(JSON.stringify({ event: 'audit_events.write_failed', action, error }))
+// Never PHI (SEC-6): the exact log shape is allowlisted. Adapter errors and
+// thrown values can echo rejected inputs, so none of their fields are logged.
+function logWriteFailure(action: AuditAction): void {
+  console.error(JSON.stringify({ event: 'audit_events.write_failed', action, failureCategory: 'audit_write_failure' }))
 }
 
 // The pinned recordAuditEvent signature carries no accessToken parameter, so
 // the caller's session is read off the request the same way middleware.ts
 // reads it — the session cookie (lib/session-cookie.ts) — except here there
-// is no NextRequest in scope, so it comes from next/headers instead. This is
-// the ticket's non-relitigable design decision: writes go through the
-// caller's own client (P2 anonClient), never serviceClient(), so the
-// audit_events append-only grant (§3, §4) is what's actually enforcing
-// append-only — not the accident of nothing calling UPDATE/DELETE yet.
-async function callerAccessToken(): Promise<string> {
+// is no NextRequest in scope, so it comes from next/headers instead.
+async function callerAccessToken(): Promise<string | null> {
   const cookieStore = await cookies()
-  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
-  if (!token) {
-    throw new Error('recordAuditEvent: no caller session token available')
+  return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
+}
+
+function serviceRoleAllowed(input: RecordAuditEventInput, fromPhiGuard: boolean): boolean {
+  return fromPhiGuard && input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied'
+}
+
+async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<WriteClient> {
+  // Share recipients are intentionally unauthenticated. Select the elevated
+  // single-row writer before looking at any ambient account cookie.
+  if (input.actorKind === 'share_recipient') return serviceClient()
+
+  // A null account ref proves the guard could not authenticate a caller. The
+  // guard-only provenance is sufficient to choose the approved audit writer;
+  // re-reading the failed session context would create a second failure path
+  // capable of dropping the required row.
+  if (serviceRoleAllowed(input, fromPhiGuard)) return serviceClient()
+
+  const accessToken = await callerAccessToken()
+  if (accessToken) {
+    try {
+      const { data, error } = await authClient().auth.getUser(accessToken)
+      if (!error && data.user) return anonClient(accessToken)
+    } catch {
+      // A caller could not be established. Only the explicitly eligible
+      // denied-account case below may cross to the single-row fallback.
+    }
   }
-  return token
+  throw new Error('recordAuditEvent: no authenticated caller available for this audit event')
 }
 
 /**
@@ -97,18 +112,18 @@ async function callerAccessToken(): Promise<string> {
  * append is logged (SEC-6: no PHI) and never rethrown into the caller's
  * response path — the guard's contract is a GuardResult, not an exception.
  *
- * A `detail` object carrying a PHI-shaped key is a caller bug, not a write
- * failure, so it throws synchronously instead of being logged and dropped.
+ * An unapproved `detail` key or value is a caller bug, not a write failure,
+ * so it throws synchronously instead of being logged and dropped.
  */
-export async function recordAuditEvent(input: RecordAuditEventInput): Promise<void> {
-  const badKey = forbiddenDetailKey(input.detail)
-  if (badKey) {
-    throw new Error(`recordAuditEvent: detail must not carry a PHI-shaped key ("${badKey}") — SEC-6`)
+async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<void> {
+  if (!detailIsApproved(input.detail)) {
+    // Do not echo the rejected key or value: either can itself contain PHI or
+    // a credential and this exception may be captured by an outer logger.
+    throw new Error('recordAuditEvent: detail contains an unapproved key or value — SEC-6/SEC-7')
   }
 
   try {
-    const accessToken = await callerAccessToken()
-    const client: WriteClient = anonClient(accessToken)
+    const client = await writeClient(input, fromPhiGuard)
     const { error } = await client.from('audit_events').insert({
       actor_kind: input.actorKind,
       actor_ref: input.actorRef,
@@ -118,8 +133,21 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
       outcome: input.outcome,
       detail: input.detail ?? null,
     })
-    if (error) logWriteFailure(input.action, error.message)
-  } catch (error) {
-    logWriteFailure(input.action, shortError(error))
+    if (error) logWriteFailure(input.action)
+  } catch {
+    logWriteFailure(input.action)
   }
+}
+
+export async function recordAuditEvent(input: RecordAuditEventInput): Promise<void> {
+  return appendAuditEvent(input, false)
+}
+
+/**
+ * The guard-only entry point supplies trustworthy provenance for the approved
+ * audit-only fallback. Domain modules cannot gain service-role writes merely
+ * by choosing an access-shaped action string.
+ */
+export async function recordPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
+  return appendAuditEvent(input, true)
 }
