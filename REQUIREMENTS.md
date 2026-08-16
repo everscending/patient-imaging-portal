@@ -140,7 +140,7 @@ named providers. PHI handling is first-class, not an add-on.
 | **CQ-5** | Accessibility | Baseline WCAG-aware practice: full keyboard navigation, labeled form controls and slot/cine buttons, sufficient colour contrast, and appointment/report status conveyed by more than colour alone. |
 | **CQ-6** | Database migrations | Schema — including the unique constraints and indexes backing the no-double-book and identity-verification guarantees — is managed via committed migrations, reproducible from a clean checkout with a seed script. |
 | **CQ-7** | Secure coding for PHI | No secrets in the repo. No PHI in logs. Input validation on all booking, availability, image, report, and share endpoints. Server-side authorization on every PHI route. |
-| **CQ-8** | CI | Unit tests and the linter run on every push. Integration/E2E tests run in CI as well **if used** — the PRD makes them conditional. This build elects to use Playwright (the `ui` gate tier depends on it), so for this build the condition is met and they must run in CI. |
+| **CQ-8** | CI | Per-change product validation runs TypeScript, the linter, every unit test, the PostgreSQL integration suite, ordinary product Playwright tests, and the serial E2 wiring proof on every push and pull request through the cumulative `ui` gate. E2 runs after the parallel product project to isolate its shared audit fixture. The E0/E1 fresh-clone proofs remain CI obligations, but run independently on `main`, nightly, or manually as repository certification so the product gate never recursively launches itself. |
 
 ---
 

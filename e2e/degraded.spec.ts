@@ -1,5 +1,5 @@
 // e2e/degraded.spec.ts — JOR-247's live check. Runs against the real app on
-// PORT (4310, playwright.config.ts's webServer). The database and Storage
+// PORT (playwright.config.ts's webServer). The database and Storage
 // probes in app/api/health/route.ts both resolve through the app's single
 // NEXT_PUBLIC_SUPABASE_URL, which start-test-server.mjs already points at
 // e2e/fixtures/fake-auth-server.ts for the whole suite — so that fixture's

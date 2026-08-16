@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -10,15 +10,14 @@ function run(
   args: string[],
   env: Record<string, string> = {},
 ): { status: number; stdout: string; stderr: string } {
-  try {
-    const stdout = execFileSync(GATE, args, {
-      encoding: 'utf8',
-      env: { ...process.env, ...env },
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (error) {
-    const e = error as { status: number | null; stdout: string; stderr: string }
-    return { status: e.status ?? 1, stdout: e.stdout, stderr: e.stderr }
+  const result = spawnSync(GATE, args, {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  })
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
   }
 }
 
@@ -66,6 +65,32 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
+    expect(ui.at(-2)).toBe('npx playwright test --project=e2-wiring')
+    expect(ui.at(-1)).toBe(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+    )
+  })
+})
+
+describe('timings — every executed command reports its duration', () => {
+  test('a passing command emits a machine-readable timing line', () => {
+    const result = run(['logic'], {
+      GATE_FAKE_EXIT_TSC: '0',
+      GATE_FAKE_EXIT_ESLINT: '0',
+      GATE_FAKE_EXIT_VITEST_UNIT: '0',
+    })
+    expect(result.status).toBe(0)
+    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT']) {
+      expect(result.stderr).toMatch(new RegExp(`\\[gate:logic\\] timing ${name}=\\d+s`))
+    }
+  })
+
+  test('a failing command reports timing before propagating its status', () => {
+    const result = run(['logic'], {
+      GATE_FAKE_EXIT_TSC: '7',
+    })
+    expect(result.status).toBe(7)
+    expect(result.stderr).toMatch(/\[gate:logic\] timing TSC=\d+s/)
   })
 })
 
@@ -130,6 +155,13 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
     )
     expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
   })
+
+  test('E2 runs after the parallel product suite instead of sharing its fake-server state', () => {
+    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(source).toMatch(
+      /name:\s*'e2-wiring'[\s\S]*testMatch:\s*\/e2-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
+    )
+  })
 })
 
 describe('anonymous health Playwright check — regression: uses its lane base URL', () => {
@@ -167,9 +199,12 @@ describe('repo-wide guards', () => {
     }
   })
 
-  test('no workflow or script under scripts/ other than gate.sh calls vitest, playwright, eslint, or tsc directly', () => {
+  test('gate.sh owns product tools; certify.sh can launch only the isolated certification project', () => {
     const gateShContent = readFileSync(path.join(REPO_ROOT, 'scripts', 'gate.sh'), 'utf8')
-    // gate.sh itself is the one place allowed to name these tools.
+    const certifyShContent = readFileSync(path.join(REPO_ROOT, 'scripts', 'certify.sh'), 'utf8')
     expect(gateShContent).toMatch(/npx (tsc|eslint|vitest|playwright)/)
+    expect(certifyShContent).toMatch(/npx playwright test --project=certification/)
+    expect(certifyShContent).not.toMatch(/npx (tsc|eslint|vitest)\b/)
+    expect(certifyShContent).not.toMatch(/--project=product/)
   })
 })
