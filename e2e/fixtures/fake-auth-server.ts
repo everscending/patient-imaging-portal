@@ -748,9 +748,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       reason: block.reason === null || block.reason === undefined ? null : String(block.reason),
     }))
     const nextSlotRanges = Array.isArray(body.p_slots) ? body.p_slots.map(String) : []
-    const previousSlotSet = new Set(generatedSlotRangesByProvider.get(providerId) ?? [])
-    const nextSlotSet = new Set(nextSlotRanges)
-    const removedOpenSlots = [...previousSlotSet].filter((range) => !nextSlotSet.has(range)).length
+    // The production regeneration RPC removes the previous free grid in the
+    // horizon before inserting the replacement, even when a range reappears.
+    const removedOpenSlots = (generatedSlotRangesByProvider.get(providerId) ?? []).length
 
     provider.slot_minutes = Number(body.p_slot_minutes)
     workingHours = [...workingHours.filter((row) => row.provider_id !== providerId), ...nextHours]

@@ -94,7 +94,7 @@ describe('JOR-284 shared provider availability fixture', () => {
 
     const retry = await apply(token, { ...ownAvailability, p_slots: ['[second)'] })
     expect(retry.status).toBe(200)
-    expect(await retry.json()).toMatchObject([{ removed_open_slots: 1, generated_open_slots: 1 }])
+    expect(await retry.json()).toMatchObject([{ removed_open_slots: 2, generated_open_slots: 1 }])
 
     const blocks = await request(`/rest/v1/availability_blocks?provider_id=eq.${E2_PROVIDER_ID}`, token)
     expect(await blocks.json()).toEqual([
