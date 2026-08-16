@@ -38,7 +38,9 @@ const {
   resetStorage,
   setCallerHasSession,
   setSessionTokenValid,
+  setSessionContextFailure,
   hasCallerSession,
+  sessionContextIsFailing,
   FAKE_SESSION_COOKIE_NAME,
   FAKE_ACCESS_TOKEN,
 } = vi.hoisted(() => {
@@ -48,6 +50,7 @@ const {
   const scopes: WriteScope[] = []
   let sessionPresent = true
   let sessionValid = true
+  let sessionContextFails = false
   const accessToken = 'guard-audit-caller-token'
 
   function rowsFor(table: string): FakeRow[] {
@@ -112,6 +115,7 @@ const {
       scopes.length = 0
       sessionPresent = true
       sessionValid = true
+      sessionContextFails = false
     },
     setCallerHasSession(value: boolean) {
       sessionPresent = value
@@ -119,8 +123,14 @@ const {
     setSessionTokenValid(value: boolean) {
       sessionValid = value
     },
+    setSessionContextFailure(value: boolean) {
+      sessionContextFails = value
+    },
     hasCallerSession() {
       return sessionPresent
+    },
+    sessionContextIsFailing() {
+      return sessionContextFails
     },
     FAKE_SESSION_COOKIE_NAME: 'pip_session',
     FAKE_ACCESS_TOKEN: accessToken,
@@ -138,12 +148,15 @@ vi.mock('../../lib/session-cookie', () => ({
 }))
 
 vi.mock('next/headers', () => ({
-  cookies: async () => ({
-    get(name: string) {
-      if (name !== FAKE_SESSION_COOKIE_NAME || !hasCallerSession()) return undefined
-      return { value: FAKE_ACCESS_TOKEN }
-    },
-  }),
+  cookies: async () => {
+    if (sessionContextIsFailing()) throw new Error('SECRET_COOKIE_ERROR_MUST_NOT_ESCAPE')
+    return {
+      get(name: string) {
+        if (name !== FAKE_SESSION_COOKIE_NAME || !hasCallerSession()) return undefined
+        return { value: FAKE_ACCESS_TOKEN }
+      },
+    }
+  },
 }))
 
 import { guardPhiAccess } from '../../lib/access/guard'
@@ -173,6 +186,18 @@ describe('audit persistence across the real PHI guard and centralized writer', (
     const result = await guardPhiAccess({ kind: 'patient', userId: 'expired-account' }, { kind: 'study', id: 'study-2' }, 'study.view')
 
     expect(result).toEqual({ ok: false, status: 401 })
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: null, outcome: 'denied' })
+    expect(writeScopes).toEqual(['service'])
+  })
+
+  test('sessionContextFailurePersistsExactlyOneAuditBeforeSanitizedDependencyError', async function sessionContextFailurePersistsExactlyOneAuditBeforeSanitizedDependencyError() {
+    setSessionContextFailure(true)
+
+    await expect(
+      guardPhiAccess({ kind: 'patient', userId: 'cookie-failure-account' }, { kind: 'study', id: 'study-cookie-failure' }, 'study.view'),
+    ).rejects.toThrow('guardPhiAccess: authorization dependency unavailable')
+
     expect(auditRows).toHaveLength(1)
     expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: null, outcome: 'denied' })
     expect(writeScopes).toEqual(['service'])

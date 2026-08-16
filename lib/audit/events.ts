@@ -88,6 +88,12 @@ async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean):
   // single-row writer before looking at any ambient account cookie.
   if (input.actorKind === 'share_recipient') return serviceClient()
 
+  // A null account ref proves the guard could not authenticate a caller. The
+  // guard-only provenance is sufficient to choose the approved audit writer;
+  // re-reading the failed session context would create a second failure path
+  // capable of dropping the required row.
+  if (serviceRoleAllowed(input, fromPhiGuard)) return serviceClient()
+
   const accessToken = await callerAccessToken()
   if (accessToken) {
     try {
@@ -98,7 +104,6 @@ async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean):
       // denied-account case below may cross to the single-row fallback.
     }
   }
-  if (serviceRoleAllowed(input, fromPhiGuard)) return serviceClient()
   throw new Error('recordAuditEvent: no authenticated caller available for this audit event')
 }
 
