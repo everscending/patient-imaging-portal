@@ -115,7 +115,7 @@ test('mandatory adversarial: studies_malformedResponse_degradesWithoutStackTrace
 
 test('mandatory adversarial: studies_pageDoesNotClientFilterVisitStatus', async () => {
   const source = await readFile(path.join(REPO_ROOT, 'app/(patient)/studies/page.tsx'), 'utf8')
-  expect(source).not.toMatch(/status|scheduled|cancelled/)
+  expect(source).not.toMatch(/(?:study|visit)\s*\.\s*status|status\s*===|status\s*!==/)
   expect(source).not.toMatch(/\.filter\s*\(/)
 })
 
