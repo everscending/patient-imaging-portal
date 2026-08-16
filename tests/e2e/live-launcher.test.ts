@@ -2,13 +2,15 @@
 // Next application it serves.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:http'
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
+import { startFakeAuthServer, type FakeAuthServer } from '../../e2e/fixtures/fake-auth-server'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const children: ChildProcess[] = []
+const fakeAuthServers: FakeAuthServer[] = []
 const temporaryDirectories: string[] = []
 
 async function nestedWorktreeFixture(): Promise<{ parentCheckout: string; worktree: string }> {
@@ -18,7 +20,7 @@ async function nestedWorktreeFixture(): Promise<{ parentCheckout: string; worktr
   await mkdir(worktree, { recursive: true })
 
   await Promise.all(
-    ['app', 'components', 'e2e', 'lib', 'scripts'].map((entry) =>
+    ['app', 'components', 'lib', 'scripts'].map((entry) =>
       cp(path.join(REPO_ROOT, entry), path.join(worktree, entry), { recursive: true }),
     ),
   )
@@ -27,13 +29,24 @@ async function nestedWorktreeFixture(): Promise<{ parentCheckout: string; worktr
       cp(path.join(REPO_ROOT, entry), path.join(worktree, entry)),
     ),
   )
-  await symlink(path.join(REPO_ROOT, 'node_modules'), path.join(worktree, 'node_modules'), 'dir')
+  await Promise.all([
+    symlink(path.join(REPO_ROOT, 'node_modules'), path.join(parentCheckout, 'node_modules'), 'dir'),
+    symlink(path.join(REPO_ROOT, 'node_modules'), path.join(worktree, 'node_modules'), 'dir'),
+  ])
   await writeFile(
     path.join(parentCheckout, 'package-lock.json'),
     JSON.stringify({ name: 'enclosing-checkout', lockfileVersion: 3 }),
   )
 
   return { parentCheckout, worktree }
+}
+
+async function testEnvironment(worktree: string): Promise<string[]> {
+  const raw = await readFile(path.join(worktree, '.env.test'), 'utf8')
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
 }
 
 async function unusedPort(): Promise<number> {
@@ -76,6 +89,7 @@ afterEach(async () => {
         }),
     ),
   )
+  await Promise.all(fakeAuthServers.splice(0).map((server) => server.close()))
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -84,9 +98,18 @@ test(
   async function liveLauncherStartedFromParentCheckoutServesWorktreeRoutes() {
     const { parentCheckout, worktree } = await nestedWorktreeFixture()
     const port = await unusedPort()
-    const child = spawn(process.execPath, [path.join(worktree, 'e2e', 'fixtures', 'start-test-server.mjs')], {
+    const fakeAuthServer = await startFakeAuthServer()
+    fakeAuthServers.push(fakeAuthServer)
+    const child = spawn('/usr/bin/env', [
+      ...(await testEnvironment(worktree)),
+      `PORT=${port}`,
+      'WATCHPACK_POLLING=true',
+      `NEXT_PUBLIC_SUPABASE_URL=${fakeAuthServer.url}`,
+      process.execPath,
+      path.join(worktree, 'scripts', 'run-next.mjs'),
+      'dev',
+    ], {
       cwd: parentCheckout,
-      env: { ...process.env, PORT: String(port), WATCHPACK_POLLING: 'true' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     children.push(child)
