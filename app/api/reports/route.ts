@@ -16,10 +16,9 @@ export async function GET(): Promise<Response> {
   const cookieStore = await cookies()
   const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
   const callerId = await resolveCallerId()
-  if (!accessToken || !callerId) return accessError(401)
 
-  const actor: Actor = { kind: 'patient', userId: callerId }
-  const result = await listReports(actor, accessToken)
+  const actor: Actor = { kind: 'patient', userId: callerId ?? '' }
+  const result = await listReports(actor, accessToken ?? '')
   if (!result.ok) return accessError(result.status)
   return Response.json({ reports: result.value }, { status: 200 })
 }

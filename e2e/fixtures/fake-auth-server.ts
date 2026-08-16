@@ -46,6 +46,32 @@ type FakePatient = {
   phone: string | null
 }
 
+type FakeVisit = {
+  id: string
+  patient_id: string
+  provider_id: string
+  occurred_at: string
+  status: 'completed' | 'scheduled' | 'cancelled'
+}
+
+type FakeStudy = {
+  id: string
+  patient_id: string
+  visit_id: string
+  description: string
+}
+
+type FakeReport = {
+  id: string
+  patient_id: string
+  study_id: string
+  status: 'preliminary' | 'signed'
+  findings: string
+  impression: string
+  signed_by: string | null
+  signed_at: string | null
+}
+
 type FakeIdentityAttempt = {
   id: string
   attempted_patient_ref: string
@@ -64,6 +90,100 @@ const SEEDED_PATIENT: FakePatient = {
   email: 'morgan.rivers@example.test',
   phone: null,
 }
+
+const OTHER_PATIENT: FakePatient = {
+  id: '55825582-5582-4582-8582-558255825582',
+  user_id: null,
+  patient_ref: 'PT-5582',
+  date_of_birth: '1979-08-25',
+  full_name: 'Casey Vale',
+  email: 'casey.vale@example.test',
+  phone: null,
+}
+
+export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
+export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
+export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
+export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
+export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
+
+const PROVIDERS = [{ id: '66336633-6633-4633-8633-663366336633', full_name: 'Dr. Avery Chen' }]
+const VISITS: FakeVisit[] = [
+  {
+    id: '77447744-7744-4744-8744-774477447744',
+    patient_id: SEEDED_PATIENT.id,
+    provider_id: PROVIDERS[0].id,
+    occurred_at: '2026-08-10T14:00:00.000Z',
+    status: 'completed',
+  },
+  {
+    id: '88558855-8855-4855-8855-885588558855',
+    patient_id: OTHER_PATIENT.id,
+    provider_id: PROVIDERS[0].id,
+    occurred_at: '2026-08-11T14:00:00.000Z',
+    status: 'completed',
+  },
+]
+const STUDIES: FakeStudy[] = [
+  { id: E2_SEEDED_STUDY_ID, patient_id: SEEDED_PATIENT.id, visit_id: VISITS[0].id, description: 'Seeded abdominal ultrasound' },
+  {
+    id: E2_FOREIGN_STUDY_ID,
+    patient_id: OTHER_PATIENT.id,
+    visit_id: VISITS[1].id,
+    description: 'Other patient study',
+  },
+]
+const IMAGES = [
+  {
+    id: 'dd00dd00-dd00-4d00-8d00-dd00dd00dd00',
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E2_SEEDED_STUDY_ID,
+    width: 1024,
+    height: 768,
+    ordinal: 0,
+    storage_key: 'e2/seeded-image.png',
+    thumb_key: null,
+  },
+]
+const CINE_CLIPS = [
+  {
+    id: E2_SEEDED_CLIP_ID,
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E2_SEEDED_STUDY_ID,
+    frame_count: 100,
+    default_fps: 24,
+    poster_key: null,
+  },
+]
+const REPORTS: FakeReport[] = [
+  {
+    id: E2_SEEDED_REPORT_ID,
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E2_SEEDED_STUDY_ID,
+    status: 'signed',
+    findings: 'No acute abnormality.',
+    impression: 'Normal seeded study.',
+    signed_by: PROVIDERS[0].id,
+    signed_at: '2026-08-12T16:00:00.000Z',
+  },
+  {
+    id: E2_FOREIGN_REPORT_ID,
+    patient_id: OTHER_PATIENT.id,
+    study_id: STUDIES[1].id,
+    status: 'signed',
+    findings: 'Private other-patient findings.',
+    impression: 'Private other-patient impression.',
+    signed_by: PROVIDERS[0].id,
+    signed_at: '2026-08-13T16:00:00.000Z',
+  },
+]
+
+const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
+  ['/rest/v1/visits', VISITS],
+  ['/rest/v1/studies', STUDIES],
+  ['/rest/v1/images', IMAGES],
+  ['/rest/v1/cine_clips', CINE_CLIPS],
+])
 
 // Keep the fixture's route name assembled rather than spelling the production
 // RPC identifier in a second TypeScript file. JOR-254's invariant test treats
@@ -112,7 +232,7 @@ type DependencyState = 'ok' | 'down' | 'hang'
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const usersByEmail = new Map<string, FakeUser>()
   const sessionsByToken = new Map<string, FakeSession>()
-  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }]
+  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
   const auditEvents: Record<string, unknown>[] = []
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
@@ -303,6 +423,83 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendPostgrestRows(req, res, rows)
   }
 
+  function applyEqualityFilters<T extends Record<string, unknown>>(rows: T[], url: URL): T[] {
+    return rows.filter((row) =>
+      [...url.searchParams.entries()].every(([column, raw]) => {
+        if (!raw.startsWith('eq.')) return true
+        if (!(column in row)) return false
+        return String(row[column]) === raw.slice(3)
+      }),
+    )
+  }
+
+  function patientScopedRows<T extends Record<string, unknown> & { patient_id: string }>(
+    req: IncomingMessage,
+    url: URL,
+    rows: T[],
+  ): T[] {
+    const user = authenticatedUser(req)
+    const patientId = user ? patients.find((patient) => patient.user_id === user.id)?.id : undefined
+    if (!patientId) return []
+    return applyEqualityFilters(
+      rows.filter((row) => row.patient_id === patientId),
+      url,
+    )
+  }
+
+  function handleSeededRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+
+    if (url.pathname === '/rest/v1/providers' || url.pathname === '/rest/v1/staff_admins') {
+      sendPostgrestRows(req, res, url.pathname === '/rest/v1/providers' ? applyEqualityFilters(PROVIDERS, url) : [])
+      return
+    }
+
+    if (url.pathname === '/rest/v1/cine_frames') {
+      sendPostgrestRows(req, res, [])
+      return
+    }
+
+    const tableRows = SEEDED_PATIENT_TABLES.get(url.pathname) as Array<Record<string, unknown> & { patient_id: string }> | undefined
+    if (tableRows !== undefined) {
+      sendPostgrestRows(req, res, patientScopedRows(req, url, tableRows))
+      return
+    }
+
+    const reports = patientScopedRows(req, url, REPORTS).map((report) => {
+      const study = STUDIES.find((candidate) => candidate.id === report.study_id)
+      const patient = patients.find((candidate) => candidate.id === report.patient_id)
+      const provider = PROVIDERS.find((candidate) => candidate.id === report.signed_by)
+      return {
+        ...report,
+        studies: study ? { description: study.description } : null,
+        patients: patient ? { patient_ref: patient.patient_ref } : null,
+        providers: provider ? { full_name: provider.full_name } : null,
+      }
+    })
+    sendPostgrestRows(req, res, reports)
+  }
+
+  async function handleClock(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const advanceMs = body.advanceMs
+    const sessionToken = body.sessionToken
+    const session = typeof sessionToken === 'string' ? sessionsByToken.get(sessionToken) : undefined
+    if (typeof advanceMs !== 'number' || !Number.isSafeInteger(advanceMs) || advanceMs < 0 || !session) {
+      sendJson(res, 422, { error: 'invalid_clock_advance' })
+      return
+    }
+    session.expiresAt -= Math.ceil(advanceMs / 1000)
+    identityAttempts = identityAttempts.map((attempt) => ({
+      ...attempt,
+      attempted_at: new Date(Date.parse(attempt.attempted_at) - advanceMs).toISOString(),
+    }))
+    sendJson(res, 200, { advancedMs: advanceMs })
+  }
+
   async function handleIdentityAttempts(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === 'HEAD') {
       const countValue = filteredAttempts(url).length
@@ -342,7 +539,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     const parsed = await readJsonBody(req)
     const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Record<string, unknown>[]
-    auditEvents.push(...rows)
+    auditEvents.push(
+      ...rows.map((row) => ({
+        ...row,
+        occurred_at: row.occurred_at ?? new Date().toISOString(),
+      })),
+    )
     res.writeHead(201, { 'Content-Type': 'application/json' })
     res.end()
   }
@@ -376,7 +578,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   function resetIdentityState(res: ServerResponse): void {
-    patients = [{ ...SEEDED_PATIENT }]
+    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
     identityAttempts = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
@@ -395,6 +597,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
       sendJson(res, 200, { patients, identityAttempts, auditEvents })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/clock') {
+      void handleClock(req, res)
       return
     }
     if (req.method === 'POST' && url.pathname === '/auth/v1/signup') {
@@ -423,6 +629,16 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/patients') {
       void handlePatients(req, res, url)
+      return
+    }
+    if (
+      url.pathname === '/rest/v1/providers' ||
+      url.pathname === '/rest/v1/staff_admins' ||
+      url.pathname === '/rest/v1/cine_frames' ||
+      url.pathname === '/rest/v1/reports' ||
+      SEEDED_PATIENT_TABLES.has(url.pathname)
+    ) {
+      handleSeededRead(req, res, url)
       return
     }
     if (url.pathname === '/rest/v1/identity_attempts') {

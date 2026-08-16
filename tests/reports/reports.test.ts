@@ -273,6 +273,7 @@ describe('reports', () => {
 
   test('noSessionAndUnlinkedIdentityResponses', async function noSessionAndUnlinkedIdentityResponses() {
     configureSession({ token: null, callerId: null })
+    setGuardStatus(401)
     const noSession = await listRoute()
 
     configureSession({ token: FAKE_ACCESS_TOKEN, callerId: 'patient-account' })
@@ -283,6 +284,10 @@ describe('reports', () => {
     expect(await noSession.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
     expect(unlinked.status).toBe(403)
     expect(await unlinked.json()).toEqual({ error: 'identity_verification_required', message: 'Verify your identity to continue.' })
+    expect(guardCalls).toEqual([
+      { actor: { kind: 'patient', userId: '' }, target: { kind: 'collection', of: 'report' }, action: 'report.view' },
+      { actor: { kind: 'patient', userId: 'patient-account' }, target: { kind: 'collection', of: 'report' }, action: 'report.view' },
+    ])
   })
 
   test('responseDataMinimization', async function responseDataMinimization() {
