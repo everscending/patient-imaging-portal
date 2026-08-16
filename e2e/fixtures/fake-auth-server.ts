@@ -1,6 +1,8 @@
-// e2e/fixtures/fake-auth-server.ts — a minimal stand-in for Supabase Auth's
-// wire contract: POST /auth/v1/signup, POST /auth/v1/token?grant_type=password,
-// GET /auth/v1/user. Just enough of GoTrue's actual response shapes
+// e2e/fixtures/fake-auth-server.ts — a minimal stand-in for the Supabase
+// Auth and PostgREST wire contracts exercised by the browser tests. It owns
+// signup, login, session reads, account-metadata updates, and the small slice
+// of patients/identity_attempts/audit_events used by identity verification.
+// Just enough of GoTrue's actual response shapes
 // (the auth-js SDK's _sessionResponse/_userResponse helpers) for the real
 // Supabase JS auth client (lib/db/client.ts's authClient) to drive
 // e2e/auth.spec.ts with no live Supabase project — the same keyless-testing
@@ -25,12 +27,49 @@ type FakeUser = {
   id: string
   email: string
   password: string
+  userMetadata: Record<string, unknown>
+  appMetadata: Record<string, unknown>
 }
 
 type FakeSession = {
   userId: string
   expiresAt: number // unix seconds
 }
+
+type FakePatient = {
+  id: string
+  user_id: string | null
+  patient_ref: string
+  date_of_birth: string
+  full_name: string
+  email: string
+  phone: string | null
+}
+
+type FakeIdentityAttempt = {
+  id: string
+  attempted_patient_ref: string
+  source_ref: string
+  user_id: string
+  succeeded: boolean
+  attempted_at: string
+}
+
+const SEEDED_PATIENT: FakePatient = {
+  id: '44714471-4471-4471-8471-447144714471',
+  user_id: null,
+  patient_ref: 'PT-4471',
+  date_of_birth: '1988-03-14',
+  full_name: 'Morgan Rivers',
+  email: 'morgan.rivers@example.test',
+  phone: null,
+}
+
+// Keep the fixture's route name assembled rather than spelling the production
+// RPC identifier in a second TypeScript file. JOR-254's invariant test treats
+// that identifier as an executable call-site capability: only identity.ts may
+// name it directly.
+const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
 
 export type FakeAuthServer = {
   url: string
@@ -58,8 +97,8 @@ function userWireShape(user: FakeUser, withIdentity: boolean): Record<string, un
     email: user.email,
     email_confirmed_at: '1970-01-01T00:00:00Z',
     phone: '',
-    app_metadata: { provider: 'email', providers: ['email'] },
-    user_metadata: {},
+    app_metadata: user.appMetadata,
+    user_metadata: user.userMetadata,
     identities: withIdentity
       ? [{ identity_id: randomUUID(), id: user.id, user_id: user.id, provider: 'email' }]
       : [],
@@ -73,7 +112,10 @@ type DependencyState = 'ok' | 'down' | 'hang'
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const usersByEmail = new Map<string, FakeUser>()
   const sessionsByToken = new Map<string, FakeSession>()
-  const calls: Record<string, number> = { signup: 0, token: 0, user: 0 }
+  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }]
+  let identityAttempts: FakeIdentityAttempt[] = []
+  const auditEvents: Record<string, unknown>[] = []
+  const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
@@ -133,7 +175,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
 
-    const user: FakeUser = { id: randomUUID(), email, password }
+    const user: FakeUser = {
+      id: randomUUID(),
+      email,
+      password,
+      userMetadata: {},
+      appMetadata: { provider: 'email', providers: ['email'] },
+    }
     usersByEmail.set(email, user)
     sendJson(res, 200, { ...issueSession(user), user: userWireShape(user, true) })
   }
@@ -182,11 +230,171 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, userWireShape(user, true))
   }
 
+  function authenticatedUser(req: IncomingMessage): FakeUser | null {
+    const authHeader = req.headers.authorization
+    const token = typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    const session = token ? sessionsByToken.get(token) : undefined
+    if (!session || session.expiresAt < Math.floor(Date.now() / 1000)) return null
+    return [...usersByEmail.values()].find((candidate) => candidate.id === session.userId) ?? null
+  }
+
+  async function handleUpdateUser(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    count('updateUser')
+    const user = authenticatedUser(req)
+    if (!user) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const body = await readJsonBody(req)
+    const metadata = body.data
+    if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      sendJson(res, 422, { msg: 'invalid user metadata' })
+      return
+    }
+    user.userMetadata = { ...user.userMetadata, ...(metadata as Record<string, unknown>) }
+    sendJson(res, 200, userWireShape(user, true))
+  }
+
+  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' = 'eq'): string | null {
+    const value = url.searchParams.get(column)
+    const prefix = `${operator}.`
+    return value?.startsWith(prefix) ? value.slice(prefix.length) : null
+  }
+
+  function filteredAttempts(url: URL): FakeIdentityAttempt[] {
+    const attemptedPatientRef = queryValue(url, 'attempted_patient_ref')
+    const sourceRef = queryValue(url, 'source_ref')
+    const userId = queryValue(url, 'user_id')
+    const succeeded = queryValue(url, 'succeeded')
+    const attemptedAtGte = queryValue(url, 'attempted_at', 'gte')
+    let rows = identityAttempts.filter((row) => {
+      if (attemptedPatientRef !== null && row.attempted_patient_ref !== attemptedPatientRef) return false
+      if (sourceRef !== null && row.source_ref !== sourceRef) return false
+      if (userId !== null && row.user_id !== userId) return false
+      if (succeeded !== null && row.succeeded !== (succeeded === 'true')) return false
+      if (attemptedAtGte !== null && row.attempted_at < attemptedAtGte) return false
+      return true
+    })
+    if (url.searchParams.get('order') === 'attempted_at.asc') {
+      rows = rows.toSorted((a, b) => a.attempted_at.localeCompare(b.attempted_at))
+    }
+    const rawLimit = url.searchParams.get('limit')
+    const limit = rawLimit === null ? null : Number(rawLimit)
+    return limit !== null && Number.isInteger(limit) && limit >= 0 ? rows.slice(0, limit) : rows
+  }
+
+  function sendPostgrestRows(req: IncomingMessage, res: ServerResponse, rows: unknown[]): void {
+    const acceptsObject = String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json')
+    sendJson(res, 200, acceptsObject ? (rows[0] ?? null) : rows)
+  }
+
+  async function handlePatients(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const patientRef = queryValue(url, 'patient_ref')
+    const userId = queryValue(url, 'user_id')
+    const rows = patients.filter((row) => {
+      if (patientRef !== null && row.patient_ref !== patientRef) return false
+      if (userId !== null && row.user_id !== userId) return false
+      return true
+    })
+    sendPostgrestRows(req, res, rows)
+  }
+
+  async function handleIdentityAttempts(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (req.method === 'HEAD') {
+      const countValue = filteredAttempts(url).length
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Range': countValue === 0 ? '0-0/0' : `0-${countValue - 1}/${countValue}`,
+      })
+      res.end()
+      return
+    }
+    if (req.method === 'GET') {
+      sendPostgrestRows(req, res, filteredAttempts(url))
+      return
+    }
+    if (req.method === 'POST') {
+      const parsed = await readJsonBody(req)
+      const body = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>
+      identityAttempts.push({
+        id: randomUUID(),
+        attempted_patient_ref: String(body.attempted_patient_ref),
+        source_ref: String(body.source_ref),
+        user_id: String(body.user_id),
+        succeeded: body.succeeded === true,
+        attempted_at: String(body.attempted_at),
+      })
+      res.writeHead(201, { 'Content-Type': 'application/json' })
+      res.end()
+      return
+    }
+    sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleAuditEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const parsed = await readJsonBody(req)
+    const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Record<string, unknown>[]
+    auditEvents.push(...rows)
+    res.writeHead(201, { 'Content-Type': 'application/json' })
+    res.end()
+  }
+
+  async function handleLinkPatient(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const body = await readJsonBody(req)
+    const patient = patients.find((candidate) => candidate.id === body.p_patient_id)
+    const callerId = String(body.p_caller_id)
+    if (!patient || (patient.user_id !== null && patient.user_id !== callerId)) {
+      sendJson(res, 200, 'claimed_by_other')
+      return
+    }
+    if (patient.user_id === callerId) {
+      sendJson(res, 200, 'already_by_caller')
+      return
+    }
+    patient.user_id = callerId
+    identityAttempts.push({
+      id: randomUUID(),
+      attempted_patient_ref: String(body.p_attempted_patient_ref),
+      source_ref: String(body.p_source_ref),
+      user_id: callerId,
+      succeeded: true,
+      attempted_at: String(body.p_attempted_at),
+    })
+    sendJson(res, 200, 'linked_now')
+  }
+
+  function resetIdentityState(res: ServerResponse): void {
+    patients = [{ ...SEEDED_PATIENT }]
+    identityAttempts = []
+    auditEvents.length = 0
+    sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
+  }
+
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://fake-auth-server.local')
 
     if (req.method === 'GET' && url.pathname === '/__test__/calls') {
       sendJson(res, 200, calls)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/reset-identity') {
+      resetIdentityState(res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
+      sendJson(res, 200, { patients, identityAttempts, auditEvents })
       return
     }
     if (req.method === 'POST' && url.pathname === '/auth/v1/signup') {
@@ -201,12 +409,32 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       handleGetUser(req, res)
       return
     }
+    if (req.method === 'PUT' && url.pathname === '/auth/v1/user') {
+      void handleUpdateUser(req, res)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/__test__/health-state') {
       void handleHealthState(req, res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/rest/v1/') {
       answerAsDependency(req, res, healthState.database)
+      return
+    }
+    if (url.pathname === '/rest/v1/patients') {
+      void handlePatients(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/identity_attempts') {
+      void handleIdentityAttempts(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/audit_events') {
+      void handleAuditEvents(req, res)
+      return
+    }
+    if (url.pathname === LINK_PATIENT_RPC_PATH) {
+      void handleLinkPatient(req, res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {

@@ -39,6 +39,7 @@ const GUARD_ALLOWLIST = [
   'app/api/health/route.ts',
   'app/api/identity/verify/route.ts',
   'app/api/identity/status/route.ts',
+  'app/api/profile/route.ts',
 ]
 
 const APP_IMPORT_RE = /(^|\/)app\//

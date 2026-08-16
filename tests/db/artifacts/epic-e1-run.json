@@ -1,0 +1,49 @@
+{
+  "seed": "patient-imaging-portal",
+  "now": "2026-08-15T20:23:37.136Z",
+  "minChangeNoticeHours": 24,
+  "rowCounts": {
+    "services": 3,
+    "providers": 10,
+    "provider_services": 30,
+    "patients": 50,
+    "staff_admins": 1,
+    "visits": 150,
+    "studies": 150,
+    "images": 700,
+    "cine_clips": 250,
+    "cine_frames": 5080,
+    "reports": 150,
+    "working_hours": 100,
+    "availability_blocks": 10,
+    "slots": 15934,
+    "appointments": 7,
+    "appointment_transitions": 12
+  },
+  "imageAssetManifest": {
+    "count": 40,
+    "sha256Digest": "51f6ca410e0d4067d59012eff8b72b0f191a9f9579eae56b6d96398a85c955c8"
+  },
+  "frameAssetManifest": {
+    "count": 800,
+    "sha256Digest": "8ce149e4a05ab772b5556ce8d8c2ec439edd8f1cdb4327f1d059148c76fccefc"
+  },
+  "demoAccounts": {
+    "patient": "patient@demo.pip.test",
+    "provider": "provider@demo.pip.test",
+    "admin": "admin@demo.pip.test"
+  },
+  "realPhiBucketContact": {
+    "note": "The one live contact with the real phi bucket for this seed happened in this epic's own implementation lane, T12/T13 (JOR-256/JOR-250) — tests/seed/artifacts/pool-run.json and rows-run.json. This ticket (T14) re-derives that contact's manifest offline (above) rather than repeating a live upload; the gate never calls a live provider.",
+    "supabaseProjectRef": "dyvbopxzwkavhggawedt",
+    "priorRunAt": "2026-08-15T19:14:26Z"
+  },
+  "ranAt": "2026-08-15T21:00:00.000Z",
+  "assertions": {
+    "datasetRowCountsAndDemoAccounts": "pass",
+    "seedReproducibility": "pass",
+    "rowLevelSecurity": "pass",
+    "auditAppendOnly": "pass",
+    "oneLiveAppointmentPerSlot": "pass"
+  }
+}

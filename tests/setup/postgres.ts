@@ -17,6 +17,7 @@ const MAINTENANCE_DB = 'postgres'
 const REGISTRY_TABLE = '_pip_run_registry'
 const STALE_AGE = '1 day'
 const READY_TIMEOUT_MS = 30_000
+const READY_LOG_TAIL_LINES = '200'
 const MIGRATIONS_DIR = join(process.cwd(), 'db', 'migrations')
 
 export type Run = {
@@ -81,17 +82,19 @@ async function sleep(ms: number): Promise<void> {
 // prints right before the final start (only present on that first boot; a
 // reused, already-initialized container skips straight past this) plus two
 // consecutive successful queries is what actually survives the restart.
-async function waitReady(): Promise<void> {
+async function waitReady(waitForInitCompletion: boolean): Promise<void> {
   const deadline = Date.now() + READY_TIMEOUT_MS
-  for (;;) {
-    const logs = docker(['logs', CONTAINER_NAME])
-    if (logs.includes('PostgreSQL init process complete; ready for start up.') || logs.includes('database system is ready to accept connections')) {
-      break
+  if (waitForInitCompletion) {
+    for (;;) {
+      const logs = docker(['logs', '--tail', READY_LOG_TAIL_LINES, CONTAINER_NAME])
+      if (logs.includes('PostgreSQL init process complete; ready for start up.') || logs.includes('database system is ready to accept connections')) {
+        break
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`${CONTAINER_NAME} did not finish initializing within ${READY_TIMEOUT_MS}ms`)
+      }
+      await sleep(250)
     }
-    if (Date.now() > deadline) {
-      throw new Error(`${CONTAINER_NAME} did not finish initializing within ${READY_TIMEOUT_MS}ms`)
-    }
-    await sleep(250)
   }
 
   let consecutiveSuccesses = 0
@@ -140,7 +143,7 @@ export async function ensureContainer(): Promise<Container> {
   } else if (state === 'stopped') {
     docker(['start', CONTAINER_NAME])
   }
-  await waitReady()
+  await waitReady(state === 'absent')
   ensureRegistryTable()
   return { port: resolvePort() }
 }
