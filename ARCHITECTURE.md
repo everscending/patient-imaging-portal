@@ -78,7 +78,7 @@ lib/
   scheduling/lifecycle.ts    FR-14 status transitions
   share/links.ts             mint, resolve, revoke
   notify/email.ts            the ONLY caller of Resend
-  audit/events.ts            the ONLY writer to audit_events
+  audit/events.ts            the ONLY application writer to audit_events (ADR-0014: transactional RPC exception)
   observability/timing.ts    PF-4 / PF-6 server timing — no PHI
   time/zones.ts              instant ↔ zone conversion
 
@@ -101,7 +101,7 @@ Each line is mechanically checkable, and a lint rule enforces it.
 | `lib/**` must not import from `app/**` | Domain logic stays testable without a request. |
 | Only `lib/config.ts` reads `process.env` | One place validates the environment contract (§8). |
 | Only `lib/db/client.ts` imports `@supabase/supabase-js` | One place decides anon key vs service role. |
-| Only `lib/audit/events.ts` writes `audit_events` | SEC-4's append-only guarantee has one enforcement point. |
+| Only `lib/audit/events.ts` and ADR-0014 transactional RPCs write `audit_events` | SEC-4's append-only guarantee stays centralized; mutation-required audits share the mutation transaction. |
 | Only `lib/notify/email.ts` imports the Resend SDK | GAP-3's log-only fallback cannot be bypassed. |
 | No `app/api/**` handler touching PHI may skip `lib/access/guard.ts` | The guard *is* the authorization and the audit write (§5). |
 | Only `lib/imaging/signing.ts` mints signed Storage URLs | One TTL, one place. |
