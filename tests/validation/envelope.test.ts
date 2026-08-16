@@ -76,6 +76,7 @@ describe('errorResponse', () => {
   test('errorResponse_returnsExactShapeAndStatus', async () => {
     const response = errorResponse(422, 'validation_failed', 'The request could not be validated.')
     expect(response.status).toBe(422)
+    expect(response.headers.get('Content-Type')).toBe('application/json')
     const body = await response.json()
     expect(Object.keys(body).sort()).toEqual(['error', 'message'])
     expect(body).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
