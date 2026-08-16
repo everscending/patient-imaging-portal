@@ -4,13 +4,24 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const { serviceMock, anonMock, guardMock, signMock, cookieMock, callerIdMock } = vi.hoisted(() => ({
+const {
+  serviceMock,
+  anonMock,
+  guardMock,
+  signMock,
+  cookieMock,
+  callerIdMock,
+  errorResponseMock,
+  noContentResponseMock,
+} = vi.hoisted(() => ({
   serviceMock: vi.fn(),
   anonMock: vi.fn(),
   guardMock: vi.fn(),
   signMock: vi.fn(),
   cookieMock: vi.fn(),
   callerIdMock: vi.fn(),
+  errorResponseMock: vi.fn(),
+  noContentResponseMock: vi.fn(),
 }))
 
 vi.mock('../../lib/db/client', () => ({ serviceClient: serviceMock, anonClient: anonMock }))
@@ -19,6 +30,12 @@ vi.mock('../../lib/access/identity', () => ({ resolveCallerId: callerIdMock }))
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
+vi.mock('../../lib/validation/envelope', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/validation/envelope')>()
+  errorResponseMock.mockImplementation(actual.errorResponse)
+  noContentResponseMock.mockImplementation(actual.noContentResponse)
+  return { ...actual, errorResponse: errorResponseMock, noContentResponse: noContentResponseMock }
+})
 vi.mock('../../lib/config', () => ({
   config: {
     appBaseUrl: 'https://portal.example',
@@ -114,6 +131,8 @@ beforeEach(() => {
   signMock.mockReset()
   cookieMock.mockReset()
   callerIdMock.mockReset()
+  errorResponseMock.mockClear()
+  noContentResponseMock.mockClear()
   cookieMock.mockResolvedValue({ get: () => ({ value: 'caller-token' }) })
   callerIdMock.mockResolvedValue(USER_ID)
   guardMock.mockResolvedValue({ ok: true, patientId: PATIENT_ID })
@@ -343,6 +362,8 @@ describe('share listing and revocation', () => {
     })
     expect(response.status).toBe(204)
     expect(await response.text()).toBe('')
+    expect(noContentResponseMock).toHaveBeenCalledOnce()
+    expect(errorResponseMock).not.toHaveBeenCalled()
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
@@ -375,6 +396,9 @@ describe('share listing and revocation', () => {
     })
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
+    expect(errorResponseMock).toHaveBeenCalledOnce()
+    expect(errorResponseMock).toHaveBeenCalledWith(404, 'not_found', 'The requested resource was not found.')
+    expect(noContentResponseMock).not.toHaveBeenCalled()
     expect(forbiddenUpdate.update).not.toHaveBeenCalled()
     expect(serviceMock).not.toHaveBeenCalled()
 
