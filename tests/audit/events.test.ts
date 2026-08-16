@@ -18,8 +18,9 @@
 //   an outcome other than granted/denied, rejected at the type boundary
 //     → outcomeOutsideGrantedDeniedRejectedAtTypeBoundary
 //     (the CHECK-constraint half is the same migration test as above)
-//   a detail object carrying fullName/dateOfBirth/patientRef/email, rejected
+//   a detail object carrying PHI- or credential-shaped keys, rejected
 //     → detailCarryingPhiShapedKeyRejected
+//     → detailCarryingCredentialKeyRejectedAndNeverPersisted
 //   UPDATE/DELETE on audit_events as app_user, rejected
 //     → tests/db/migration-002.test.ts's auditEventsAppUserInsertSelectOkUpdateDeleteFail
 //   a guard call that returns without an audit row, rejected
@@ -307,7 +308,7 @@ describe('AC: AuditAction carries exactly the 22 pinned strings, including the t
 
 describe('AC: detail serialises to JSONB containing only strings, numbers and booleans', () => {
   test('detailWithOnlyPrimitiveValuesRoundTripsThroughJson', async function detailWithOnlyPrimitiveValuesRoundTripsThroughJson() {
-    const detail = { count: 3, note: 'reschedule', successful: true }
+    const detail = { count: 3, transport: 'log', successful: true }
     await recordAuditEvent(baseInput({ detail }))
     const stored = auditRows[0]?.detail
     expect(JSON.parse(JSON.stringify(stored))).toEqual(detail)
@@ -318,10 +319,29 @@ describe('mandatory adversarial: detail carrying a PHI-shaped key is rejected (S
   test.each(['fullName', 'dateOfBirth', 'patientRef', 'email'])(
     'detailCarryingPhiShapedKeyRejected: %s',
     async function detailCarryingPhiShapedKeyRejected(key) {
-      await expect(recordAuditEvent(baseInput({ detail: { [key]: 'x' } }))).rejects.toThrow(/PHI-shaped key/)
+      await expect(recordAuditEvent(baseInput({ detail: { [key]: 'x' } }))).rejects.toThrow(/unapproved key or value/)
       expect(auditRows).toHaveLength(0)
     },
   )
+
+  test.each(['token', 'shareToken', 'sessionToken', 'secret', 'password'])(
+    'detailCarryingCredentialKeyRejectedAndNeverPersisted: %s',
+    async function detailCarryingCredentialKeyRejectedAndNeverPersisted(key) {
+      const rawCredential = 'RAW_CREDENTIAL_MUST_NEVER_BE_STORED'
+
+      await expect(recordAuditEvent(baseInput({ detail: { [key]: rawCredential } }))).rejects.toThrow(/unapproved key or value/)
+      expect(JSON.stringify(auditRows)).not.toContain(rawCredential)
+      expect(auditRows).toHaveLength(0)
+    },
+  )
+
+  test('credentialValueHiddenUnderApprovedStringKeyRejectedAndNeverPersisted', async function credentialValueHiddenUnderApprovedStringKeyRejectedAndNeverPersisted() {
+    const rawCredential = 'RAW_CREDENTIAL_MUST_NEVER_BE_STORED'
+
+    await expect(recordAuditEvent(baseInput({ detail: { transport: rawCredential } }))).rejects.toThrow(/unapproved key or value/)
+    expect(JSON.stringify(auditRows)).not.toContain(rawCredential)
+    expect(auditRows).toHaveLength(0)
+  })
 })
 
 describe('AC: recordAuditEvent is callable by a domain module directly, targetId null, for actions with no PHI target', () => {
