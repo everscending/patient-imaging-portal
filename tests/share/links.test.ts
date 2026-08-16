@@ -341,7 +341,8 @@ describe('share listing and revocation', () => {
     const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
       params: Promise.resolve({ id: LINK_ID }),
     })
-    expect(response.ok).toBe(true)
+    expect(response.status).toBe(204)
+    expect(await response.text()).toBe('')
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
