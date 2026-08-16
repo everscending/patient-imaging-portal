@@ -9,6 +9,33 @@ export type LifecycleInput = {
   now: Date
 }
 
+type TransitionMatrix = {
+  readonly [Role in SchedulingRole]: {
+    readonly [Status in AppointmentStatus]: readonly AppointmentStatus[]
+  }
+}
+
+const clinicianTransitions = {
+  requested: ['confirmed', 'cancelled'],
+  confirmed: ['completed', 'no_show', 'cancelled'],
+  completed: [],
+  cancelled: [],
+  no_show: [],
+} as const
+
+/** The single declaration of every role-by-status transition edge. */
+const transitionMatrix = {
+  patient: {
+    requested: ['cancelled'],
+    confirmed: ['cancelled'],
+    completed: [],
+    cancelled: [],
+    no_show: [],
+  },
+  provider: clinicianTransitions,
+  admin: clinicianTransitions,
+} as const satisfies TransitionMatrix
+
 /** Whether a patient still has time to cancel or reschedule. */
 export function canChange({ status, changeDeadline, now }: Pick<LifecycleInput, 'status' | 'changeDeadline' | 'now'>): boolean {
   return (status === 'requested' || status === 'confirmed') && now < changeDeadline
@@ -20,13 +47,11 @@ export function canChange({ status, changeDeadline, now }: Pick<LifecycleInput, 
  * transition and is deliberately absent here.
  */
 export function allowedTransitions({ status, role, startsAt, changeDeadline, now }: LifecycleInput): AppointmentStatus[] {
-  if (status === 'completed' || status === 'cancelled' || status === 'no_show') return []
-
-  if (status === 'requested') {
-    if (role === 'patient') return canChange({ status, changeDeadline, now }) ? ['cancelled'] : []
-    return ['confirmed', 'cancelled']
-  }
-
-  if (role === 'patient') return canChange({ status, changeDeadline, now }) ? ['cancelled'] : []
-  return now > startsAt ? ['completed', 'no_show', 'cancelled'] : ['cancelled']
+  return transitionMatrix[role][status].filter((next) => {
+    if (role === 'patient' && next === 'cancelled') {
+      return canChange({ status, changeDeadline, now })
+    }
+    if (next === 'completed' || next === 'no_show') return now > startsAt
+    return true
+  })
 }

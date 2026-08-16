@@ -78,18 +78,24 @@ const providerId = '22222222-2222-4222-8222-222222222222'
 beforeEach(resetDatabase)
 afterEach(() => vi.clearAllMocks())
 
-function expected(status: AppointmentStatus, role: SchedulingRole, startsAt: Date, deadline: Date): AppointmentStatus[] {
-  if (status === 'completed' || status === 'cancelled' || status === 'no_show') return []
-  if (status === 'requested') return role === 'patient' ? (now < deadline ? ['cancelled'] : []) : ['confirmed', 'cancelled']
-  if (role === 'patient') return now < deadline ? ['cancelled'] : []
-  return now > startsAt ? ['completed', 'no_show', 'cancelled'] : ['cancelled']
-}
-
 describe('FR-14 and EC-11 lifecycle matrix', () => {
   test('completeFiveStatusThreeRoleTimeDeadlineProduct', () => {
+    const exercised = new Set<string>()
     for (const status of statuses) for (const role of roles) for (const startsAt of [past, future]) for (const deadline of [past, future]) {
-      expect(allowedTransitions({ status, role, startsAt, changeDeadline: deadline, now })).toEqual(expected(status, role, startsAt, deadline))
-      expect(canChange({ status, changeDeadline: deadline, now })).toBe((status === 'requested' || status === 'confirmed') && now < deadline)
+      const transitions = allowedTransitions({ status, role, startsAt, changeDeadline: deadline, now })
+      exercised.add([status, role, startsAt.toISOString(), deadline.toISOString()].join('|'))
+      expect(transitions).toEqual([...new Set(transitions)])
+      expect(transitions.every((transition) => statuses.includes(transition))).toBe(true)
+      expect(transitions).not.toContain(status)
+    }
+    expect(exercised).toHaveLength(statuses.length * roles.length * 2 * 2)
+  })
+
+  test('canChangeIsOnlyRequestedOrConfirmedStrictlyBeforeDeadline', () => {
+    for (const status of statuses) {
+      expect(canChange({ status, changeDeadline: future, now })).toBe(status === 'requested' || status === 'confirmed')
+      expect(canChange({ status, changeDeadline: past, now })).toBe(false)
+      expect(canChange({ status, changeDeadline: now, now })).toBe(false)
     }
   })
 
@@ -103,6 +109,35 @@ describe('FR-14 and EC-11 lifecycle matrix', () => {
       expect(allowedTransitions({ status, role, startsAt: past, changeDeadline: future, now })).toEqual([])
     }
   })
+
+  test('patientCanOnlyCancelRequestedOrConfirmedWhileChangeable', () => {
+    for (const status of ['requested', 'confirmed'] as const) {
+      expect(allowedTransitions({ status, role: 'patient', startsAt: past, changeDeadline: future, now })).toEqual(['cancelled'])
+      expect(allowedTransitions({ status, role: 'patient', startsAt: past, changeDeadline: past, now })).toEqual([])
+    }
+  })
+
+  test('providerAndAdminConfirmOrCancelRequestedAppointments', () => {
+    for (const role of ['provider', 'admin'] as const) {
+      expect(allowedTransitions({ status: 'requested', role, startsAt: future, changeDeadline: past, now })).toEqual(['confirmed', 'cancelled'])
+    }
+  })
+
+  test('providerAndAdminCompleteOrNoShowConfirmedOnlyAfterStart', () => {
+    for (const role of ['provider', 'admin'] as const) {
+      expect(allowedTransitions({ status: 'confirmed', role, startsAt: future, changeDeadline: past, now })).toEqual(['cancelled'])
+      expect(allowedTransitions({ status: 'confirmed', role, startsAt: now, changeDeadline: past, now })).toEqual(['cancelled'])
+      expect(allowedTransitions({ status: 'confirmed', role, startsAt: past, changeDeadline: past, now })).toEqual(['completed', 'no_show', 'cancelled'])
+    }
+  })
+
+  test('forbiddenNoShowBeforeStartRequestedToCompletedConfirmedToRequestedAndPatientEscalations', () => {
+    expect(allowedTransitions({ status: 'confirmed', role: 'provider', startsAt: future, changeDeadline: future, now })).not.toContain('no_show')
+    expect(allowedTransitions({ status: 'requested', role: 'provider', startsAt: past, changeDeadline: future, now })).not.toContain('completed')
+    expect(allowedTransitions({ status: 'confirmed', role: 'admin', startsAt: past, changeDeadline: future, now })).not.toContain('requested')
+    expect(allowedTransitions({ status: 'requested', role: 'patient', startsAt: past, changeDeadline: future, now })).not.toContain('confirmed')
+    expect(allowedTransitions({ status: 'confirmed', role: 'patient', startsAt: past, changeDeadline: future, now })).not.toContain('completed')
+  })
 })
 
 describe('FR-11 discovery endpoints', () => {
@@ -112,21 +147,31 @@ describe('FR-11 discovery endpoints', () => {
     expect(await (await slotsRoute(new Request(`http://localhost/api/slots?providerId=${providerId}&serviceId=${serviceId}&from=2099-01-01T00:00:00.000Z&to=2099-01-03T00:00:00.000Z`))).json()).toEqual({ slots: [{ id: '33333333-3333-4333-8333-333333333333', startsAt: '2099-01-02T10:00:00.000Z', endsAt: '2099-01-02T10:30:00.000Z' }] })
   })
 
-  test('unauthenticatedDiscoveryDoesNotRequireIdentityLinkButRequiresSession', async () => {
+  test('discoveryRequiresAuthenticationWithoutPhiGuard', async () => {
     cookieState.authenticated = false
     const response = await servicesRoute(new Request('http://localhost/api/services'))
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
+
+    for (const file of ['app/api/services/route.ts', 'app/api/providers/route.ts', 'app/api/slots/route.ts']) {
+      expect(readFileSync(file, 'utf8')).not.toContain('guardPhiAccess')
+    }
   })
 
-  test('invalidUuidDateRangeAndUnknownQueryAreValidationFailedBeforeDatabase', async () => {
+  test('providersWithoutServiceIdReturnValidationFailedInsteadOfUnfilteredProviders', async () => {
+    const response = await providersRoute(new Request('http://localhost/api/providers'))
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
+    expect(fakeClient).not.toHaveBeenCalled()
+  })
+
+  test('malformedProviderAndServiceUuidsReturnValidationFailedBeforeDatabase', async () => {
     for (const url of [
       'http://localhost/api/providers?serviceId=not-a-uuid',
       `http://localhost/api/slots?providerId=not-a-uuid&serviceId=${serviceId}&from=2099-01-01T00:00:00.000Z&to=2099-01-03T00:00:00.000Z`,
-      `http://localhost/api/slots?providerId=${providerId}&serviceId=${serviceId}&from=2099-01-03T00:00:00.000Z&to=2099-01-01T00:00:00.000Z`,
-      'http://localhost/api/services?unexpected=value',
+      `http://localhost/api/slots?providerId=${providerId}&serviceId=not-a-uuid&from=2099-01-01T00:00:00.000Z&to=2099-01-03T00:00:00.000Z`,
     ]) {
-      const route = url.includes('/providers') ? providersRoute : url.includes('/slots') ? slotsRoute : servicesRoute
+      const route = url.includes('/providers') ? providersRoute : slotsRoute
       const response = await route(new Request(url))
       expect(response.status).toBe(422)
       expect(await response.json()).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
@@ -134,8 +179,34 @@ describe('FR-11 discovery endpoints', () => {
     expect(fakeClient).not.toHaveBeenCalled()
   })
 
-  test('providerNotOfferingRequestedServiceReturnsServiceNotOffered', async () => {
+  test('reversedEqualOrMalformedDateRangesReturnValidationFailedBeforeDatabase', async () => {
+    for (const query of [
+      `providerId=${providerId}&serviceId=${serviceId}&from=2099-01-03T00:00:00.000Z&to=2099-01-01T00:00:00.000Z`,
+      `providerId=${providerId}&serviceId=${serviceId}&from=2099-01-03T00:00:00.000Z&to=2099-01-03T00:00:00.000Z`,
+      `providerId=${providerId}&serviceId=${serviceId}&from=not-a-date&to=2099-01-03T00:00:00.000Z`,
+    ]) {
+      const response = await slotsRoute(new Request(`http://localhost/api/slots?${query}`))
+      expect(response.status).toBe(422)
+      expect(await response.json()).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
+    }
+    expect(fakeClient).not.toHaveBeenCalled()
+  })
+
+  test('unknownQueryParametersReturnValidationFailedBeforeDatabase', async () => {
+    const response = await servicesRoute(new Request('http://localhost/api/services?unexpected=value'))
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
+    expect(fakeClient).not.toHaveBeenCalled()
+  })
+
+  test('providerServiceMismatchReturnsServiceNotOffered', async () => {
     const response = await slotsRoute(new Request(`http://localhost/api/slots?providerId=${providerId}&serviceId=66666666-6666-4666-8666-666666666666&from=2099-01-01T00:00:00.000Z&to=2099-01-03T00:00:00.000Z`))
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: 'service_not_offered', message: 'This provider does not offer that service.' })
+  })
+
+  test('unknownSlotProviderReturnsServiceNotOffered', async () => {
+    const response = await slotsRoute(new Request(`http://localhost/api/slots?providerId=77777777-7777-4777-8777-777777777777&serviceId=${serviceId}&from=2099-01-01T00:00:00.000Z&to=2099-01-03T00:00:00.000Z`))
     expect(response.status).toBe(422)
     expect(await response.json()).toEqual({ error: 'service_not_offered', message: 'This provider does not offer that service.' })
   })
@@ -156,6 +227,16 @@ test('noStatusPairMappingExistsOutsideLifecycleInAppOrComponents', () => {
     walk(root)
   }
   expect(offenders).toEqual([])
+})
+
+test('componentsNeverImportLifecycleAuthority', () => {
+  const importers: string[] = []
+  if (statSync('components', { throwIfNoEntry: false })) {
+    forEachFile('components', (file) => {
+      if (/scheduling\/lifecycle/.test(readFileSync(file, 'utf8'))) importers.push(file)
+    })
+  }
+  expect(importers).toEqual([])
 })
 
 function forEachFile(directory: string, visit: (file: string) => void): void {

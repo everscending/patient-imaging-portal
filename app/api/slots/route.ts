@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers'
 import { z } from 'zod'
-import type { Actor } from '../../../lib/access/guard'
+import type {} from '../../../lib/access/guard'
 import { anonClient } from '../../../lib/db/client'
 import { SESSION_COOKIE_NAME } from '../../../lib/session-cookie'
 import { parseQuery, uuidSchema } from '../../../lib/validation'
@@ -20,22 +20,22 @@ function sessionRequired(): Response {
   return errorResponse(401, 'session_required', 'Sign in to continue.')
 }
 
-async function authenticatedClient(): Promise<{ client: ReturnType<typeof anonClient>; actor: Actor } | null> {
+async function authenticatedClient(): Promise<ReturnType<typeof anonClient> | null> {
   const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
   if (!token) return null
   const client = anonClient(token)
   const { data, error } = await client.auth.getUser(token)
-  return error || !data.user ? null : { client, actor: { kind: 'patient', userId: data.user.id } }
+  return error || !data.user ? null : client
 }
 
 export async function GET(request: Request): Promise<Response> {
   const parsed = parseQuery(SlotsQuerySchema, request)
   if (!parsed.ok) return parsed.response
 
-  const session = await authenticatedClient()
-  if (!session) return sessionRequired()
+  const client = await authenticatedClient()
+  if (!client) return sessionRequired()
 
-  const { data: offering, error: offeringError } = await session.client
+  const { data: offering, error: offeringError } = await client
     .from('provider_services')
     .select('provider_id')
     .eq('provider_id', parsed.value.providerId)
@@ -46,7 +46,7 @@ export async function GET(request: Request): Promise<Response> {
 
   // The service proves provider eligibility above. Slots themselves remain the
   // provider's one shared grid, and future is decided by this server clock.
-  const { data, error } = await session.client
+  const { data, error } = await client
     .from('slots')
     .select('id, starts_at, ends_at')
     .eq('provider_id', parsed.value.providerId)
