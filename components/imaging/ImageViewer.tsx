@@ -38,8 +38,12 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   const selected = images.find((image) => image.id === selectedImageId)
 
   useEffect(() => {
+    setSelectedImageId(firstImageId)
+  }, [firstImageId])
+
+  useEffect(() => {
     setFullLoaded(false)
-  }, [selectedImageId])
+  }, [selected?.id, selected?.url])
 
   const changeSelection = (imageId: string) => {
     setSelectedImageId(imageId)
@@ -58,16 +62,17 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   }
 
   return (
-    <section className="pip-image-viewer" data-testid="image-viewer" aria-label="Image viewer">
+    <section className={`pip-image-viewer pip-image-viewer--${variant}`} data-testid="image-viewer" aria-label="Image viewer">
       <div
         aria-label="Image canvas. Use arrow keys to pan, plus and minus to zoom."
         className="pip-image-canvas"
         data-testid="image-canvas"
+        aria-busy={Boolean(selected?.url) && !fullLoaded}
         onDoubleClick={() => changeZoom(ZOOM_STEP)}
         onKeyDown={(event) => {
           if (event.key === '+' || event.key === '=') { event.preventDefault(); changeZoom(ZOOM_STEP) }
           else if (event.key === '-') { event.preventDefault(); changeZoom(-ZOOM_STEP) }
-          else if (event.key === '0' && variant === 'portal') { event.preventDefault(); reset() }
+          else if (event.key === '0') { event.preventDefault(); reset() }
           else if (event.key === 'ArrowLeft') { event.preventDefault(); panBy(-PAN_STEP, 0) }
           else if (event.key === 'ArrowRight') { event.preventDefault(); panBy(PAN_STEP, 0) }
           else if (event.key === 'ArrowUp') { event.preventDefault(); panBy(0, -PAN_STEP) }
@@ -77,7 +82,10 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
           event.currentTarget.setPointerCapture(event.pointerId)
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
           if (pointers.current.size === 1) dragOrigin.current = { x: event.clientX, y: event.clientY }
-          if (pointers.current.size === 2) pinchOrigin.current = { distance: pinchDistance(), zoom }
+          if (pointers.current.size === 2) {
+            const distance = pinchDistance()
+            pinchOrigin.current = distance > 0 ? { distance, zoom } : null
+          }
         }}
         onPointerMove={(event) => {
           if (!pointers.current.has(event.pointerId)) return
@@ -100,8 +108,10 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
             alt=""
             className="pip-viewer-image pip-viewer-thumb"
             data-testid="image-thumbnail"
+            height={selected.height}
             src={selected.thumbUrl}
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            width={selected.width}
           />
         )}
         {selected?.url && (
@@ -109,9 +119,11 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
             alt={`Study image ${selected.ordinal}`}
             className="pip-viewer-image pip-viewer-full"
             data-testid="image-full"
+            height={selected.height}
             onLoad={() => setFullLoaded(true)}
             src={selected.url}
             style={{ opacity: fullLoaded ? 1 : 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            width={selected.width}
           />
         )}
         {!fullLoaded && <p className="pip-viewer-loading" data-testid="image-loading" role="status">Loading full image…</p>}
@@ -129,8 +141,9 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         .pip-image-viewer { display: grid; gap: 0.5rem; max-width: 100%; }
         .pip-image-canvas {
           position: relative; display: grid; place-items: center; min-width: 0; min-height: min(65vh, 34rem);
-          overflow: hidden; touch-action: none; background: var(--pip-color-base-content); cursor: grab;
+          overflow: hidden; touch-action: none; background: var(--pip-color-base-200); cursor: grab;
         }
+        .pip-image-viewer--portal .pip-image-canvas { background: var(--pip-color-base-content); }
         .pip-image-canvas:focus-visible { outline: 3px solid var(--pip-color-accent); outline-offset: 2px; }
         .pip-viewer-image { position: absolute; max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity 120ms linear; }
         .pip-viewer-thumb { filter: blur(1px); transform: scale(1.01); }

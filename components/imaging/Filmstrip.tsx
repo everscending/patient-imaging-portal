@@ -27,7 +27,7 @@ export function Filmstrip({ images, selectedImageId, onSelect }: FilmstripProps)
           type="button"
         >
           {image.thumbUrl ? (
-            <img alt="" className="pip-filmstrip-thumbnail" src={image.thumbUrl} />
+            <img alt="" className="pip-filmstrip-thumbnail" loading="lazy" src={image.thumbUrl} />
           ) : (
             <span aria-hidden="true">{image.ordinal}</span>
           )}
