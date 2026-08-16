@@ -102,6 +102,16 @@ export function generateSlots(input: {
     return { ...window, startsSeconds, endsSeconds }
   })
 
+  for (let i = 0; i < windows.length; i++) {
+    for (let j = i + 1; j < windows.length; j++) {
+      const a = windows[i]!
+      const b = windows[j]!
+      if (a.weekday === b.weekday && a.startsSeconds < b.endsSeconds && b.startsSeconds < a.endsSeconds) {
+        throw new Error(`working-hours windows overlap on weekday ${a.weekday}`)
+      }
+    }
+  }
+
   // Rejected before any walk begins, the same as every other input — an
   // unparseable or backwards block would otherwise silently remove nothing
   // (FR-10: blocked time must never come back as bookable).
@@ -187,6 +197,76 @@ export function defaultHorizon(today: string): { fromDate: string; toDate: strin
   return { fromDate: today, toDate: addDaysToDate(today, config.slotHorizonDays) }
 }
 
+export class AvailabilityValidationError extends Error {
+  constructor() {
+    super('availability input is invalid')
+    this.name = 'AvailabilityValidationError'
+  }
+}
+
+type AvailabilityRow = { time_zone: string; slot_minutes: number }
+type WorkingHourRow = { weekday: number; starts_local: string; ends_local: string }
+type BlockRow = { id: string; starts_at: string; ends_at: string; reason: string | null }
+
+async function callerClient() {
+  const [{ cookies }, { anonClient }, { SESSION_COOKIE_NAME }] = await Promise.all([
+    import('next/headers'),
+    import('../db/client'),
+    import('../session-cookie'),
+  ])
+  const cookieStore = await cookies()
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (!token) throw new Error('availability: authenticated session is unavailable')
+  return anonClient(token)
+}
+
+export async function resolveScheduleActor(userId: string): Promise<
+  { kind: 'provider'; userId: string } | { kind: 'admin'; userId: string } | { kind: 'patient'; userId: string }
+> {
+  const client = await callerClient()
+  const [provider, admin] = await Promise.all([
+    client.from('providers').select('id').eq('user_id', userId).maybeSingle(),
+    client.from('staff_admins').select('id').eq('user_id', userId).maybeSingle(),
+  ])
+  if (provider.error || admin.error) throw new Error('availability: failed to resolve account role')
+  if (provider.data) return { kind: 'provider', userId }
+  if (admin.data) return { kind: 'admin', userId }
+  return { kind: 'patient', userId }
+}
+
+export async function getAvailability(providerId: string): Promise<{
+  timeZone: string
+  slotMinutes: number
+  workingHours: WorkingHour[]
+  blocks: Array<{ id: string; startsAt: string; endsAt: string; reason: string | null }>
+}> {
+  const client = await callerClient()
+  const [providerResult, hoursResult, blocksResult] = await Promise.all([
+    client.from('providers').select('time_zone, slot_minutes').eq('id', providerId).maybeSingle(),
+    client.from('working_hours').select('weekday, starts_local, ends_local').eq('provider_id', providerId).order('weekday').order('starts_local'),
+    client.from('availability_blocks').select('id, starts_at, ends_at, reason').eq('provider_id', providerId).order('starts_at'),
+  ])
+  if (providerResult.error || hoursResult.error || blocksResult.error || !providerResult.data) {
+    throw new Error('availability: failed to read provider availability')
+  }
+  const provider = providerResult.data as AvailabilityRow
+  return {
+    timeZone: provider.time_zone,
+    slotMinutes: provider.slot_minutes,
+    workingHours: ((hoursResult.data ?? []) as WorkingHourRow[]).map((row) => ({
+      weekday: row.weekday,
+      startsLocal: row.starts_local.slice(0, 5),
+      endsLocal: row.ends_local.slice(0, 5),
+    })),
+    blocks: ((blocksResult.data ?? []) as BlockRow[]).map((row) => ({
+      id: row.id,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      reason: row.reason,
+    })),
+  }
+}
+
 /**
  * Accept-and-flag (ADR-0006). Removes only genuinely free time, regenerates,
  * recomputes out_of_hours on every live appointment, never rejects the edit.
@@ -207,6 +287,80 @@ export async function applyAvailability(input: {
     patientRef: string
   }>
 }> {
-  void input
-  throw new Error('applyAvailability is implemented by T36 (JOR-242 / T35 only implements generateSlots).')
+  const { recordAuditEvent } = await import('../audit/events')
+  const client = await callerClient()
+  const { data: providerData, error: providerError } = await client
+    .from('providers')
+    .select('time_zone')
+    .eq('id', input.providerId)
+    .maybeSingle()
+  if (providerError || !providerData) throw new Error('availability: provider could not be read')
+
+  const timeZone = (providerData as { time_zone: string }).time_zone
+  const today = zones.toLocal(timeZone, new Date()).date
+  const horizon = defaultHorizon(today)
+  let slots: Array<{ startsAt: string; endsAt: string }>
+  try {
+    slots = generateSlots({
+      timeZone,
+      slotMinutes: input.slotMinutes,
+      workingHours: input.workingHours,
+      blocks: input.blocks,
+      ...horizon,
+    })
+  } catch {
+    throw new AvailabilityValidationError()
+  }
+
+  const from = zones.zonedTimeToInstant(timeZone, horizon.fromDate, '00:00:00').toISOString()
+  const afterHorizon = addDaysToDate(horizon.toDate, 1)
+  const to = zones.zonedTimeToInstant(timeZone, afterHorizon, '00:00:00').toISOString()
+  const slotRanges = slots.map((slot) => `[${slot.startsAt},${slot.endsAt})`)
+
+  const { data, error } = await client.rpc('apply_provider_availability', {
+    p_provider_id: input.providerId,
+    p_slot_minutes: input.slotMinutes,
+    p_working_hours: input.workingHours,
+    p_blocks: input.blocks,
+    p_from: from,
+    p_to: to,
+    p_slots: slotRanges,
+  })
+  if (error) throw new Error('availability: transactional write failed')
+
+  const raw = (Array.isArray(data) ? data[0] : data) as
+    | { removed_open_slots: number; generated_open_slots: number; preserved_out_of_hours: unknown }
+    | null
+  if (!raw) throw new Error('availability: transactional write returned no result')
+  const preserved = raw.preserved_out_of_hours as Array<{
+    appointmentId: string
+    startsAt: string
+    endsAt: string
+    patientRef: string
+  }>
+
+  await recordAuditEvent({
+    actorKind: 'account',
+    actorRef: input.actorUserId,
+    action: 'availability.update',
+    targetKind: 'provider',
+    targetId: input.providerId,
+    outcome: 'granted',
+  })
+  for (const collision of preserved) {
+    await recordAuditEvent({
+      actorKind: 'account',
+      actorRef: input.actorUserId,
+      action: 'availability.collision',
+      targetKind: 'appointment',
+      targetId: collision.appointmentId,
+      outcome: 'granted',
+    })
+  }
+
+  return {
+    removedOpenSlots: raw.removed_open_slots,
+    generatedOpenSlots: raw.generated_open_slots,
+    preservedOutOfHours: preserved,
+  }
 }
