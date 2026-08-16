@@ -57,9 +57,11 @@ export function CineControls({
             type="range"
             min="0"
             max={maximumFrame}
+            step="1"
             value={Math.min(currentFrame, maximumFrame)}
             onChange={(event) => onFrameChange(Number(event.target.value))}
             aria-label="Frame scrubber"
+            aria-valuetext={`Frame ${currentFrame + 1} of ${frameCount}`}
           />
           <span className="cine-controls__gap-markers" aria-hidden="true">
             {unavailableFrames.map((frame) => (

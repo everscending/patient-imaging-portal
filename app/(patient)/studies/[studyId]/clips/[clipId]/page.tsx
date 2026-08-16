@@ -7,6 +7,16 @@ import type { CineViewerProps } from '@/components/imaging/CineViewer'
 
 type Clip = CineViewerProps['clip']
 
+function isFrame(value: unknown): value is Clip['frames'][number] {
+  if (!value || typeof value !== 'object') return false
+  const frame = value as Partial<Clip['frames'][number]>
+  return (
+    Number.isInteger(frame.index) &&
+    typeof frame.available === 'boolean' &&
+    (typeof frame.url === 'string' || frame.url === null || frame.url === undefined)
+  )
+}
+
 function isClip(value: unknown): value is Clip {
   if (!value || typeof value !== 'object') return false
   const clip = value as Partial<Clip>
@@ -15,7 +25,8 @@ function isClip(value: unknown): value is Clip {
     typeof clip.frameCount === 'number' &&
     typeof clip.defaultFps === 'number' &&
     typeof clip.expiresAt === 'string' &&
-    Array.isArray(clip.frames)
+    Array.isArray(clip.frames) &&
+    clip.frames.every(isFrame)
   )
 }
 
@@ -27,30 +38,41 @@ export default function CineClipPage() {
 
   useEffect(() => {
     let active = true
-    void fetch(`/api/studies/${params.studyId}/clips/${params.clipId}`, { cache: 'no-store' }).then(async (response) => {
-      if (!active) return
-      if (response.status === 401) {
-        router.replace('/login')
-        return
+    setClip(null)
+    setError(null)
+
+    async function loadClip(): Promise<void> {
+      try {
+        const response = await fetch(`/api/studies/${params.studyId}/clips/${params.clipId}`, { cache: 'no-store' })
+        if (!active) return
+        if (response.status === 401) {
+          router.replace('/login')
+          return
+        }
+        if (!response.ok) {
+          setError('This cine clip is unavailable.')
+          return
+        }
+        const payload: unknown = await response.json()
+        if (!active) return
+        if (!isClip(payload)) {
+          setError('This cine clip is unavailable.')
+          return
+        }
+        setClip({
+          ...payload,
+          frames: payload.frames.map((frame) => ({
+            index: frame.index,
+            url: typeof frame.url === 'string' ? frame.url : null,
+            available: frame.available,
+          })),
+        })
+      } catch {
+        if (active) setError('This cine clip is unavailable.')
       }
-      if (!response.ok) {
-        setError('This cine clip is unavailable.')
-        return
-      }
-      const payload: unknown = await response.json()
-      if (!isClip(payload)) {
-        setError('This cine clip is unavailable.')
-        return
-      }
-      setClip({
-        ...payload,
-        frames: payload.frames.map((frame) => ({
-          index: frame.index,
-          url: typeof frame.url === 'string' ? frame.url : null,
-          available: frame.available === true,
-        })),
-      })
-    })
+    }
+
+    void loadClip()
     return () => {
       active = false
     }

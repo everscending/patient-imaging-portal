@@ -18,7 +18,7 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
   const [currentFrame, setCurrentFrame] = useState(0)
   const [fps, setFps] = useState(clip.defaultFps)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [imageLoading, setImageLoading] = useState(true)
+  const [loadedFrameIndex, setLoadedFrameIndex] = useState<number | null>(null)
   const framesByIndex = useMemo(() => new Map(clip.frames.map((frame) => [frame.index, frame])), [clip.frames])
   const unavailableFrames = useMemo(
     () => Array.from({ length: clip.frameCount }, (_, index) => index).filter((index) => framesByIndex.get(index)?.available === false),
@@ -26,6 +26,7 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
   )
   const frame = framesByIndex.get(currentFrame)
   const unavailable = frame?.available === false
+  const imageLoading = !unavailable && loadedFrameIndex !== currentFrame
 
   function advance(direction: 1 | -1): void {
     setCurrentFrame((index) => (index + direction + clip.frameCount) % clip.frameCount)
@@ -33,13 +34,11 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
 
   useEffect(() => {
     if (!isPlaying || clip.frameCount < 1) return
-    const timer = window.setInterval(() => advance(1), 1000 / fps)
+    const timer = window.setInterval(() => {
+      setCurrentFrame((index) => (index + 1) % clip.frameCount)
+    }, 1000 / fps)
     return () => window.clearInterval(timer)
   }, [clip.frameCount, fps, isPlaying])
-
-  useEffect(() => {
-    setImageLoading(true)
-  }, [currentFrame])
 
   return (
     <div className="cine-viewer" data-testid="cine-viewer">
@@ -50,7 +49,12 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
           </p>
         ) : frame?.url ? (
           <>
-            <img src={frame.url} alt={`Cine frame ${currentFrame + 1}`} onLoad={() => setImageLoading(false)} />
+            <img
+              key={currentFrame}
+              src={frame.url}
+              alt={`Cine frame ${currentFrame + 1}`}
+              onLoad={() => setLoadedFrameIndex(currentFrame)}
+            />
             {imageLoading ? <p className="cine-viewer__loading" role="status">Loading frame…</p> : null}
           </>
         ) : (

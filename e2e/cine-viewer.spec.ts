@@ -36,7 +36,9 @@ async function signInLinkedPatient(page: Page): Promise<void> {
 }
 
 async function openClip(page: Page, payload: Manifest): Promise<void> {
-  await page.route(`**/api/studies/${STUDY_ID}/clips/${CLIP_ID}`, (route) =>
+  const apiPattern = `**/api/studies/${STUDY_ID}/clips/${CLIP_ID}`
+  await page.unroute(apiPattern)
+  await page.route(apiPattern, (route) =>
     route.fulfill({ contentType: 'application/json', body: JSON.stringify(payload) }),
   )
   await page.goto(`/studies/${STUDY_ID}/clips/${CLIP_ID}`)
@@ -50,6 +52,16 @@ test.describe.serial('cine viewer', () => {
 
   test('mandatory adversarial: apiDrivenGaps_continuePlaybackWithCorrectDenominatorAndMarkers', async ({ page }) => {
     await signInLinkedPatient(page)
+    await openClip(page, manifest([
+      { index: 0, available: true, url: '/missing-cine-frame.svg' },
+      { index: 1, available: false },
+    ], 1))
+    await expect(page.getByText('Loading frame…', { exact: true })).toBeVisible()
+    await expect(page.locator('.cine-viewer__frame img')).toHaveCount(1)
+    await expect(page.getByTestId('cine-frame-gap')).toHaveCount(0)
+    await expect(page.getByText('1 of 2 frames unavailable — playback continues', { exact: true })).toBeVisible()
+    await expect(page.locator('.cine-controls__gap-markers i')).toHaveCount(1)
+
     await openClip(page, manifest([
       { index: 0, available: false },
       { index: 1, available: false },
@@ -71,10 +83,14 @@ test.describe.serial('cine viewer', () => {
     await expect(page.getByTestId('cine-fps')).toHaveValue('17')
     await expect(page.getByRole('button', { name: 'Share' })).toHaveCount(0)
     await page.getByTestId('cine-next').click()
-    await page.getByTestId('cine-play').click()
+    await page.getByTestId('cine-fps').selectOption('24')
     await page.setViewportSize({ width: 844, height: 390 })
     await expect(page.getByText('Frame 2 of 2', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('cine-fps')).toHaveValue('24')
+    await page.getByTestId('cine-play').click()
+    await page.setViewportSize({ width: 390, height: 844 })
     await expect(page.getByTestId('cine-play')).toHaveText('Pause')
+    await expect(page.getByTestId('cine-fps')).toHaveValue('24')
     const frame = await page.locator('.cine-viewer__frame').boundingBox()
     const controls = await page.locator('.cine-controls').boundingBox()
     expect(controls!.y).toBeGreaterThanOrEqual(frame!.y + frame!.height)
@@ -88,8 +104,19 @@ test.describe.serial('cine viewer', () => {
     await page.getByTestId('cine-next').focus()
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('cine-frame-gap')).toHaveText('Frame 1 unavailable')
-    for (const id of ['cine-prev', 'cine-play', 'cine-next'] as const) {
-      const box = await page.getByTestId(id).boundingBox()
+    await expect(page.getByRole('button', { name: 'Previous frame' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Play playback' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Next frame' })).toBeVisible()
+    await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 2 of 2')
+    await expect(page.getByRole('combobox', { name: 'Playback rate' })).toBeVisible()
+    for (const control of [
+      page.getByTestId('cine-prev'),
+      page.getByTestId('cine-play'),
+      page.getByTestId('cine-next'),
+      page.getByRole('slider', { name: 'Frame scrubber' }),
+      page.getByTestId('cine-fps'),
+    ]) {
+      const box = await control.boundingBox()
       expect(box!.width).toBeGreaterThanOrEqual(44)
       expect(box!.height).toBeGreaterThanOrEqual(44)
     }
