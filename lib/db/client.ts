@@ -23,8 +23,9 @@ export function anonClient(accessToken: string): SupabaseClient {
   })
 }
 
-/** Service role. Legal in exactly three places: FR-2 identity verification,
- *  share-token resolution, and the reminder job. Nowhere else. */
+/** Service role. Legal in FR-2 identity verification, share-token resolution,
+ *  the reminder job, and the audit writer's single-row unauthenticated
+ *  fallback. Nowhere else. */
 export function serviceClient(): SupabaseClient {
   return createClient(config.supabaseUrl, config.supabaseServiceRoleKey)
 }

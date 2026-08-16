@@ -1,17 +1,11 @@
 // tests/audit/events.test.ts — the audit writer's own tests (JOR-238).
 //
-// lib/audit/events.ts's only production dependencies are lib/db/client.ts's
-// anonClient() and next/headers's cookies() (recordAuditEvent's pinned
-// signature carries no accessToken parameter, so it reads the caller's
-// session cookie itself, the same way middleware.ts reads it off a request).
-// anonClient() itself talks to Supabase's REST layer. There is no PostgREST
-// server in this repo's test harness (tests/setup/postgres.ts starts a bare
-// postgres:16-alpine container for schema-level tests) and this ticket has no
-// live route to exercise one against (ADR-0012, "No live-app contact in this
-// ticket"). So — exactly like tests/notify/email.test.ts stubs the Resend
-// SDK — this file stubs lib/db/client.ts's anonClient() with an in-memory
-// fake table, and next/headers's cookies() with a fake session cookie, and
-// asserts against those.
+// lib/audit/events.ts selects among lib/db/client.ts's caller-scoped,
+// authentication, and service-role clients, then writes through Supabase's
+// REST layer. There is no PostgREST server in this repo's test harness
+// (tests/setup/postgres.ts starts bare postgres:16-alpine), so this file
+// replaces that external boundary with an in-memory audit table and replaces
+// next/headers's cookies() with a fake session cookie.
 //
 // Bullet → test function (this ticket's "Mandatory adversarial tests"):
 //   an action string outside the 22-value set, rejected at the type boundary
@@ -50,9 +44,12 @@ type FakeAuditRow = Record<string, unknown>
 const {
   auditRows,
   anonClientMock,
+  serviceClientMock,
+  authClientMock,
   resetFakeAuditTable,
   setInsertBehavior,
   setCallerHasSession,
+  setSessionTokenValid,
   hasCallerSession,
   FAKE_SESSION_COOKIE_NAME,
   FAKE_ACCESS_TOKEN,
@@ -60,6 +57,7 @@ const {
   const rows: FakeAuditRow[] = []
   let behavior: 'ok' | 'pg-error' | 'throw' = 'ok'
   let callerHasSession = true
+  let sessionTokenValid = true
   // Must match lib/session-cookie.ts's SESSION_COOKIE_NAME — kept as a
   // literal here rather than an import, since a vi.mock factory can only see
   // names hoisted alongside it, not the module's regular top-level imports.
@@ -73,6 +71,7 @@ const {
         async insert(row: FakeAuditRow) {
           if (behavior === 'throw') throw new Error('simulated network failure')
           if (behavior === 'pg-error') return { error: { message: 'simulated postgres failure' } }
+          if (!sessionTokenValid) return { error: { message: 'invalid session JWT' } }
           rows.push(row)
           return { error: null }
         },
@@ -80,19 +79,46 @@ const {
     },
   }))
 
+  const serviceClientMock = vi.fn(() => ({
+    from(table: string) {
+      if (table !== 'audit_events') throw new Error(`fake client: unexpected table "${table}"`)
+      return {
+        async insert(row: FakeAuditRow) {
+          rows.push(row)
+          return { error: null }
+        },
+      }
+    },
+  }))
+
+  const authClientMock = vi.fn(() => ({
+    auth: {
+      async getUser(token: string) {
+        if (!sessionTokenValid || token !== accessToken) return { data: { user: null }, error: { message: 'invalid token' } }
+        return { data: { user: { id: 'session-user' } }, error: null }
+      },
+    },
+  }))
+
   return {
     auditRows: rows,
     anonClientMock,
+    serviceClientMock,
+    authClientMock,
     resetFakeAuditTable: () => {
       rows.length = 0
       behavior = 'ok'
       callerHasSession = true
+      sessionTokenValid = true
     },
     setInsertBehavior: (next: 'ok' | 'pg-error' | 'throw') => {
       behavior = next
     },
     setCallerHasSession: (next: boolean) => {
       callerHasSession = next
+    },
+    setSessionTokenValid: (next: boolean) => {
+      sessionTokenValid = next
     },
     // A function, not a plain value, so the next/headers mock factory below
     // (hoisted alongside this block) reads the live flag on every call
@@ -104,9 +130,9 @@ const {
 })
 
 vi.mock('../../lib/db/client', () => ({
-  serviceClient: vi.fn(),
+  serviceClient: serviceClientMock,
   anonClient: anonClientMock,
-  authClient: vi.fn(),
+  authClient: authClientMock,
 }))
 
 // lib/session-cookie.ts itself imports lib/config.ts, which requires four
@@ -139,6 +165,8 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 beforeEach(() => {
   resetFakeAuditTable()
   anonClientMock.mockClear()
+  serviceClientMock.mockClear()
+  authClientMock.mockClear()
 })
 
 afterEach(() => {
@@ -175,6 +203,14 @@ describe('AC: recordAuditEvent appends one row inside the pinned action/outcome 
   test('recordAuditEventWritesThroughAnonClientWithTheCallerSessionToken', async function recordAuditEventWritesThroughAnonClientWithTheCallerSessionToken() {
     await recordAuditEvent(baseInput())
     expect(anonClientMock).toHaveBeenCalledWith(FAKE_ACCESS_TOKEN)
+    expect(serviceClientMock).not.toHaveBeenCalled()
+  })
+
+  test('authenticatedDeniedEventRemainsCallerScoped', async function authenticatedDeniedEventRemainsCallerScoped() {
+    await recordAuditEvent(baseInput({ outcome: 'denied' }))
+    expect(anonClientMock).toHaveBeenCalledWith(FAKE_ACCESS_TOKEN)
+    expect(serviceClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(1)
   })
 
   test('outcomeOutsideGrantedDeniedRejectedAtTypeBoundary', function outcomeOutsideGrantedDeniedRejectedAtTypeBoundary() {
@@ -311,12 +347,43 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
     expect(errorSpy).toHaveBeenCalledTimes(1)
   })
 
-  test('aCallWithNoCallerSessionCookieIsLoggedAndSwallowedNotRethrown', async function aCallWithNoCallerSessionCookieIsLoggedAndSwallowedNotRethrown() {
+  test('missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
+    setCallerHasSession(false)
+    await expect(recordAuditEvent(baseInput({ outcome: 'denied' }))).resolves.toBeUndefined()
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ outcome: 'denied' })
+  })
+
+  test('invalidSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function invalidSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
+    setSessionTokenValid(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordAuditEvent(baseInput({ outcome: 'denied' }))).resolves.toBeUndefined()
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ outcome: 'denied' })
+  })
+
+  test('missingSessionGrantedAccountEventCannotUseServiceRole', async function missingSessionGrantedAccountEventCannotUseServiceRole() {
     setCallerHasSession(false)
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
+    await expect(recordAuditEvent(baseInput({ outcome: 'granted' }))).resolves.toBeUndefined()
     expect(errorSpy).toHaveBeenCalledTimes(1)
     expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(0)
+  })
+
+  test('missingSessionSystemEventCannotUseServiceRole', async function missingSessionSystemEventCannotUseServiceRole() {
+    setCallerHasSession(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordAuditEvent(baseInput({ actorKind: 'system', actorRef: null }))).resolves.toBeUndefined()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).not.toHaveBeenCalled()
     expect(auditRows).toHaveLength(0)
   })
 })

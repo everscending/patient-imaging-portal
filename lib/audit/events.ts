@@ -3,7 +3,7 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 
-import { anonClient } from '../db/client'
+import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
 // §3's CHECK constraint carries the same 22 strings, verbatim
@@ -78,18 +78,33 @@ function logWriteFailure(action: AuditAction, error: string): void {
 // The pinned recordAuditEvent signature carries no accessToken parameter, so
 // the caller's session is read off the request the same way middleware.ts
 // reads it — the session cookie (lib/session-cookie.ts) — except here there
-// is no NextRequest in scope, so it comes from next/headers instead. This is
-// the ticket's non-relitigable design decision: writes go through the
-// caller's own client (P2 anonClient), never serviceClient(), so the
-// audit_events append-only grant (§3, §4) is what's actually enforcing
-// append-only — not the accident of nothing calling UPDATE/DELETE yet.
-async function callerAccessToken(): Promise<string> {
+// is no NextRequest in scope, so it comes from next/headers instead.
+async function callerAccessToken(): Promise<string | null> {
   const cookieStore = await cookies()
-  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
-  if (!token) {
-    throw new Error('recordAuditEvent: no caller session token available')
+  return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
+}
+
+function serviceRoleAllowed(input: RecordAuditEventInput): boolean {
+  return input.actorKind === 'account' && input.outcome === 'denied'
+}
+
+async function writeClient(input: RecordAuditEventInput): Promise<WriteClient> {
+  // Share recipients are intentionally unauthenticated. Select the elevated
+  // single-row writer before looking at any ambient account cookie.
+  if (input.actorKind === 'share_recipient') return serviceClient()
+
+  const accessToken = await callerAccessToken()
+  if (accessToken) {
+    try {
+      const { data, error } = await authClient().auth.getUser(accessToken)
+      if (!error && data.user) return anonClient(accessToken)
+    } catch {
+      // A caller could not be established. Only the explicitly eligible
+      // denied-account case below may cross to the single-row fallback.
+    }
   }
-  return token
+  if (serviceRoleAllowed(input)) return serviceClient()
+  throw new Error('recordAuditEvent: no authenticated caller available for this audit event')
 }
 
 /**
@@ -107,8 +122,7 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
   }
 
   try {
-    const accessToken = await callerAccessToken()
-    const client: WriteClient = anonClient(accessToken)
+    const client = await writeClient(input)
     const { error } = await client.from('audit_events').insert({
       actor_kind: input.actorKind,
       actor_ref: input.actorRef,
