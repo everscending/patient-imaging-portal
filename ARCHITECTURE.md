@@ -1935,7 +1935,22 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test` + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+| `ui` | `api` + `playwright test --project=product` + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+
+The Playwright suite has two execution classes. The `product` project contains
+the ordinary browser checks and runs on every push and pull request through the
+cumulative `ui` gate. The `certification` project contains the expensive E0/E1
+fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
+`main`, nightly, or by manual dispatch. E0 invokes the cumulative `ui` gate once
+inside its clean checkout and confirms the emitted step list contains TypeScript,
+ESLint, unit, integration, product Playwright, and the E2 report validation; it
+never serially invokes the three cumulative tiers or includes itself recursively.
+
+Both workflows normalize concurrency to the source branch and cancel obsolete
+runs. `scripts/gate.sh` emits a duration for each command, while the workflows
+record dependency, browser, and certification setup durations in the GitHub job
+summary. The Playwright browser cache key contains both `package-lock.json` and
+the installed Playwright version.
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8

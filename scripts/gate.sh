@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # The repository's own definition of done (ARCHITECTURE.md §15).
-# CI, every lane, and every local check invoke this script and only this
-# script — no workflow or script calls tsc/eslint/vitest/playwright directly,
-# so CI and the lanes cannot drift apart (docs/adr/0012-phase-4-closures.md
-# removed the fourth `docs` tier; there are three: logic, api, ui).
+# Per-change CI, every lane, and every local product check invoke this script.
+# scripts/certify.sh is the one exception: it launches only the dedicated
+# Playwright certification project, whose nested E0 proof returns here for one
+# cumulative product UI gate. No other workflow or script calls the test tools
+# directly, so product CI and the lanes cannot drift apart
+# (docs/adr/0012-phase-4-closures.md removed the fourth `docs` tier; there are
+# three: logic, api, ui).
 set -euo pipefail
 
 VALID_TIERS="logic api ui"
@@ -43,10 +46,21 @@ step() {
   local override_var="GATE_FAKE_EXIT_${name}"
   local override="${!override_var-}"
   echo "[gate:${TIER}] ${name}: $*" >&2
+  local started=$SECONDS
+  local status
   if [[ -n "$override" ]]; then
-    return "$override"
+    status="$override"
+  elif "$@"; then
+    status=0
+  else
+    status=$?
   fi
-  "$@"
+  local duration=$((SECONDS - started))
+  echo "[gate:${TIER}] timing ${name}=${duration}s" >&2
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    echo "| ${name} | ${duration}s |" >> "$GITHUB_STEP_SUMMARY"
+  fi
+  return "$status"
 }
 
 run_logic() {
@@ -62,7 +76,7 @@ run_api() {
 
 run_ui() {
   run_api
-  step PLAYWRIGHT npx playwright test
+  step PLAYWRIGHT npx playwright test --project=product
   step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
 }
 

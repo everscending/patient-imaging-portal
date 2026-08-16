@@ -6,6 +6,16 @@ import { config } from './lib/config'
 export default defineConfig({
   testDir: './e2e',
   reporter: [['line'], ['json', { outputFile: 'test-results/playwright.json' }]],
+  projects: [
+    {
+      name: 'product',
+      testIgnore: /e[01]-wiring\.spec\.ts/,
+    },
+    {
+      name: 'certification',
+      testMatch: /e[01]-wiring\.spec\.ts/,
+    },
+  ],
   use: {
     baseURL: `http://localhost:${config.port}`,
   },
