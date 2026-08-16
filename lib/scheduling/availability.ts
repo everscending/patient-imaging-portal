@@ -220,20 +220,6 @@ async function callerClient() {
   return anonClient(token)
 }
 
-export async function resolveScheduleActor(userId: string): Promise<
-  { kind: 'provider'; userId: string } | { kind: 'admin'; userId: string } | { kind: 'patient'; userId: string }
-> {
-  const client = await callerClient()
-  const [provider, admin] = await Promise.all([
-    client.from('providers').select('id').eq('user_id', userId).maybeSingle(),
-    client.from('staff_admins').select('id').eq('user_id', userId).maybeSingle(),
-  ])
-  if (provider.error || admin.error) throw new Error('availability: failed to resolve account role')
-  if (provider.data) return { kind: 'provider', userId }
-  if (admin.data) return { kind: 'admin', userId }
-  return { kind: 'patient', userId }
-}
-
 export async function getAvailability(providerId: string): Promise<{
   timeZone: string
   slotMinutes: number
@@ -287,7 +273,6 @@ export async function applyAvailability(input: {
     patientRef: string
   }>
 }> {
-  const { recordAuditEvent } = await import('../audit/events')
   const client = await callerClient()
   const { data: providerData, error: providerError } = await client
     .from('providers')
@@ -319,6 +304,7 @@ export async function applyAvailability(input: {
 
   const { data, error } = await client.rpc('apply_provider_availability', {
     p_provider_id: input.providerId,
+    p_actor_user_id: input.actorUserId,
     p_slot_minutes: input.slotMinutes,
     p_working_hours: input.workingHours,
     p_blocks: input.blocks,
@@ -338,25 +324,6 @@ export async function applyAvailability(input: {
     endsAt: string
     patientRef: string
   }>
-
-  await recordAuditEvent({
-    actorKind: 'account',
-    actorRef: input.actorUserId,
-    action: 'availability.update',
-    targetKind: 'provider',
-    targetId: input.providerId,
-    outcome: 'granted',
-  })
-  for (const collision of preserved) {
-    await recordAuditEvent({
-      actorKind: 'account',
-      actorRef: input.actorUserId,
-      action: 'availability.collision',
-      targetKind: 'appointment',
-      targetId: collision.appointmentId,
-      outcome: 'granted',
-    })
-  }
 
   return {
     removedOpenSlots: raw.removed_open_slots,

@@ -12,12 +12,11 @@ const { guardMock, callerMock, getMock, applyMock, actorMock } = vi.hoisted(() =
 
 class FakeAvailabilityValidationError extends Error {}
 
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
+vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock, resolveScheduleActor: actorMock }))
 vi.mock('../../lib/access/identity', () => ({ resolveCallerId: callerMock }))
 vi.mock('../../lib/scheduling/availability', () => ({
   getAvailability: getMock,
   applyAvailability: applyMock,
-  resolveScheduleActor: actorMock,
   AvailabilityValidationError: FakeAvailabilityValidationError,
 }))
 
@@ -112,6 +111,14 @@ describe('PATCH /api/providers/:providerId/availability', () => {
     const response = await route.PATCH(patchRequest(validBody), context)
     expect(response.status).toBe(401)
     expect(guardMock).toHaveBeenCalledOnce()
+    expect(applyMock).not.toHaveBeenCalled()
+  })
+
+  test('authorization is resolved before a malformed body is disclosed', async () => {
+    callerMock.mockResolvedValue(null)
+    guardMock.mockResolvedValue({ ok: false, status: 401 })
+    const response = await route.PATCH(patchRequest({ out_of_hours: true }), context)
+    expect(response.status).toBe(401)
     expect(applyMock).not.toHaveBeenCalled()
   })
 

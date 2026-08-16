@@ -1,11 +1,10 @@
 import { z } from 'zod'
-import { guardPhiAccess } from '../../../../../lib/access/guard'
+import { guardPhiAccess, resolveScheduleActor } from '../../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../../lib/access/identity'
 import {
   applyAvailability,
   AvailabilityValidationError,
   getAvailability,
-  resolveScheduleActor,
 } from '../../../../../lib/scheduling/availability'
 import { parseBody, parseParams, uuidSchema } from '../../../../../lib/validation'
 import { errorResponse } from '../../../../../lib/validation/envelope'
@@ -77,10 +76,10 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
   const parsedParams = parseParams(ParamsSchema, await context.params)
   if (!parsedParams.ok) return parsedParams.response
-  const parsedBody = await parseBody(PatchSchema, request)
-  if (!parsedBody.ok) return parsedBody.response
   const authorization = await authorize(parsedParams.value.providerId)
   if (!authorization.ok) return authorization.response
+  const parsedBody = await parseBody(PatchSchema, request)
+  if (!parsedBody.ok) return parsedBody.response
 
   try {
     const result = await applyAvailability({

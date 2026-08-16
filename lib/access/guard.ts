@@ -121,6 +121,24 @@ async function callerAccessToken(): Promise<string | null> {
   return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
 }
 
+/** Resolves the authenticated account's schedule-facing role without trusting
+ * a role supplied by the request. Availability routes use the returned Actor
+ * for their single guard call. */
+export async function resolveScheduleActor(userId: string): Promise<
+  { kind: 'provider'; userId: string } | { kind: 'admin'; userId: string } | { kind: 'patient'; userId: string }
+> {
+  const token = await callerAccessToken()
+  if (!token) throw new Error('guard: authenticated session is unavailable')
+  const client = anonClient(token)
+  const [provider, admin] = await Promise.all([
+    fetchRow<ProviderRow>(client, 'providers', 'id', [['user_id', userId]]),
+    fetchRow<StaffAdminRow>(client, 'staff_admins', 'id', [['user_id', userId]]),
+  ])
+  if (provider) return { kind: 'provider', userId }
+  if (admin) return { kind: 'admin', userId }
+  return { kind: 'patient', userId }
+}
+
 async function decidePatientReport(client: Client, reportId: string, patientId: string): Promise<GuardResult> {
   const report = await fetchRow<ReportRow>(client, 'reports', 'id, patient_id, status', [
     ['id', reportId],

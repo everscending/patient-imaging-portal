@@ -5,6 +5,7 @@
 -- or UPDATE privilege on these tables.
 create or replace function apply_provider_availability(
   p_provider_id  uuid,
+  p_actor_user_id uuid,
   p_slot_minutes int,
   p_working_hours jsonb,
   p_blocks       jsonb,
@@ -38,10 +39,9 @@ begin
 
   -- The route guard is the user-facing ownership seam; the RPC repeats it so
   -- a caller cannot bypass that route by invoking PostgREST directly.
-  if session_user <> 'postgres'
-     and (auth.uid() is null
-       or not exists (select 1 from providers where id = p_provider_id and user_id = auth.uid())
-          and not is_admin()) then
+  if auth.uid() is null or p_actor_user_id is distinct from auth.uid()
+     or not exists (select 1 from providers where id = p_provider_id and user_id = auth.uid())
+        and not is_admin() then
     raise insufficient_privilege using message = 'availability target is not owned by caller';
   end if;
 
@@ -89,6 +89,16 @@ begin
    where a.provider_id = p_provider_id
      and a.status in ('requested', 'confirmed');
 
+  insert into audit_events (actor_kind, actor_ref, action, target_kind, target_id, outcome)
+  values ('account', p_actor_user_id::text, 'availability.update', 'provider', p_provider_id, 'granted');
+
+  insert into audit_events (actor_kind, actor_ref, action, target_kind, target_id, outcome)
+  select 'account', p_actor_user_id::text, 'availability.collision', 'appointment', a.id, 'granted'
+    from appointments a
+   where a.provider_id = p_provider_id
+     and a.status in ('requested', 'confirmed')
+     and a.out_of_hours;
+
   return query
   select v_removed,
          v_generated,
@@ -111,5 +121,5 @@ begin
      and a.out_of_hours;
 end $$;
 
-revoke all on function apply_provider_availability(uuid,int,jsonb,jsonb,timestamptz,timestamptz,tstzrange[]) from public;
-grant execute on function apply_provider_availability(uuid,int,jsonb,jsonb,timestamptz,timestamptz,tstzrange[]) to app_user;
+revoke all on function apply_provider_availability(uuid,uuid,int,jsonb,jsonb,timestamptz,timestamptz,tstzrange[]) from public;
+grant execute on function apply_provider_availability(uuid,uuid,int,jsonb,jsonb,timestamptz,timestamptz,tstzrange[]) to app_user;
