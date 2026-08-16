@@ -1,16 +1,14 @@
 'use client'
 
 export type ReportViewProps = {
-  report: {
-    id: string
-    studyId: string
-    studyDescription: string
-    patientRef: string
-    findings: string
-    impression: string
-    signedByName: string | null
-    signedAt: string | null
-  }
+  id: string
+  studyId: string
+  studyDescription: string
+  patientRef: string
+  findings: string
+  impression: string
+  signedByName: string | null
+  signedAt: string | null
   variant: 'portal' | 'shared'
 }
 
@@ -23,7 +21,17 @@ function signingTimestamp(value: string | null): string {
 }
 
 /** The sole structured-text renderer for portal and shared report views. */
-export function ReportView({ report, variant }: ReportViewProps) {
+export function ReportView({
+  id,
+  studyId,
+  studyDescription,
+  patientRef,
+  findings,
+  impression,
+  signedByName,
+  signedAt,
+  variant,
+}: ReportViewProps) {
   return (
     <article className="pip-report" data-testid="report-view">
       <style>{`
@@ -46,35 +54,35 @@ export function ReportView({ report, variant }: ReportViewProps) {
         <dl className="pip-report-header">
           <div className="pip-report-reference">
             <dt>Patient reference</dt>
-            <dd>{report.patientRef}</dd>
+            <dd>{patientRef}</dd>
           </div>
           <div className="pip-report-reference">
             <dt>Study reference</dt>
-            <dd>{report.studyDescription} ({report.studyId})</dd>
+            <dd>{studyDescription} ({studyId})</dd>
           </div>
           <div className="pip-report-reference">
             <dt>Signing provider</dt>
-            <dd>{report.signedByName ?? 'Not recorded'}</dd>
+            <dd>{signedByName ?? 'Not recorded'}</dd>
           </div>
           <div className="pip-report-reference">
             <dt>Signed</dt>
-            <dd>{signingTimestamp(report.signedAt)}</dd>
+            <dd>{signingTimestamp(signedAt)}</dd>
           </div>
         </dl>
       </header>
 
       <section className="pip-report-section" aria-labelledby="report-findings-heading" data-testid="report-findings">
         <h2 id="report-findings-heading">Findings</h2>
-        <p>{report.findings}</p>
+        <p>{findings}</p>
       </section>
       <section className="pip-report-section" aria-labelledby="report-impression-heading" data-testid="report-impression">
         <h2 id="report-impression-heading">Impression</h2>
-        <p>{report.impression}</p>
+        <p>{impression}</p>
       </section>
 
       {variant === 'portal' ? (
         <div className="pip-report-actions" aria-label="Report actions">
-          <a className="pip-report-action" href={`/shares?reportId=${encodeURIComponent(report.id)}`}>Share</a>
+          <a className="pip-report-action" href={`/shares?reportId=${encodeURIComponent(id)}`}>Share</a>
           <button className="pip-report-action pip-report-print" type="button" onClick={() => window.print()}>
             Print
           </button>

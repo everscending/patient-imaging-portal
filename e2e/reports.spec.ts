@@ -36,6 +36,7 @@ test.describe('JOR-218 reports', () => {
 
   test('oneRendererEnforcementIsPinned', async () => {
     const rendererPath = path.join(REPO_ROOT, 'lib/reports/ReportView.tsx')
+    const source = await readFile(rendererPath, 'utf8')
     const matchingFiles = execFileSync('rg', [
       '--files-with-matches',
       '--glob',
@@ -50,6 +51,7 @@ test.describe('JOR-218 reports', () => {
       .split('\n')
       .filter(Boolean)
     expect(matchingFiles).toEqual([rendererPath])
+    expect(source).toMatch(/export type ReportViewProps = \{[\s\S]*id: string[\s\S]*studyId: string[\s\S]*studyDescription: string[\s\S]*patientRef: string[\s\S]*findings: string[\s\S]*impression: string[\s\S]*signedByName: string \| null[\s\S]*signedAt: string \| null[\s\S]*variant: 'portal' \| 'shared'/)
   })
 
   test('reportRendererHasNoHexColoursOrUnsafeHtml', async () => {
@@ -88,6 +90,18 @@ test.describe('JOR-218 reports', () => {
     expect(reportText).not.toContain('1988-03-14')
     await expect(page.getByTestId('report-findings')).toContainText('No acute abnormality.')
     await expect(page.getByTestId('report-impression')).toContainText('Normal seeded study.')
+  })
+
+  test('reportUsesOneH1StructuredHeadingsAndKeyboardActions', async ({ page }) => {
+    await registerAndLink(page)
+    await page.goto(`/reports/${E2_SEEDED_REPORT_ID}`)
+    await expect(page.getByRole('heading', { level: 1, name: 'Report' })).toHaveCount(1)
+    await expect(page.getByRole('heading', { level: 2, name: 'Findings' })).toHaveCount(1)
+    await expect(page.getByRole('heading', { level: 2, name: 'Impression' })).toHaveCount(1)
+    await page.getByRole('link', { name: 'Share' }).focus()
+    await expect(page.getByRole('link', { name: 'Share' })).toBeFocused()
+    await page.getByRole('button', { name: 'Print' }).focus()
+    await expect(page.getByRole('button', { name: 'Print' })).toBeFocused()
   })
 
   test('sharedVariantOmitsNavigationShareAndPrint', async () => {

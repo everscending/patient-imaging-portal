@@ -11,7 +11,7 @@ type DetailPageProps = {
 }
 
 export default function ReportDetailPage({ params }: DetailPageProps) {
-  const [report, setReport] = useState<ReportViewProps['report'] | null>(null)
+  const [report, setReport] = useState<Omit<ReportViewProps, 'variant'> | null>(null)
   const [missing, setMissing] = useState(false)
   const [unavailable, setUnavailable] = useState(false)
 
@@ -28,7 +28,7 @@ export default function ReportDetailPage({ params }: DetailPageProps) {
         setUnavailable(true)
         return
       }
-      setReport((await response.json()) as ReportViewProps['report'])
+      setReport((await response.json()) as Omit<ReportViewProps, 'variant'>)
     })
     return () => {
       active = false
@@ -45,7 +45,7 @@ export default function ReportDetailPage({ params }: DetailPageProps) {
           <p role="alert">This report is temporarily unavailable.</p>
         </>
       ) : null}
-      {report ? <ReportView report={report} variant="portal" /> : null}
+      {report ? <ReportView {...report} variant="portal" /> : null}
     </main>
   )
 }
