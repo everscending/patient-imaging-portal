@@ -18,25 +18,31 @@ type Row = Record<string, unknown>
 
 const {
   reportRows,
+  fromTables,
   guardCalls,
   anonClientMock,
   guardPhiAccessMock,
   setGuardStatus,
   setSession,
+  setActorKind,
   getSession,
   resetFake,
   FAKE_ACCESS_TOKEN,
   FAKE_SESSION_COOKIE_NAME,
 } = vi.hoisted(() => {
   const rows: Row[] = []
+  const providerRows: Row[] = []
+  const adminRows: Row[] = []
+  const queriedTables: string[] = []
   const calls: Array<{ actor: unknown; target: unknown; action: unknown }> = []
   let guardStatus: 401 | 403 | 404 | null = null
   let session: { token: string | null; callerId: string | null } = { token: 'report-access-token', callerId: 'patient-account' }
   const token = 'report-access-token'
   const cookieName = 'pip_session'
 
-  function visibleRows(filters: Array<[string, unknown]>, ordered: boolean): Row[] {
-    let selected = rows.filter((row) => filters.every(([column, value]) => row[column] === value))
+  function visibleRows(table: string, filters: Array<[string, unknown]>, ordered: boolean): Row[] {
+    const tableRows = table === 'reports' ? rows : table === 'providers' ? providerRows : adminRows
+    let selected = tableRows.filter((row) => filters.every(([column, value]) => row[column] === value))
     // The fake is deliberately RLS-shaped: only rows explicitly marked as
     // visible reach this client, independently of a route's predicates.
     selected = selected.filter((row) => row.visible !== false)
@@ -48,7 +54,8 @@ const {
     void accessToken
     return {
     from(table: string) {
-      if (table !== 'reports') throw new Error(`unexpected table ${table}`)
+      if (!['reports', 'providers', 'staff_admins'].includes(table)) throw new Error(`unexpected table ${table}`)
+      queriedTables.push(table)
       const filters: Array<[string, unknown]> = []
       let ordered = false
       const query = {
@@ -67,12 +74,12 @@ const {
           return query
         },
         async maybeSingle() {
-          const selected = visibleRows(filters, ordered)
+          const selected = visibleRows(table, filters, ordered)
           return { data: selected[0] ?? null, error: null }
         },
         then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
           try {
-            resolve({ data: visibleRows(filters, ordered), error: null })
+            resolve({ data: visibleRows(table, filters, ordered), error: null })
           } catch (error) {
             reject(error)
           }
@@ -85,11 +92,16 @@ const {
 
   return {
     reportRows: rows,
+    fromTables: queriedTables,
     guardCalls: calls,
     anonClientMock: anon,
     guardPhiAccessMock: vi.fn(async (actor: unknown, target: unknown, action: unknown) => {
       calls.push({ actor, target, action })
-      return guardStatus === null ? { ok: true, patientId: 'patient-1' } : { ok: false, status: guardStatus }
+      if (guardStatus !== null) return { ok: false, status: guardStatus }
+      const reportId = (target as { kind?: string; id?: string }).kind === 'report' ? (target as { id?: string }).id : undefined
+      const report = rows.find((row) => row.id === reportId)
+      if ((actor as { kind?: string }).kind === 'patient' && report?.status === 'preliminary') return { ok: false, status: 404 }
+      return { ok: true, patientId: 'patient-1' }
     }),
     setGuardStatus: (status: 401 | 403 | 404 | null) => {
       guardStatus = status
@@ -97,8 +109,17 @@ const {
     setSession: (next: { token: string | null; callerId: string | null }) => {
       session = next
     },
+    setActorKind: (kind: 'patient' | 'provider' | 'admin', userId: string) => {
+      providerRows.length = 0
+      adminRows.length = 0
+      if (kind === 'provider') providerRows.push({ id: 'provider-1', user_id: userId })
+      if (kind === 'admin') adminRows.push({ id: 'admin-1', user_id: userId })
+    },
     resetFake: () => {
       rows.length = 0
+      providerRows.length = 0
+      adminRows.length = 0
+      queriedTables.length = 0
       calls.length = 0
       guardStatus = null
       session = { token, callerId: 'patient-account' }
@@ -133,7 +154,7 @@ vi.mock('next/headers', () => ({
   }),
 }))
 
-import { getReport, listReports } from '../../lib/reports/reports'
+import { listReports } from '../../lib/reports/reports'
 import { GET as listRoute } from '../../app/api/reports/route'
 import { GET as detailRoute } from '../../app/api/reports/[reportId]/route'
 
@@ -218,18 +239,28 @@ describe('reports', () => {
 
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested report could not be found.' })
-    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(fromTables).not.toContain('reports')
   })
 
   test('providerAndAdminCanReadPreliminary', async function providerAndAdminCanReadPreliminary() {
     seedPreliminary(REPORT_A)
 
-    const provider = await getReport({ kind: 'provider', userId: 'provider-account' }, FAKE_ACCESS_TOKEN, REPORT_A)
-    const admin = await getReport({ kind: 'admin', userId: 'admin-account' }, FAKE_ACCESS_TOKEN, REPORT_A)
+    configureSession({ token: FAKE_ACCESS_TOKEN, callerId: 'provider-account' })
+    setActorKind('provider', 'provider-account')
+    const provider = await detailRoute(new Request(`http://test/api/reports/${REPORT_A}`), { params: Promise.resolve({ reportId: REPORT_A }) })
 
-    expect(provider).toEqual({ ok: true, value: expect.objectContaining({ id: REPORT_A, signedAt: null, signedByName: null }) })
-    expect(admin).toEqual({ ok: true, value: expect.objectContaining({ id: REPORT_A, signedAt: null, signedByName: null }) })
-    expect(guardCalls.map((call) => call.target)).toEqual([{ kind: 'report', id: REPORT_A }, { kind: 'report', id: REPORT_A }])
+    configureSession({ token: FAKE_ACCESS_TOKEN, callerId: 'admin-account' })
+    setActorKind('admin', 'admin-account')
+    const admin = await detailRoute(new Request(`http://test/api/reports/${REPORT_A}`), { params: Promise.resolve({ reportId: REPORT_A }) })
+
+    expect(provider.status).toBe(200)
+    expect(admin.status).toBe(200)
+    expect(await provider.json()).toEqual(expect.objectContaining({ id: REPORT_A, signedAt: null, signedByName: null }))
+    expect(await admin.json()).toEqual(expect.objectContaining({ id: REPORT_A, signedAt: null, signedByName: null }))
+    expect(guardCalls).toEqual([
+      { actor: { kind: 'provider', userId: 'provider-account' }, target: { kind: 'report', id: REPORT_A }, action: 'report.view' },
+      { actor: { kind: 'admin', userId: 'admin-account' }, target: { kind: 'report', id: REPORT_A }, action: 'report.view' },
+    ])
   })
 
   test('malformedReportIdIsValidationFailed', async function malformedReportIdIsValidationFailed() {
