@@ -19,6 +19,8 @@ test.describe('JOR-211 image viewer acceptance and adversarial coverage', () => 
     expect(viewer).toContain('onDoubleClick')
     expect(viewer).toContain('touch-action: none')
     expect(viewer).toContain('onWheel')
+    expect(viewer).not.toContain('disabled={zoom <= MIN_ZOOM}')
+    expect(viewer).not.toContain('disabled={zoom >= MAX_ZOOM}')
   })
 
   test('variants_portalSurroundAndFilmstrip_sharedOnlyZoomAndPan', async function variants_portalSurroundAndFilmstrip_sharedOnlyZoomAndPan() {
@@ -46,6 +48,8 @@ test.describe('JOR-211 image viewer acceptance and adversarial coverage', () => 
     expect(viewer).toContain('onLoad={() => setFullLoaded(true)}')
     expect(viewer).not.toContain('disabled={!fullLoaded}')
     expect(viewer).toContain('aria-busy={Boolean(selected?.url) && !fullLoaded}')
+    expect(viewer).toContain('const refreshTimer = window.setTimeout(router.refresh')
+    expect(viewer).toContain('Date.parse(selected.expiresAt)')
     expect(filmstrip).toContain('loading="lazy"')
   })
 
@@ -55,6 +59,8 @@ test.describe('JOR-211 image viewer acceptance and adversarial coverage', () => 
     expect(viewer).toContain('background: var(--pip-color-base-content)')
     expect(viewer).toContain('min-width: var(--pip-tap-target)')
     expect(viewer).toContain('@media (max-width: 390px)')
+    expect(viewer).toContain('width: 100%; min-width: 0; max-width: 100%')
+    expect(filmstrip).toContain('max-width: 100%')
     expect(filmstrip).toContain('min-width: var(--pip-tap-target)')
     expect(viewer).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
     expect(filmstrip).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)

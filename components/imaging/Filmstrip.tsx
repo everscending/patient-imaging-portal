@@ -38,6 +38,8 @@ export function Filmstrip({ images, selectedImageId, onSelect }: FilmstripProps)
           display: flex;
           gap: 0.5rem;
           min-width: 0;
+          max-width: 100%;
+          box-sizing: border-box;
           overflow-x: auto;
           padding: 0.5rem;
           background: var(--pip-color-base-200);

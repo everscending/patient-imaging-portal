@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useRouter } from 'next/navigation'
 import { Filmstrip } from './Filmstrip'
 
 export type ImageViewerProps = {
@@ -24,6 +25,7 @@ function boundedZoom(value: number): number {
 }
 
 export function ImageViewer({ images, initialImageId, variant }: ImageViewerProps): JSX.Element {
+  const router = useRouter()
   const firstImageId = useMemo(
     () => images.find((image) => image.id === initialImageId)?.id ?? images[0]?.id,
     [images, initialImageId],
@@ -44,6 +46,16 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   useEffect(() => {
     setFullLoaded(false)
   }, [selected?.id, selected?.url])
+
+  // URLs are issued by the study API. Refresh the server-rendered manifest
+  // shortly before the current selection expires; this component never signs
+  // or constructs an imaging URL itself.
+  useEffect(() => {
+    if (!selected?.expiresAt) return
+    const millisecondsUntilRefresh = Date.parse(selected.expiresAt) - Date.now() - 60_000
+    const refreshTimer = window.setTimeout(router.refresh, Math.max(0, millisecondsUntilRefresh))
+    return () => window.clearTimeout(refreshTimer)
+  }, [router, selected?.expiresAt])
 
   const changeSelection = (imageId: string) => {
     setSelectedImageId(imageId)
@@ -130,15 +142,15 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         {!selected && <p className="pip-viewer-loading" role="status">No images are available for this study.</p>}
       </div>
       <div aria-label="Image controls" className="pip-viewer-controls">
-        <button aria-label="Zoom out" data-testid="zoom-out" disabled={zoom <= MIN_ZOOM} onClick={() => changeZoom(-ZOOM_STEP)} type="button">−</button>
+        <button aria-label="Zoom out" data-testid="zoom-out" onClick={() => changeZoom(-ZOOM_STEP)} type="button">−</button>
         {variant === 'portal' && <button aria-label="Reset zoom to 100%" data-testid="zoom-reset" onClick={reset} type="button">100%</button>}
-        <button aria-label="Zoom in" data-testid="zoom-in" disabled={zoom >= MAX_ZOOM} onClick={() => changeZoom(ZOOM_STEP)} type="button">+</button>
+        <button aria-label="Zoom in" data-testid="zoom-in" onClick={() => changeZoom(ZOOM_STEP)} type="button">+</button>
         <output aria-live="polite" data-testid="zoom-level">Zoom {Math.round(zoom * 100)}%</output>
       </div>
       {variant === 'portal' && <Filmstrip images={images} onSelect={changeSelection} selectedImageId={selectedImageId} />}
       <time className="pip-visually-hidden" dateTime={selected?.expiresAt}>Image URL expires at {selected?.expiresAt}</time>
       <style jsx>{`
-        .pip-image-viewer { display: grid; gap: 0.5rem; max-width: 100%; }
+        .pip-image-viewer { display: grid; gap: 0.5rem; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
         .pip-image-canvas {
           position: relative; display: grid; place-items: center; min-width: 0; min-height: min(65vh, 34rem);
           overflow: hidden; touch-action: none; background: var(--pip-color-base-200); cursor: grab;
@@ -149,7 +161,7 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         .pip-viewer-thumb { filter: blur(1px); transform: scale(1.01); }
         .pip-viewer-full { will-change: transform; transform-origin: center; }
         .pip-viewer-loading { z-index: 1; padding: 0.5rem 0.75rem; border-radius: 0.375rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); }
-        .pip-viewer-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+        .pip-viewer-controls { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; gap: 0.5rem; }
         .pip-viewer-controls button { min-width: var(--pip-tap-target); min-height: var(--pip-tap-target); padding: 0.5rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.375rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); cursor: pointer; }
         .pip-viewer-controls button:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
         .pip-viewer-controls output { min-height: var(--pip-tap-target); display: flex; align-items: center; }
