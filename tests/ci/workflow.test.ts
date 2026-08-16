@@ -60,14 +60,17 @@ describe('per-change coverage stays cumulative', () => {
       'npx eslint .',
       'npx vitest run --project unit',
       'npx vitest run --project integration',
-      'npx playwright test --project=product',
+      'npx playwright test --project=e2-wiring',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
     ])
   })
 
-  test('ordinary product Playwright excludes only the E0/E1 fresh-clone wiring specs', () => {
+  test('ordinary product Playwright excludes wiring specs; E2 depends on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[01\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/dependencies:\s*\['product'\]/)
     expect(playwrightConfig).toMatch(/name:\s*'certification'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e\[01\]-wiring\\\.spec\\\.ts\//)
   })

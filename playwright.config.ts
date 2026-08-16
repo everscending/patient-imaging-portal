@@ -9,7 +9,15 @@ export default defineConfig({
   projects: [
     {
       name: 'product',
-      testIgnore: /e[01]-wiring\.spec\.ts/,
+      testIgnore: /e[012]-wiring\.spec\.ts/,
+    },
+    {
+      // The E2 fixture exposes mutable identity and audit state. Running it
+      // after product prevents unrelated parallel requests from being counted
+      // as part of E2's exact audit assertions.
+      name: 'e2-wiring',
+      testMatch: /e2-wiring\.spec\.ts/,
+      dependencies: ['product'],
     },
     {
       name: 'certification',

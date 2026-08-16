@@ -1935,12 +1935,13 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test --project=product` + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+| `ui` | `api` + `playwright test --project=e2-wiring` (the serial E2 project depends on the parallel product project) + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
 
-The Playwright suite has two execution classes. The `product` project contains
-the ordinary browser checks and runs on every push and pull request through the
-cumulative `ui` gate. The `certification` project contains the expensive E0/E1
-fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
+The Playwright suite has three execution classes. The `product` project contains
+the ordinary browser checks. The `e2-wiring` project depends on `product`, so E2
+remains in the cumulative `ui` gate but runs after ordinary product tests stop
+using the fixture's shared audit state. The `certification` project contains the
+expensive E0/E1 fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
 `main`, nightly, or by manual dispatch. E0 invokes the cumulative `ui` gate once
 inside its clean checkout and confirms the emitted step list contains TypeScript,
 ESLint, unit, integration, product Playwright, and the E2 report validation; it
