@@ -71,7 +71,7 @@ run_logic() {
 
 run_api() {
   run_logic
-  step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts
+  step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts tests/scheduling/reschedule-cancel-rpc.test.ts
 }
 
 run_ui() {
