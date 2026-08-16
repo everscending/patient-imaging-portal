@@ -1,3 +1,7 @@
+// JOR-220 focused share-link contract.
+// The cross-patient/dangling/zero/both-resource structural boundary remains
+// covered by tests/db/migration-002.test.ts's
+// shareLinksEnforceOwnershipTargetCountAndGeneratedResourceKind.
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -12,7 +16,6 @@ const {
   cookieMock,
   callerIdMock,
   errorResponseMock,
-  noContentResponseMock,
 } = vi.hoisted(() => ({
   serviceMock: vi.fn(),
   anonMock: vi.fn(),
@@ -21,7 +24,6 @@ const {
   cookieMock: vi.fn(),
   callerIdMock: vi.fn(),
   errorResponseMock: vi.fn(),
-  noContentResponseMock: vi.fn(),
 }))
 
 vi.mock('../../lib/db/client', () => ({ serviceClient: serviceMock, anonClient: anonMock }))
@@ -33,8 +35,7 @@ vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' 
 vi.mock('../../lib/validation/envelope', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/validation/envelope')>()
   errorResponseMock.mockImplementation(actual.errorResponse)
-  noContentResponseMock.mockImplementation(actual.noContentResponse)
-  return { ...actual, errorResponse: errorResponseMock, noContentResponse: noContentResponseMock }
+  return { ...actual, errorResponse: errorResponseMock }
 })
 vi.mock('../../lib/config', () => ({
   config: {
@@ -48,7 +49,7 @@ vi.mock('../../lib/config', () => ({
 import { GET as resolveGet } from '../../app/api/s/[token]/route'
 import { DELETE as revokeDelete } from '../../app/api/shares/[id]/route'
 import { GET as listGet, POST as mintPost } from '../../app/api/shares/route'
-import { mintShareLink, revokeShareLink } from '../../lib/share/links'
+import { mintShareLink, resolveShareToken, revokeShareLink } from '../../lib/share/links'
 
 const LINK_ID = '11111111-1111-4111-8111-111111111111'
 const PATIENT_ID = '22222222-2222-4222-8222-222222222222'
@@ -132,7 +133,6 @@ beforeEach(() => {
   cookieMock.mockReset()
   callerIdMock.mockReset()
   errorResponseMock.mockClear()
-  noContentResponseMock.mockClear()
   cookieMock.mockResolvedValue({ get: () => ({ value: 'caller-token' }) })
   callerIdMock.mockResolvedValue(USER_ID)
   guardMock.mockResolvedValue({ ok: true, patientId: PATIENT_ID })
@@ -196,7 +196,7 @@ describe('share minting', () => {
   test('tokenPersistenceStoresOnlySha256AndReturnsOnlyThePinnedCreationFields', async () => {
     const patientQuery = query({ data: { id: PATIENT_ID }, error: null })
     const shareQuery = query({ data: { id: LINK_ID }, error: null })
-    const outboxQuery = query({ data: null, error: new Error('queue unavailable') })
+    const outboxQuery = query({ data: null, error: null })
     const client = clientFor({ patients: [patientQuery], share_links: [shareQuery], email_outbox: [outboxQuery] })
     anonMock.mockReturnValue(client)
 
@@ -225,6 +225,11 @@ describe('share minting', () => {
     expect(Object.keys(inserted)).not.toContain('token')
     expect(Object.keys(inserted)).not.toContain('url')
     expect(outboxQuery.insert).toHaveBeenCalledOnce()
+    const enqueued = outboxQuery.insert.mock.calls[0]?.[0] as Record<string, string>
+    expect(Object.keys(enqueued).sort()).toEqual(['body', 'recipient', 'subject'])
+    expect(enqueued.subject).toBe('Someone shared a secure medical file with you')
+    expect(enqueued.body).toContain(body.url)
+    expect(enqueued.body).not.toMatch(new RegExp(`${PATIENT_ID}|${IMAGE_ID}`))
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
       { kind: 'image', id: IMAGE_ID },
@@ -237,19 +242,33 @@ describe('share minting', () => {
     const source = readFileSync('lib/share/links.ts', 'utf8')
     expect(source).not.toMatch(/notify\/email|sendEmail\s*\(/)
 
-    const shareQuery = query({ data: { id: LINK_ID }, error: null })
+    const returnedErrorOutbox = query({ data: null, error: new Error('queue unavailable') })
     const thrownOutbox = query({ data: null, error: null }, new Error('outbox offline'))
-    const callerClient = clientFor({ share_links: [shareQuery], email_outbox: [thrownOutbox] })
+    const callerClient = clientFor({
+      patients: [
+        query({ data: { id: PATIENT_ID }, error: null }),
+        query({ data: { id: PATIENT_ID }, error: null }),
+      ],
+      share_links: [
+        query({ data: { id: LINK_ID }, error: null }),
+        query({ data: { id: LINK_ID }, error: null }),
+      ],
+      email_outbox: [returnedErrorOutbox, thrownOutbox],
+    })
     anonMock.mockReturnValue(callerClient)
 
-    const created = await mintShareLink({
-      patientId: PATIENT_ID,
-      actorUserId: USER_ID,
-      resourceKind: 'image',
-      resourceId: IMAGE_ID,
-      recipientEmail: 'recipient@example.com',
-    })
-    expect(Object.keys(created).sort()).toEqual(['expiresAt', 'id', 'recipientEmail', 'url'])
+    const responses = await Promise.all([
+      mintPost(jsonRequest({ resourceKind: 'image', resourceId: IMAGE_ID, recipientEmail: 'recipient@example.com' })),
+      mintPost(jsonRequest({ resourceKind: 'image', resourceId: IMAGE_ID, recipientEmail: 'recipient@example.com' })),
+    ])
+    const created = await Promise.all(responses.map(async (response) => {
+      expect(response.status).toBe(201)
+      const body = await response.json() as Record<string, string>
+      expect(Object.keys(body).sort()).toEqual(['delivery', 'expiresAt', 'id', 'recipientEmail', 'url'])
+      expect(body.delivery).toBe('failed')
+      return body
+    }))
+    expect(returnedErrorOutbox.insert).toHaveBeenCalledOnce()
     expect(thrownOutbox.insert).toHaveBeenCalledOnce()
     expect(serviceMock).not.toHaveBeenCalled()
 
@@ -268,8 +287,8 @@ describe('share minting', () => {
     })
     serviceMock.mockReturnValue(resolverClient)
 
-    const token = new URL(created.url).pathname.split('/').at(-1) ?? ''
-    const response = await resolveGet(new Request(created.url), { params: Promise.resolve({ token }) })
+    const token = new URL(created[0].url).pathname.split('/').at(-1) ?? ''
+    const response = await resolveGet(new Request(created[0].url), { params: Promise.resolve({ token }) })
     expect(response.status).toBe(200)
     expect((await response.json() as { payload: { id: string } }).payload.id).toBe(IMAGE_ID)
   })
@@ -291,7 +310,7 @@ describe('share minting', () => {
       resourceKind: 'image',
       resourceId: IMAGE_ID,
       recipientEmail: 'recipient@example.com',
-    })
+    }).then((created) => expect(created.delivery).toBe('sent'))
     await expect(revokeShareLink({ id: LINK_ID, patientId: PATIENT_ID, actorUserId: USER_ID }))
       .resolves.toEqual({ ok: true })
 
@@ -362,7 +381,6 @@ describe('share listing and revocation', () => {
     })
     expect(response.status).toBe(204)
     expect(await response.text()).toBe('')
-    expect(noContentResponseMock).toHaveBeenCalledOnce()
     expect(errorResponseMock).not.toHaveBeenCalled()
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
@@ -398,7 +416,6 @@ describe('share listing and revocation', () => {
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
     expect(errorResponseMock).toHaveBeenCalledOnce()
     expect(errorResponseMock).toHaveBeenCalledWith(404, 'not_found', 'The requested resource was not found.')
-    expect(noContentResponseMock).not.toHaveBeenCalled()
     expect(forbiddenUpdate.update).not.toHaveBeenCalled()
     expect(serviceMock).not.toHaveBeenCalled()
 
@@ -421,17 +438,22 @@ describe('share listing and revocation', () => {
 
 describe('share-token resolution', () => {
   test('unknownExpiredAndRevokedTokensHaveByteIdentical410Envelopes', async () => {
+    const unavailableRows = [
+      null,
+      link({ expires_at: '2026-08-16T11:59:59.000Z' }),
+      link({ revoked_at: '2026-08-16T11:59:59.000Z' }),
+    ]
     const resolverClient = clientFor({
-      share_links: [
-        query({ data: null, error: null }),
-        query({ data: link({ expires_at: '2026-08-16T11:59:59.000Z' }), error: null }),
-        query({ data: link({ revoked_at: '2026-08-16T11:59:59.000Z' }), error: null }),
-      ],
+      share_links: unavailableRows.flatMap((data) => [
+        query({ data, error: null }),
+        query({ data, error: null }),
+      ]),
     })
     serviceMock.mockReturnValue(resolverClient)
 
     const bodies: string[] = []
     for (const token of ['unknown-token', 'expired-token', 'revoked-token']) {
+      await expect(resolveShareToken(token)).resolves.toEqual({ ok: false })
       bodies.push(await unavailableBody(await resolveGet(new Request(`https://portal.example/s/${token}`), {
         params: Promise.resolve({ token }),
       })))

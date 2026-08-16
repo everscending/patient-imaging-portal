@@ -68,7 +68,7 @@ export async function mintShareLink(input: {
   resourceKind: ResourceKind
   resourceId: string
   recipientEmail: string
-}): Promise<{ id: string; url: string; expiresAt: string; recipientEmail: string }> {
+}): Promise<{ id: string; url: string; expiresAt: string; recipientEmail: string; delivery: 'sent' | 'failed' }> {
   const target = { kind: input.resourceKind, id: input.resourceId } as const
   const access = await guardPhiAccess({ kind: 'patient', userId: input.actorUserId }, target, 'share.create')
   if (!access.ok || access.patientId !== input.patientId) throw new Error('share: resource not found')
@@ -88,18 +88,20 @@ export async function mintShareLink(input: {
   if (error || !data) throw new Error('share: link could not be created')
 
   // PHI-free, queued only: this request never invokes an email transport.
+  let delivery: 'sent' | 'failed' = 'failed'
   try {
-    await client.from('email_outbox').insert({
+    const { error: outboxError } = await client.from('email_outbox').insert({
       recipient: input.recipientEmail,
       subject: 'Someone shared a secure medical file with you',
       body: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
     })
+    if (!outboxError) delivery = 'sent'
   } catch {
     // The link is already durable. A queue outage must not revoke it or turn
     // its successful creation into an error response.
   }
 
-  return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail }
+  return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail, delivery }
 }
 
 export async function resolveShareToken(token: string): Promise<

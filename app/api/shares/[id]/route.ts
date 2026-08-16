@@ -7,7 +7,7 @@ import { anonClient } from '../../../../lib/db/client'
 import { revokeShareLink } from '../../../../lib/share/links'
 import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
 import { parseParams, uuidSchema } from '../../../../lib/validation'
-import { errorResponse, noContentResponse } from '../../../../lib/validation/envelope'
+import { errorResponse } from '../../../../lib/validation/envelope'
 
 const ParamsSchema = z.object({ id: uuidSchema })
 
@@ -24,7 +24,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   try {
     const result = await revokeShareLink({ id: parsed.value.id, patientId: (data as { id: string }).id, actorUserId: userId })
     if (!result.ok) return errorResponse(404, 'not_found', 'The requested resource was not found.')
-    return noContentResponse()
+    return new Response(null, { status: 204 })
   } catch {
     return errorResponse(404, 'not_found', 'The requested resource was not found.')
   }

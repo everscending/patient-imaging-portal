@@ -9,8 +9,3 @@ export function errorResponse(status: number, error: string, message: string): R
     headers: { 'Content-Type': 'application/json' },
   })
 }
-
-/** The centralized producer for a successful response with no representation. */
-export function noContentResponse(): Response {
-  return new Response(null, { status: 204 })
-}

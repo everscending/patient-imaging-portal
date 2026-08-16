@@ -40,7 +40,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!actor.patientId) return accessError(403)
   try {
     const share = await mintShareLink({ patientId: actor.patientId, actorUserId: actor.userId, ...parsed.value })
-    return Response.json({ id: share.id, url: share.url, expiresAt: share.expiresAt, recipientEmail: share.recipientEmail }, { status: 201 })
+    const created = { id: share.id, url: share.url, expiresAt: share.expiresAt, recipientEmail: share.recipientEmail }
+    return Response.json(share.delivery === 'failed' ? { ...created, delivery: share.delivery } : created, { status: 201 })
   } catch {
     // A guard denial deliberately looks identical to an absent resource.
     return errorResponse(404, 'not_found', 'The requested resource was not found.')
