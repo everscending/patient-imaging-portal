@@ -16,6 +16,9 @@
 //     -> shareRecipientDenialPersistsExactlyOneAuditEvent
 //   authenticated audit behavior stays caller-scoped
 //     -> authenticatedCallerAuditPersistsExactlyOnceThroughCallerScopedClient
+//   actor/session mismatch persists one caller-scoped denial attributed to
+//   the authenticated session user
+//     -> actorMismatchPersistsExactlyOneAuthenticatedUserDenialThroughCallerScopedClient
 
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -210,18 +213,38 @@ describe('audit persistence across the real PHI guard and centralized writer', (
   test(
     'authenticatedCallerAuditPersistsExactlyOnceThroughCallerScopedClient',
     async function authenticatedCallerAuditPersistsExactlyOnceThroughCallerScopedClient() {
-      patients.push({ id: 'patient-authenticated', user_id: 'authenticated-account' })
+      patients.push({ id: 'patient-authenticated', user_id: 'account-1' })
 
       const result = await guardPhiAccess(
-        { kind: 'patient', userId: 'authenticated-account' },
+        { kind: 'patient', userId: 'account-1' },
         { kind: 'collection', of: 'study' },
         'study.view',
       )
 
       expect(result).toEqual({ ok: true, patientId: 'patient-authenticated' })
       expect(auditRows).toHaveLength(1)
-      expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: 'authenticated-account', outcome: 'granted' })
+      expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: 'account-1', outcome: 'granted' })
       expect(writeScopes).toEqual(['caller'])
+    },
+  )
+
+  test(
+    'actorMismatchPersistsExactlyOneAuthenticatedUserDenialThroughCallerScopedClient',
+    async function actorMismatchPersistsExactlyOneAuthenticatedUserDenialThroughCallerScopedClient() {
+      patients.push({ id: 'patient-spoofed', user_id: 'spoofed-account' })
+
+      const result = await guardPhiAccess(
+        { kind: 'patient', userId: 'spoofed-account' },
+        { kind: 'collection', of: 'study' },
+        'study.view',
+      )
+
+      expect(result).toEqual({ ok: false, status: 401 })
+      expect(auditRows).toHaveLength(1)
+      expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: 'account-1', outcome: 'denied' })
+      expect(auditRows[0]!.actor_ref).not.toBe('spoofed-account')
+      expect(writeScopes).toEqual(['caller'])
+      expect(serviceClientMock).not.toHaveBeenCalled()
     },
   )
 })

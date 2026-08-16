@@ -74,6 +74,15 @@
 //     → guardedCallProducingZeroOrTwoAuditRowsRejected
 //   expired session JWT → 401
 //     → expiredSessionJwtReturnsFourOhOne
+//   patient actor userId differs from the authenticated session user → 401,
+//   no claimed-identity lookup, one denial audit attributed to the session user
+//     → patientActorMismatchReturnsFourOhOneWithoutClaimedIdentityLookup
+//   provider actor userId differs from the authenticated session user → 401,
+//   no claimed-identity lookup, one denial audit attributed to the session user
+//     → providerActorMismatchReturnsFourOhOneWithoutClaimedIdentityLookup
+//   admin actor userId differs from the authenticated session user → 401,
+//   no target lookup, one denial audit attributed to the session user
+//     → adminActorMismatchReturnsFourOhOneWithoutTargetLookup
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -93,6 +102,7 @@ const {
   resetFake,
   setCallerHasSession,
   setSessionTokenValid,
+  setSessionUserId,
   hasCallerSession,
   FAKE_SESSION_COOKIE_NAME,
   FAKE_ACCESS_TOKEN,
@@ -111,6 +121,7 @@ const {
   const audits: FakeRow[] = []
   let sessionPresent = true
   let sessionValid = true
+  let sessionUserId = 'session-user'
 
   function matches(row: FakeRow, filters: Array<[string, unknown]>): boolean {
     return filters.every(([column, value]) => row[column] === value)
@@ -148,7 +159,7 @@ const {
       auth: {
         async getUser(token: string) {
           if (!sessionValid || token !== 'fake-caller-access-token') return { data: { user: null }, error: { message: 'invalid token' } }
-          return { data: { user: { id: 'session-user' } }, error: null }
+          return { data: { user: { id: sessionUserId } }, error: null }
         },
       },
     })),
@@ -157,12 +168,16 @@ const {
       audits.length = 0
       sessionPresent = true
       sessionValid = true
+      sessionUserId = 'session-user'
     },
     setCallerHasSession: (next: boolean) => {
       sessionPresent = next
     },
     setSessionTokenValid: (next: boolean) => {
       sessionValid = next
+    },
+    setSessionUserId: (next: string) => {
+      sessionUserId = next
     },
     hasCallerSession: () => sessionPresent,
     FAKE_SESSION_COOKIE_NAME: 'pip_session',
@@ -197,7 +212,7 @@ vi.mock('../../lib/audit/events', () => ({
 }))
 
 import type { Actor, GuardResult, PhiTarget } from '../../lib/access/guard'
-import { guardPhiAccess } from '../../lib/access/guard'
+import { guardPhiAccess as guardPhiAccessRaw } from '../../lib/access/guard'
 import type { AuditAction } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
@@ -205,6 +220,11 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 function expectOk(result: GuardResult): { ok: true; patientId: string | null } {
   if (!result.ok) throw new Error(`expected ok:true, got ${JSON.stringify(result)}`)
   return result
+}
+
+async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
+  if (actor.kind !== 'share_recipient') setSessionUserId(actor.userId)
+  return guardPhiAccessRaw(actor, target, action)
 }
 
 let seq = 0
@@ -800,5 +820,71 @@ describe('mandatory adversarial: expired session JWT', () => {
     const result = await guardPhiAccess({ kind: 'patient', userId: 'm15-user' }, { kind: 'study', id: 'm15-study' }, 'study.view')
     expect(result).toEqual({ ok: false, status: 401 })
     setSessionTokenValid(true)
+  })
+})
+
+describe('mandatory adversarial: a patient actor cannot claim a different authenticated account', () => {
+  test(
+    'patientActorMismatchReturnsFourOhOneWithoutClaimedIdentityLookup',
+    async function patientActorMismatchReturnsFourOhOneWithoutClaimedIdentityLookup() {
+      const authenticatedUserId = 'm16-authenticated-user'
+      const claimedUserId = 'm16-spoofed-patient-user'
+      const patient = seedPatient({ id: 'm16-patient', user_id: claimedUserId })
+      const provider = seedProvider({ id: 'm16-provider', user_id: 'm16-provider-user' })
+      const visit = seedVisit({ patient_id: patient.id, provider_id: provider.id })
+      const study = seedStudy({ visit_id: visit.id, patient_id: patient.id })
+      setSessionUserId(authenticatedUserId)
+
+      const result = await guardPhiAccessRaw({ kind: 'patient', userId: claimedUserId }, { kind: 'study', id: study.id }, 'study.view')
+
+      expect(result).toEqual({ ok: false, status: 401 })
+      expect(anonClientMock).not.toHaveBeenCalled()
+      expect(auditCalls).toHaveLength(1)
+      expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: authenticatedUserId, outcome: 'denied' })
+      expect(auditCalls[0]!.actorRef).not.toBe(claimedUserId)
+    },
+  )
+})
+
+describe('mandatory adversarial: a provider actor cannot claim a different authenticated account', () => {
+  test(
+    'providerActorMismatchReturnsFourOhOneWithoutClaimedIdentityLookup',
+    async function providerActorMismatchReturnsFourOhOneWithoutClaimedIdentityLookup() {
+      const authenticatedUserId = 'm17-authenticated-user'
+      const claimedUserId = 'm17-spoofed-provider-user'
+      const patient = seedPatient({ id: 'm17-patient', user_id: 'm17-patient-user' })
+      const provider = seedProvider({ id: 'm17-provider', user_id: claimedUserId })
+      const visit = seedVisit({ patient_id: patient.id, provider_id: provider.id })
+      const study = seedStudy({ visit_id: visit.id, patient_id: patient.id })
+      setSessionUserId(authenticatedUserId)
+
+      const result = await guardPhiAccessRaw({ kind: 'provider', userId: claimedUserId }, { kind: 'study', id: study.id }, 'study.view')
+
+      expect(result).toEqual({ ok: false, status: 401 })
+      expect(anonClientMock).not.toHaveBeenCalled()
+      expect(auditCalls).toHaveLength(1)
+      expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: authenticatedUserId, outcome: 'denied' })
+      expect(auditCalls[0]!.actorRef).not.toBe(claimedUserId)
+    },
+  )
+})
+
+describe('mandatory adversarial: an admin actor cannot claim a different authenticated account', () => {
+  test('adminActorMismatchReturnsFourOhOneWithoutTargetLookup', async function adminActorMismatchReturnsFourOhOneWithoutTargetLookup() {
+    const authenticatedUserId = 'm18-authenticated-user'
+    const claimedUserId = 'm18-spoofed-admin-user'
+    const patient = seedPatient({ id: 'm18-patient', user_id: 'm18-patient-user' })
+    const provider = seedProvider({ id: 'm18-provider', user_id: 'm18-provider-user' })
+    const visit = seedVisit({ patient_id: patient.id, provider_id: provider.id })
+    const study = seedStudy({ visit_id: visit.id, patient_id: patient.id })
+    setSessionUserId(authenticatedUserId)
+
+    const result = await guardPhiAccessRaw({ kind: 'admin', userId: claimedUserId }, { kind: 'study', id: study.id }, 'study.view')
+
+    expect(result).toEqual({ ok: false, status: 401 })
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(auditCalls).toHaveLength(1)
+    expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: authenticatedUserId, outcome: 'denied' })
+    expect(auditCalls[0]!.actorRef).not.toBe(claimedUserId)
   })
 })

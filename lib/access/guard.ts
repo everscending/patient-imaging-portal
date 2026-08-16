@@ -268,26 +268,36 @@ async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Pro
   return { ok: true, patientId: link.patient_id }
 }
 
-async function decide(actor: Actor, target: PhiTarget): Promise<GuardResult> {
+type AccessDecision = {
+  result: GuardResult
+  authenticatedUserId?: string
+}
+
+async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> {
   if (actor.kind === 'share_recipient') {
-    return decideShareRecipient(actor.shareLinkId, target)
+    return { result: await decideShareRecipient(actor.shareLinkId, target) }
   }
 
   const token = await callerAccessToken()
-  if (!token) return { ok: false, status: 401 }
+  if (!token) return { result: { ok: false, status: 401 } }
 
   const { data, error } = await authClient().auth.getUser(token)
-  if (error || !data.user) return { ok: false, status: 401 }
+  if (error || !data.user) return { result: { ok: false, status: 401 } }
+
+  const authenticatedUserId = data.user.id
+  if (actor.userId !== authenticatedUserId) {
+    return { result: { ok: false, status: 401 }, authenticatedUserId }
+  }
 
   const client = anonClient(token)
 
   switch (actor.kind) {
     case 'patient':
-      return decidePatient(client, actor.userId, target)
+      return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId }
     case 'provider':
-      return decideProvider(client, actor.userId, target)
+      return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId }
     case 'admin':
-      return decideAdmin(client, target)
+      return { result: await decideAdmin(client, target), authenticatedUserId }
     default:
       return assertNever(actor)
   }
@@ -309,16 +319,18 @@ export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: Au
   // anywhere in decide() — a dropped connection, a deleted-underneath-them
   // row surfacing as something other than a clean zero-row read — collapses
   // to the same conservative denial a missing session gets.
-  let decision: GuardResult
+  let accessDecision: AccessDecision
   try {
-    decision = await decide(actor, target)
+    accessDecision = await decide(actor, target)
   } catch {
-    decision = { ok: false, status: 401 }
+    accessDecision = { result: { ok: false, status: 401 } }
   }
+
+  const decision = accessDecision.result
 
   await recordAuditEvent({
     actorKind,
-    actorRef,
+    actorRef: accessDecision.authenticatedUserId ?? actorRef,
     action,
     targetKind,
     targetId,
