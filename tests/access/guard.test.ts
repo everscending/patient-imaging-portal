@@ -106,6 +106,7 @@ const {
   selectedColumns,
   resetFake,
   setReadFailureTable,
+  setAuthFailureMode,
   setCallerHasSession,
   setSessionTokenValid,
   setSessionUserId,
@@ -130,6 +131,7 @@ const {
   let sessionValid = true
   let sessionUserId = 'session-user'
   let readFailureTable: string | null = null
+  let authFailureMode: 'none' | 'throw' | 'dependency-error' = 'none'
   const selections: Array<{ table: string; columns: string }> = []
 
   function matches(row: FakeRow, filters: Array<[string, unknown]>): boolean {
@@ -171,7 +173,13 @@ const {
     authClientMock: vi.fn(() => ({
       auth: {
         async getUser(token: string) {
-          if (!sessionValid || token !== 'fake-caller-access-token') return { data: { user: null }, error: { message: 'invalid token' } }
+          if (authFailureMode === 'throw') throw new Error('SECRET_AUTH_ERROR_MUST_NOT_ESCAPE')
+          if (authFailureMode === 'dependency-error') {
+            return { data: { user: null }, error: { message: 'SECRET_AUTH_ERROR_MUST_NOT_ESCAPE', status: 503 } }
+          }
+          if (!sessionValid || token !== 'fake-caller-access-token') {
+            return { data: { user: null }, error: { message: 'invalid token', status: 401 } }
+          }
           return { data: { user: { id: sessionUserId } }, error: null }
         },
       },
@@ -184,10 +192,14 @@ const {
       sessionValid = true
       sessionUserId = 'session-user'
       readFailureTable = null
+      authFailureMode = 'none'
       selections.length = 0
     },
     setReadFailureTable: (table: string | null) => {
       readFailureTable = table
+    },
+    setAuthFailureMode: (mode: 'none' | 'throw' | 'dependency-error') => {
+      authFailureMode = mode
     },
     setCallerHasSession: (next: boolean) => {
       sessionPresent = next
@@ -226,6 +238,9 @@ vi.mock('next/headers', () => ({
 
 vi.mock('../../lib/audit/events', () => ({
   recordAuditEvent: vi.fn(async (input: FakeRow) => {
+    auditCalls.push(input)
+  }),
+  recordPhiAccessDecision: vi.fn(async (input: FakeRow) => {
     auditCalls.push(input)
   }),
 }))
@@ -603,6 +618,20 @@ describe('dependency failures are not reported as authentication failures', () =
     expect(auditCalls).toHaveLength(1)
     expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: 'dependency-user', outcome: 'denied' })
   })
+
+  test.each(['throw', 'dependency-error'] as const)(
+    'authenticationDependencyFailureAuditsThenThrowsSanitizedError: %s',
+    async function authenticationDependencyFailureAuditsThenThrowsSanitizedError(mode) {
+      setAuthFailureMode(mode)
+
+      await expect(
+        guardPhiAccess({ kind: 'patient', userId: 'auth-dependency-user' }, { kind: 'collection', of: 'study' }, 'study.view'),
+      ).rejects.toThrow('guardPhiAccess: authorization dependency unavailable')
+
+      expect(auditCalls).toHaveLength(1)
+      expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: null, outcome: 'denied' })
+    },
+  )
 })
 
 describe('AC: a collection grant returns no rows of its own', () => {

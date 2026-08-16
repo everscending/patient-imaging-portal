@@ -3,7 +3,7 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 import type { AuditAction } from '../audit/events'
-import { recordAuditEvent } from '../audit/events'
+import { recordPhiAccessDecision } from '../audit/events'
 import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
@@ -299,11 +299,27 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
     }
   }
 
-  const token = await callerAccessToken()
+  let token: string | null
+  try {
+    token = await callerAccessToken()
+  } catch {
+    return { result: { ok: false, status: 404 }, dependencyFailed: true }
+  }
   if (!token) return { result: { ok: false, status: 401 } }
 
-  const { data, error } = await authClient().auth.getUser(token)
-  if (error || !data.user) return { result: { ok: false, status: 401 } }
+  let authentication: Awaited<ReturnType<ReturnType<typeof authClient>['auth']['getUser']>>
+  try {
+    authentication = await authClient().auth.getUser(token)
+  } catch {
+    return { result: { ok: false, status: 404 }, dependencyFailed: true }
+  }
+
+  const { data, error } = authentication
+  if (error) {
+    if (error.status === 401 || error.status === 403) return { result: { ok: false, status: 401 } }
+    return { result: { ok: false, status: 404 }, dependencyFailed: true }
+  }
+  if (!data.user) return { result: { ok: false, status: 401 } }
 
   const authenticatedUserId = data.user.id
   if (actor.userId !== authenticatedUserId) {
@@ -343,7 +359,7 @@ export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: Au
   const accessDecision = await decide(actor, target)
   const decision = accessDecision.result
 
-  await recordAuditEvent({
+  await recordPhiAccessDecision({
     actorKind,
     actorRef: accessDecision.authenticatedUserId ?? actorRef,
     action: recordedAction(target, action),

@@ -165,7 +165,7 @@ vi.mock('next/headers', () => ({
 }))
 
 import type { AuditAction, RecordAuditEventInput } from '../../lib/audit/events'
-import { recordAuditEvent } from '../../lib/audit/events'
+import { recordAuditEvent, recordPhiAccessDecision } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
@@ -404,7 +404,7 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
 
   test('missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
     setCallerHasSession(false)
-    await expect(recordAuditEvent(baseInput({ actorRef: null, outcome: 'denied' }))).resolves.toBeUndefined()
+    await expect(recordPhiAccessDecision(baseInput({ actorRef: null, outcome: 'denied' }))).resolves.toBeUndefined()
     expect(anonClientMock).not.toHaveBeenCalled()
     expect(serviceClientMock).toHaveBeenCalledTimes(1)
     expect(auditRows).toHaveLength(1)
@@ -414,7 +414,7 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
   test('invalidSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function invalidSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
     setSessionTokenValid(false)
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await expect(recordAuditEvent(baseInput({ actorRef: null, outcome: 'denied' }))).resolves.toBeUndefined()
+    await expect(recordPhiAccessDecision(baseInput({ actorRef: null, outcome: 'denied' }))).resolves.toBeUndefined()
     expect(errorSpy).not.toHaveBeenCalled()
     expect(anonClientMock).not.toHaveBeenCalled()
     expect(serviceClientMock).toHaveBeenCalledTimes(1)
@@ -433,6 +433,18 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
     expect(errorSpy).toHaveBeenCalledTimes(1)
     expect(serviceClientMock).not.toHaveBeenCalled()
     expect(auditRows).toHaveLength(0)
+  })
+
+  test('guardProvenanceAllowsAnyDeniedActionToUseAuditOnlyFallback', async function guardProvenanceAllowsAnyDeniedActionToUseAuditOnlyFallback() {
+    setCallerHasSession(false)
+
+    await expect(
+      recordPhiAccessDecision(baseInput({ actorRef: null, action: 'booking.cancel', outcome: 'denied' })),
+    ).resolves.toBeUndefined()
+
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ action: 'booking.cancel', outcome: 'denied' })
   })
 
   test('missingSessionGrantedAccountEventCannotUseServiceRole', async function missingSessionGrantedAccountEventCannotUseServiceRole() {

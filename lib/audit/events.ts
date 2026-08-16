@@ -79,23 +79,11 @@ async function callerAccessToken(): Promise<string | null> {
   return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
 }
 
-const ACCOUNT_ACCESS_ACTIONS = new Set<AuditAction>([
-  'study.view',
-  'image.view',
-  'clip.view',
-  'report.view',
-  'share.create',
-  'share.view',
-  'appointment.view',
-  'schedule.view',
-  'audit.view',
-])
-
-function serviceRoleAllowed(input: RecordAuditEventInput): boolean {
-  return input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied' && ACCOUNT_ACCESS_ACTIONS.has(input.action)
+function serviceRoleAllowed(input: RecordAuditEventInput, fromPhiGuard: boolean): boolean {
+  return fromPhiGuard && input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied'
 }
 
-async function writeClient(input: RecordAuditEventInput): Promise<WriteClient> {
+async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<WriteClient> {
   // Share recipients are intentionally unauthenticated. Select the elevated
   // single-row writer before looking at any ambient account cookie.
   if (input.actorKind === 'share_recipient') return serviceClient()
@@ -110,7 +98,7 @@ async function writeClient(input: RecordAuditEventInput): Promise<WriteClient> {
       // denied-account case below may cross to the single-row fallback.
     }
   }
-  if (serviceRoleAllowed(input)) return serviceClient()
+  if (serviceRoleAllowed(input, fromPhiGuard)) return serviceClient()
   throw new Error('recordAuditEvent: no authenticated caller available for this audit event')
 }
 
@@ -122,7 +110,7 @@ async function writeClient(input: RecordAuditEventInput): Promise<WriteClient> {
  * An unapproved `detail` key or value is a caller bug, not a write failure,
  * so it throws synchronously instead of being logged and dropped.
  */
-export async function recordAuditEvent(input: RecordAuditEventInput): Promise<void> {
+async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<void> {
   if (!detailIsApproved(input.detail)) {
     // Do not echo the rejected key or value: either can itself contain PHI or
     // a credential and this exception may be captured by an outer logger.
@@ -130,7 +118,7 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
   }
 
   try {
-    const client = await writeClient(input)
+    const client = await writeClient(input, fromPhiGuard)
     const { error } = await client.from('audit_events').insert({
       actor_kind: input.actorKind,
       actor_ref: input.actorRef,
@@ -144,4 +132,17 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
   } catch {
     logWriteFailure(input.action)
   }
+}
+
+export async function recordAuditEvent(input: RecordAuditEventInput): Promise<void> {
+  return appendAuditEvent(input, false)
+}
+
+/**
+ * The guard-only entry point supplies trustworthy provenance for the approved
+ * audit-only fallback. Domain modules cannot gain service-role writes merely
+ * by choosing an access-shaped action string.
+ */
+export async function recordPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
+  return appendAuditEvent(input, true)
 }

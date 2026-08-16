@@ -100,7 +100,7 @@ const {
     authClientMock: vi.fn(() => ({
       auth: {
         async getUser(token: string) {
-          if (!sessionValid || token !== accessToken) return { data: { user: null }, error: { message: 'invalid token' } }
+          if (!sessionValid || token !== accessToken) return { data: { user: null }, error: { message: 'invalid token', status: 401 } }
           return { data: { user: { id: 'account-1' } }, error: null }
         },
       },
