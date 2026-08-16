@@ -36,10 +36,9 @@ export async function GET(_request: Request, context: { params: Promise<{ report
   const cookieStore = await cookies()
   const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
   const callerId = await resolveCallerId()
-  if (!accessToken || !callerId) return accessError(401)
 
-  const actor = await resolveActor(accessToken, callerId)
-  const result = await getReport(actor, accessToken, parsed.value.reportId)
+  const actor = accessToken && callerId ? await resolveActor(accessToken, callerId) : { kind: 'patient' as const, userId: '' }
+  const result = await getReport(actor, accessToken ?? '', parsed.value.reportId)
   if (!result.ok) return accessError(result.status)
   return Response.json(result.value, { status: 200 })
 }

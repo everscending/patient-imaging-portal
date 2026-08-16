@@ -1,13 +1,11 @@
-// middleware.ts — session check for every patient route, and the
-// /verify?next= redirect for the six §7 "verified patient" routes (JOR-229).
-// A convenience only: the real authorization is lib/access/guard.ts on every
-// PHI route (a later ticket). Ownership failure there is 404, never 403 —
-// this file never returns 404, only 401/403/a redirect.
+// middleware.ts — session check for every patient page, and the
+// /verify?next= redirect for the six §7 "verified patient" page routes.
+// API authorization stays in lib/access/guard.ts so its decision and audit
+// write remain paired. Ownership failure there is 404, never 403.
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { authClient } from './lib/db/client'
+import { anonClient, authClient } from './lib/db/client'
 import { getSessionToken } from './lib/session-cookie'
-import { errorResponse } from './lib/validation/envelope'
 
 // §7's URL map: exactly these three stems (each covering its nested pages —
 // /studies/[studyId], /studies/[studyId]/clips/[clipId], /reports/[reportId])
@@ -44,36 +42,35 @@ function sanitizeNextPath(raw: string): string {
   return decoded
 }
 
-// The account-link seam for a future FR-2 ticket: a successful identity
-// verification is expected to set this on the Supabase user via the service
-// role admin API. Nothing in this repo sets it yet, so every session reads
-// as unlinked — the correct behaviour until that ticket lands (ADR-0011).
-function isLinkedToPatient(user: { app_metadata?: Record<string, unknown> }): boolean {
-  return Boolean(user.app_metadata?.patient_id)
+// ADR-0011 makes patients.user_id the complete, permanent result of identity
+// verification. Middleware reads that link through the caller-scoped client;
+// auth metadata is deliberately not a second source of truth.
+async function isLinkedToPatient(accessToken: string, userId: string): Promise<boolean> {
+  const { data, error } = await anonClient(accessToken).from('patients').select('id').eq('user_id', userId).maybeSingle()
+  return !error && data !== null
 }
 
 export async function middleware(request: NextRequest): Promise<Response> {
   const { pathname } = request.nextUrl
   const { apiRoute, stem } = classifyPath(pathname)
 
+  // API routes own their guard and its paired audit write. Letting middleware
+  // answer first would turn a 401/403 into an unaudited access decision.
+  if (apiRoute) return NextResponse.next()
+
   const requiresVerified = VERIFIED_PATIENT_STEMS.has(stem)
   const requiresSession = requiresVerified || SESSION_ONLY_STEMS.has(stem)
   if (!requiresSession) return NextResponse.next()
 
   const token = getSessionToken(request)
-  const { data, error } = token
-    ? await authClient().auth.getUser(token)
-    : { data: { user: null }, error: null }
+  if (!token) return NextResponse.redirect(new URL('/login', request.url))
+  const { data, error } = await authClient().auth.getUser(token)
 
   if (error || !data.user) {
-    if (apiRoute) return errorResponse(401, 'session_required', 'Sign in to continue.')
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (requiresVerified && !isLinkedToPatient(data.user)) {
-    if (apiRoute) {
-      return errorResponse(403, 'identity_verification_required', 'Verify your identity to continue.')
-    }
+  if (requiresVerified && !(await isLinkedToPatient(token, data.user.id))) {
     const verifyUrl = new URL('/verify', request.url)
     verifyUrl.searchParams.set('next', sanitizeNextPath(pathname))
     return NextResponse.redirect(verifyUrl)
