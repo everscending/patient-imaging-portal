@@ -59,7 +59,7 @@ describe('per-change coverage stays cumulative', () => {
       'npx tsc --noEmit',
       'npx eslint .',
       'npx vitest run --project unit',
-      'npx vitest run --project integration',
+      'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
       'npx playwright test --project=e2-wiring',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
     ])
