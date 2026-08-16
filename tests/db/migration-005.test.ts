@@ -40,17 +40,27 @@ function fixture(): { providerId: string; appointmentId: string; callerId: strin
   return { providerId, appointmentId, callerId }
 }
 
-function apply(providerId: string, callerId: string, hours: string, slots: string, slotMinutes = 30): string {
+function apply(providerId: string, callerId: string, hours: string, slots: string, slotMinutes = 30, blocks = '[]'): string {
   return psql(run.dbName, `set role app_user;
     set request.jwt.claim.sub = '${callerId}';
     select removed_open_slots || '|' || generated_open_slots || '|' || jsonb_array_length(preserved_out_of_hours)
     from apply_provider_availability(
-      '${providerId}', '${callerId}', ${slotMinutes}, '${hours}'::jsonb, '[]'::jsonb,
+      '${providerId}', '${callerId}', ${slotMinutes}, '${hours}'::jsonb, '${blocks}'::jsonb,
       '2026-08-17 05:00+00', '2026-08-18 05:00+00', ${slots}::tstzrange[]
     );`)
 }
 
 describe('apply_provider_availability transactional accept-and-flag', () => {
+  test('applies slot length, working hours, and a block together', () => {
+    const { providerId, callerId } = fixture()
+    const hours = `[{"weekday":1,"startsLocal":"09:00","endsLocal":"12:00"}]`
+    const blocks = `[{"startsAt":"2026-08-17T16:00:00Z","endsAt":"2026-08-17T17:00:00Z","reason":"meeting"}]`
+    expect(apply(providerId, callerId, hours, `array['[2026-08-17 14:00+00,2026-08-17 15:00+00)']`, 60, blocks)).toBe('1|1|1')
+    expect(psql(run.dbName, `select slot_minutes from providers where id='${providerId}';`)).toBe('60')
+    expect(psql(run.dbName, `select starts_local::text || '|' || ends_local::text from working_hours where provider_id='${providerId}';`)).toBe('09:00:00|12:00:00')
+    expect(psql(run.dbName, `select reason from availability_blocks where provider_id='${providerId}';`)).toBe('meeting')
+  })
+
   test('removes only free in-range slots, preserves the booking, and self-heals on restore', () => {
     const { providerId, appointmentId, callerId } = fixture()
     const closedHours = `[{"weekday":1,"startsLocal":"12:00","endsLocal":"17:00"}]`
