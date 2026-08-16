@@ -24,7 +24,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   try {
     const result = await revokeShareLink({ id: parsed.value.id, patientId: (data as { id: string }).id, actorUserId: userId })
     if (!result.ok) return errorResponse(404, 'not_found', 'The requested resource was not found.')
-    return new Response(null, { status: 204 })
+    return Response.json({})
   } catch {
     return errorResponse(404, 'not_found', 'The requested resource was not found.')
   }
