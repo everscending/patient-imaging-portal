@@ -106,6 +106,7 @@ export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
+export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
 
 const PROVIDERS = [{ id: '66336633-6633-4633-8633-663366336633', full_name: 'Dr. Avery Chen' }]
 const VISITS: FakeVisit[] = [
@@ -151,6 +152,14 @@ const CINE_CLIPS = [
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     frame_count: 100,
+    default_fps: 24,
+    poster_key: null,
+  },
+  {
+    id: E2_FOREIGN_CLIP_ID,
+    patient_id: OTHER_PATIENT.id,
+    study_id: E2_FOREIGN_STUDY_ID,
+    frame_count: 1,
     default_fps: 24,
     poster_key: null,
   },
