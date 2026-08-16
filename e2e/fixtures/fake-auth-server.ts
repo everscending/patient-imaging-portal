@@ -72,6 +72,29 @@ type FakeReport = {
   signed_at: string | null
 }
 
+type FakeProvider = {
+  id: string
+  user_id: string
+  full_name: string
+  time_zone: string
+  slot_minutes: number
+}
+
+type FakeWorkingHour = {
+  provider_id: string
+  weekday: number
+  starts_local: string
+  ends_local: string
+}
+
+type FakeAvailabilityBlock = {
+  id: string
+  provider_id: string
+  starts_at: string
+  ends_at: string
+  reason: string | null
+}
+
 type FakeIdentityAttempt = {
   id: string
   attempted_patient_ref: string
@@ -101,6 +124,11 @@ const OTHER_PATIENT: FakePatient = {
   phone: null,
 }
 
+export const E2_PROVIDER_ID = '66336633-6633-4633-8633-663366336633'
+export const E2_OTHER_PROVIDER_ID = '66446644-6644-4644-8644-664466446644'
+export const E2_PROVIDER_EMAIL = 'avery.chen@example.test'
+export const E2_OTHER_PROVIDER_EMAIL = 'riley.patel@example.test'
+export const E2_PROVIDER_PASSWORD = 'ProviderFixturePassword9'
 export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
 export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
@@ -108,7 +136,24 @@ export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
 
-const PROVIDERS = [{ id: '66336633-6633-4633-8633-663366336633', full_name: 'Dr. Avery Chen' }]
+const PROVIDER_ACCOUNT_ID = '11331133-1133-4133-8133-113311331133'
+const OTHER_PROVIDER_ACCOUNT_ID = '11441144-1144-4144-8144-114411441144'
+const PROVIDERS: FakeProvider[] = [
+  {
+    id: E2_PROVIDER_ID,
+    user_id: PROVIDER_ACCOUNT_ID,
+    full_name: 'Dr. Avery Chen',
+    time_zone: 'America/Chicago',
+    slot_minutes: 30,
+  },
+  {
+    id: E2_OTHER_PROVIDER_ID,
+    user_id: OTHER_PROVIDER_ACCOUNT_ID,
+    full_name: 'Dr. Riley Patel',
+    time_zone: 'America/New_York',
+    slot_minutes: 20,
+  },
+]
 const VISITS: FakeVisit[] = [
   {
     id: '77447744-7744-4744-8744-774477447744',
@@ -199,6 +244,7 @@ const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
 // that identifier as an executable call-site capability: only identity.ts may
 // name it directly.
 const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
+const APPLY_AVAILABILITY_RPC_PATH = ['/rest/v1/rpc/apply', 'provider', 'availability'].join('_')
 
 export type FakeAuthServer = {
   url: string
@@ -239,10 +285,38 @@ function userWireShape(user: FakeUser, withIdentity: boolean): Record<string, un
 type DependencyState = 'ok' | 'down' | 'hang'
 
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
-  const usersByEmail = new Map<string, FakeUser>()
+  const usersByEmail = new Map<string, FakeUser>([
+    [
+      E2_PROVIDER_EMAIL,
+      {
+        id: PROVIDER_ACCOUNT_ID,
+        email: E2_PROVIDER_EMAIL,
+        password: E2_PROVIDER_PASSWORD,
+        userMetadata: {},
+        appMetadata: { provider: 'email', providers: ['email'] },
+      },
+    ],
+    [
+      E2_OTHER_PROVIDER_EMAIL,
+      {
+        id: OTHER_PROVIDER_ACCOUNT_ID,
+        email: E2_OTHER_PROVIDER_EMAIL,
+        password: E2_PROVIDER_PASSWORD,
+        userMetadata: {},
+        appMetadata: { provider: 'email', providers: ['email'] },
+      },
+    ],
+  ])
   const sessionsByToken = new Map<string, FakeSession>()
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
+  let providers = PROVIDERS.map((provider) => ({ ...provider }))
+  let workingHours: FakeWorkingHour[] = [
+    { provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' },
+    { provider_id: E2_OTHER_PROVIDER_ID, weekday: 2, starts_local: '10:00:00', ends_local: '14:00:00' },
+  ]
+  let availabilityBlocks: FakeAvailabilityBlock[] = []
+  let generatedSlotRangesByProvider = new Map<string, string[]>()
   const auditEvents: Record<string, unknown>[] = []
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
@@ -463,7 +537,17 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
 
     if (url.pathname === '/rest/v1/providers' || url.pathname === '/rest/v1/staff_admins') {
-      sendPostgrestRows(req, res, url.pathname === '/rest/v1/providers' ? applyEqualityFilters(PROVIDERS, url) : [])
+      sendPostgrestRows(req, res, url.pathname === '/rest/v1/providers' ? applyEqualityFilters(providers, url) : [])
+      return
+    }
+
+    if (url.pathname === '/rest/v1/working_hours') {
+      sendPostgrestRows(req, res, applyEqualityFilters(workingHours, url))
+      return
+    }
+
+    if (url.pathname === '/rest/v1/availability_blocks') {
+      sendPostgrestRows(req, res, applyEqualityFilters(availabilityBlocks, url))
       return
     }
 
@@ -481,7 +565,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const reports = patientScopedRows(req, url, REPORTS).map((report) => {
       const study = STUDIES.find((candidate) => candidate.id === report.study_id)
       const patient = patients.find((candidate) => candidate.id === report.patient_id)
-      const provider = PROVIDERS.find((candidate) => candidate.id === report.signed_by)
+      const provider = providers.find((candidate) => candidate.id === report.signed_by)
       return {
         ...report,
         studies: study ? { description: study.description } : null,
@@ -586,11 +670,97 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, 'linked_now')
   }
 
+  function appointmentFallsOutsideWorkingHours(hours: FakeWorkingHour[]): boolean {
+    const appointmentWeekday = 1
+    const appointmentTime = '16:00:00'
+    return !hours.some(
+      (window) =>
+        window.weekday === appointmentWeekday &&
+        window.starts_local <= appointmentTime &&
+        appointmentTime < window.ends_local,
+    )
+  }
+
+  async function handleApplyAvailability(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const body = await readJsonBody(req)
+    const providerId = String(body.p_provider_id)
+    const provider = providers.find((candidate) => candidate.id === providerId)
+    if (!provider) {
+      sendJson(res, 404, { message: 'provider not found' })
+      return
+    }
+
+    const withSeconds = (value: unknown) => {
+      const wallTime = String(value)
+      return wallTime.length === 5 ? `${wallTime}:00` : wallTime
+    }
+    const nextHours = ((body.p_working_hours ?? []) as Array<Record<string, unknown>>).map((window) => ({
+      provider_id: providerId,
+      weekday: Number(window.weekday),
+      starts_local: withSeconds(window.startsLocal),
+      ends_local: withSeconds(window.endsLocal),
+    }))
+    const nextBlocks = ((body.p_blocks ?? []) as Array<Record<string, unknown>>).map((block) => ({
+      id: randomUUID(),
+      provider_id: providerId,
+      starts_at: String(block.startsAt),
+      ends_at: String(block.endsAt),
+      reason: block.reason === null || block.reason === undefined ? null : String(block.reason),
+    }))
+    const nextSlotRanges = Array.isArray(body.p_slots) ? body.p_slots.map(String) : []
+    const previousSlotSet = new Set(generatedSlotRangesByProvider.get(providerId) ?? [])
+    const nextSlotSet = new Set(nextSlotRanges)
+    const removedOpenSlots = [...previousSlotSet].filter((range) => !nextSlotSet.has(range)).length
+
+    provider.slot_minutes = Number(body.p_slot_minutes)
+    workingHours = [...workingHours.filter((row) => row.provider_id !== providerId), ...nextHours]
+    availabilityBlocks = [
+      ...availabilityBlocks.filter((row) => row.provider_id !== providerId),
+      ...nextBlocks,
+    ]
+    generatedSlotRangesByProvider.set(providerId, nextSlotRanges)
+
+    const preservedOutOfHours = appointmentFallsOutsideWorkingHours(nextHours)
+      ? [
+          {
+            appointmentId: '33773377-3377-4377-8377-337733773377',
+            startsAt: '2026-08-17T16:00:00-05:00',
+            endsAt: '2026-08-17T16:30:00-05:00',
+            patientRef: SEEDED_PATIENT.patient_ref,
+          },
+        ]
+      : []
+
+    sendJson(res, 200, [
+      {
+        removed_open_slots: removedOpenSlots,
+        generated_open_slots: nextSlotRanges.length,
+        preserved_out_of_hours: preservedOutOfHours,
+      },
+    ])
+  }
+
   function resetIdentityState(res: ServerResponse): void {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
     identityAttempts = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
+  }
+
+
+  function resetAvailabilityState(res: ServerResponse): void {
+    providers = PROVIDERS.map((provider) => ({ ...provider }))
+    workingHours = [
+      { provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' },
+      { provider_id: E2_OTHER_PROVIDER_ID, weekday: 2, starts_local: '10:00:00', ends_local: '14:00:00' },
+    ]
+    availabilityBlocks = []
+    generatedSlotRangesByProvider = new Map()
+    sendJson(res, 200, { providerId: E2_PROVIDER_ID })
   }
 
   const server: Server = createServer((req, res) => {
@@ -602,6 +772,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'POST' && url.pathname === '/__test__/reset-identity') {
       resetIdentityState(res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/reset-availability') {
+      resetAvailabilityState(res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
@@ -643,6 +817,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     if (
       url.pathname === '/rest/v1/providers' ||
       url.pathname === '/rest/v1/staff_admins' ||
+      url.pathname === '/rest/v1/working_hours' ||
+      url.pathname === '/rest/v1/availability_blocks' ||
       url.pathname === '/rest/v1/cine_frames' ||
       url.pathname === '/rest/v1/reports' ||
       SEEDED_PATIENT_TABLES.has(url.pathname)
@@ -660,6 +836,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === LINK_PATIENT_RPC_PATH) {
       void handleLinkPatient(req, res)
+      return
+    }
+    if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
+      void handleApplyAvailability(req, res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {
