@@ -354,6 +354,19 @@ function psqlScript(dbName: string, sql: string): void {
   })
 }
 
+// The migrated availability RPC checks the same JWT subject that Supabase
+// supplies in production.  The local harness intentionally starts with a
+// null-only stub, so teach this one throwaway database to read the session
+// setting before the full seed drives its provider-owned availability edit.
+function installSessionScopedAuthUid(dbName: string): void {
+  psql(
+    dbName,
+    `create or replace function auth.uid() returns uuid
+     language sql stable
+     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
+  )
+}
+
 function expectPsqlToFail(dbName: string, sql: string): void {
   expect(() => psql(dbName, sql)).toThrow()
 }
@@ -389,6 +402,7 @@ describe('AC: clean database → 001, 002, 003 → db/seed/index.ts completes an
   beforeAll(async () => {
     container = await ensureContainer()
     run = await startRun(container)
+    installSessionScopedAuthUid(run.dbName)
   }, DB_TIMEOUT_MS)
 
   afterAll(async () => {
@@ -414,6 +428,7 @@ describe('AC: clean database → 001, 002, 003 → db/seed/index.ts completes an
       expect(Number(psql(run.dbName, 'select count(*) from patients;'))).toBe(PATIENT_COUNT)
       expect(Number(psql(run.dbName, 'select count(*) from slots;'))).toBe(record.rowCounts.slots)
       expect(Number(psql(run.dbName, 'select count(*) from appointments;'))).toBe(record.rowCounts.appointments)
+      expect(Number(psql(run.dbName, 'select count(*) from appointments where out_of_hours;'))).toBeGreaterThan(0)
     },
     DB_TIMEOUT_MS,
   )
