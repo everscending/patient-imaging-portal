@@ -130,6 +130,7 @@ export async function runSeed(deps: RunSeedDeps): Promise<SeedRunRecord> {
 
   await createDemoAuthUsers(deps.authAdmin, rowSet)
   const rowCounts = await executeInsertPlan(deps.db, rowSet)
+  await (await import('./fixtures-out-of-hours')).seedOutOfHoursFixture({ db: deps.db, rowSet, sourceSeed: deps.sourceSeed })
 
   return {
     seed: deps.sourceSeed,

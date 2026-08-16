@@ -5,6 +5,25 @@ import { config } from './lib/config'
 // so a second worktree booting on its own PORT never collides with this one.
 export default defineConfig({
   testDir: './e2e',
+  reporter: [['line'], ['json', { outputFile: 'test-results/playwright.json' }]],
+  projects: [
+    {
+      name: 'product',
+      testIgnore: /e[012]-wiring\.spec\.ts/,
+    },
+    {
+      // The E2 fixture exposes mutable identity and audit state. Running it
+      // after product prevents unrelated parallel requests from being counted
+      // as part of E2's exact audit assertions.
+      name: 'e2-wiring',
+      testMatch: /e2-wiring\.spec\.ts/,
+      dependencies: ['product'],
+    },
+    {
+      name: 'certification',
+      testMatch: /e[01]-wiring\.spec\.ts/,
+    },
+  ],
   use: {
     baseURL: `http://localhost:${config.port}`,
   },

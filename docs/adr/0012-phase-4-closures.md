@@ -22,7 +22,7 @@ ADR is the record; the individual documents carry the change.
 |---|----------|--------|
 | 1 | Where profile fields live before FR-2 links the account | The profile form reads and writes **account** metadata. `patients` stays clinic-of-record and the patient never edits it. |
 | 2 | How a list endpoint calls the access guard | `PhiTarget` gains a **collection** member. One audit row per list read, `target_id` null. |
-| 3 | Who writes audit events that are not PHI reads | The **domain module that owns the action**, through `lib/audit/events.ts`. The guard keeps the PHI-read actions. |
+| 3 | Who writes audit events that are not PHI reads | The **domain module that owns the action**, through `lib/audit/events.ts`. The guard keeps the PHI-read actions. ADR-0014 adds the narrow exception for a database transaction that must commit its mutation and audit rows together. |
 | 4 | How an availability edit removes open slots with no DELETE grant | A `SECURITY DEFINER` function, `regenerate_provider_slots`. The app role still holds no DELETE. |
 | 5 | How far ahead slots are generated | `SLOT_HORIZON_DAYS`, default **60**. |
 | 6 | The stated session lifetime | **60 minutes of inactivity**, stated on `/login` and `/register`. |
