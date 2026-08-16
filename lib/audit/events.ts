@@ -61,18 +61,10 @@ function forbiddenDetailKey(detail: RecordAuditEventInput['detail']): string | n
   return null
 }
 
-const MAX_LOGGED_ERROR_LENGTH = 300
-
-function shortError(error: unknown): string {
-  if (error instanceof Error) return error.message.slice(0, MAX_LOGGED_ERROR_LENGTH)
-  if (typeof error === 'string') return error.slice(0, MAX_LOGGED_ERROR_LENGTH)
-  return 'audit_events insert failed'
-}
-
-// Never PHI (SEC-6): only the action and a short adapter-side error string —
-// never `detail`, never a raw Postgres error string.
-function logWriteFailure(action: AuditAction, error: string): void {
-  console.error(JSON.stringify({ event: 'audit_events.write_failed', action, error }))
+// Never PHI (SEC-6): the exact log shape is allowlisted. Adapter errors and
+// thrown values can echo rejected inputs, so none of their fields are logged.
+function logWriteFailure(action: AuditAction): void {
+  console.error(JSON.stringify({ event: 'audit_events.write_failed', action, failureCategory: 'audit_write_failure' }))
 }
 
 // The pinned recordAuditEvent signature carries no accessToken parameter, so
@@ -132,8 +124,8 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
       outcome: input.outcome,
       detail: input.detail ?? null,
     })
-    if (error) logWriteFailure(input.action, error.message)
-  } catch (error) {
-    logWriteFailure(input.action, shortError(error))
+    if (error) logWriteFailure(input.action)
+  } catch {
+    logWriteFailure(input.action)
   }
 }

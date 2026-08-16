@@ -48,6 +48,7 @@ const {
   authClientMock,
   resetFakeAuditTable,
   setInsertBehavior,
+  setInsertFailureMessage,
   setCallerHasSession,
   setSessionTokenValid,
   hasCallerSession,
@@ -56,6 +57,7 @@ const {
 } = vi.hoisted(() => {
   const rows: FakeAuditRow[] = []
   let behavior: 'ok' | 'pg-error' | 'throw' = 'ok'
+  let insertFailureMessage = 'simulated audit write failure'
   let callerHasSession = true
   let sessionTokenValid = true
   // Must match lib/session-cookie.ts's SESSION_COOKIE_NAME — kept as a
@@ -69,8 +71,8 @@ const {
       if (table !== 'audit_events') throw new Error(`fake client: unexpected table "${table}"`)
       return {
         async insert(row: FakeAuditRow) {
-          if (behavior === 'throw') throw new Error('simulated network failure')
-          if (behavior === 'pg-error') return { error: { message: 'simulated postgres failure' } }
+          if (behavior === 'throw') throw new Error(insertFailureMessage)
+          if (behavior === 'pg-error') return { error: { message: insertFailureMessage } }
           if (!sessionTokenValid) return { error: { message: 'invalid session JWT' } }
           rows.push(row)
           return { error: null }
@@ -108,11 +110,15 @@ const {
     resetFakeAuditTable: () => {
       rows.length = 0
       behavior = 'ok'
+      insertFailureMessage = 'simulated audit write failure'
       callerHasSession = true
       sessionTokenValid = true
     },
     setInsertBehavior: (next: 'ok' | 'pg-error' | 'throw') => {
       behavior = next
+    },
+    setInsertFailureMessage: (message: string) => {
+      insertFailureMessage = message
     },
     setCallerHasSession: (next: boolean) => {
       callerHasSession = next
@@ -183,6 +189,36 @@ function baseInput(overrides: Partial<RecordAuditEventInput> = {}): RecordAuditE
     outcome: 'granted',
     ...overrides,
   }
+}
+
+const SENSITIVE_LOG_SENTINELS = [
+  'PHI_PATIENT_DOB_1987-04-03',
+  'TOKEN_eyJhbGciOiJIUzI1NiJ9_DO_NOT_LOG',
+  'SECRET_service_role_key_DO_NOT_LOG',
+]
+
+function sensitiveFailureMessage(): string {
+  return `rejected audit row containing ${SENSITIVE_LOG_SENTINELS.join(' and ')}`
+}
+
+function expectRedactedWriteFailureLog(calls: unknown[][]): void {
+  expect(calls).toHaveLength(1)
+  expect(calls[0]).toHaveLength(1)
+
+  const serializedConsoleArguments = JSON.stringify(calls)
+  const logged = JSON.parse(calls[0]?.[0] as string)
+  const serializedStructuredFields = JSON.stringify(logged)
+
+  for (const sentinel of SENSITIVE_LOG_SENTINELS) {
+    expect(serializedConsoleArguments).not.toContain(sentinel)
+    expect(serializedStructuredFields).not.toContain(sentinel)
+  }
+
+  expect(logged).toEqual({
+    event: 'audit_events.write_failed',
+    action: 'study.view',
+    failureCategory: 'audit_write_failure',
+  })
 }
 
 describe('AC: recordAuditEvent appends one row inside the pinned action/outcome sets', () => {
@@ -330,21 +366,20 @@ describe('AC: recordAuditEvent is callable by a domain module directly, targetId
 })
 
 describe('design decision: recordAuditEvent resolves void and never rethrows a write failure', () => {
-  test('aFailedInsertIsLoggedAndSwallowedNotRethrown', async function aFailedInsertIsLoggedAndSwallowedNotRethrown() {
+  test('returnedAdapterErrorIsRedactedLoggedAndSwallowed', async function returnedAdapterErrorIsRedactedLoggedAndSwallowed() {
     setInsertBehavior('pg-error')
+    setInsertFailureMessage(sensitiveFailureMessage())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
-    expect(errorSpy).toHaveBeenCalledTimes(1)
-    const logged = JSON.parse(errorSpy.mock.calls[0]?.[0] as string)
-    expect(logged.event).toBe('audit_events.write_failed')
-    expect(logged.action).toBe('study.view')
+    expectRedactedWriteFailureLog(errorSpy.mock.calls)
   })
 
-  test('aClientThatThrowsSynchronouslyIsLoggedAndSwallowedNotRethrown', async function aClientThatThrowsSynchronouslyIsLoggedAndSwallowedNotRethrown() {
+  test('thrownAdapterExceptionIsRedactedLoggedAndSwallowed', async function thrownAdapterExceptionIsRedactedLoggedAndSwallowed() {
     setInsertBehavior('throw')
+    setInsertFailureMessage(sensitiveFailureMessage())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
-    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expectRedactedWriteFailureLog(errorSpy.mock.calls)
   })
 
   test('missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
