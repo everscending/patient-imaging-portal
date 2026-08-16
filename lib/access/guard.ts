@@ -72,6 +72,7 @@ type Client = ReturnType<typeof anonClient>
 
 type PatientLinkRow = { id: string }
 type ProviderRow = { id: string }
+type StaffAdminRow = { id: string }
 type OwnedRow = { id: string; patient_id: string }
 type ReportRow = { id: string; patient_id: string; status: 'preliminary' | 'signed' }
 type ReportWithStudyRow = { id: string; patient_id: string; study_id: string }
@@ -179,6 +180,12 @@ async function decideReportForProvider(client: Client, reportId: string, provide
 }
 
 async function decideProvider(client: Client, userId: string, target: PhiTarget): Promise<GuardResult> {
+  // SEC-2: matching the authenticated account id is not enough to establish
+  // the claimed role. Resolve provider membership through the caller's own
+  // client before any provider-specific grant, including a collection.
+  const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
+  if (!provider) return { ok: false, status: 404 }
+
   switch (target.kind) {
     case 'collection':
       return { ok: true, patientId: null }
@@ -190,36 +197,31 @@ async function decideProvider(client: Client, userId: string, target: PhiTarget)
       // (images_own/clips_own key on patient_id only) — no ownership
       // definition exists for this actor/target pair, so it always fails.
       return { ok: false, status: 404 }
-    case 'schedule': {
-      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
-      if (!provider) return { ok: false, status: 404 }
+    case 'schedule':
       return provider.id === target.id ? { ok: true, patientId: null } : { ok: false, status: 404 }
-    }
     case 'appointment': {
-      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
-      if (!provider) return { ok: false, status: 404 }
       const row = await fetchRow<OwnedRow>(client, 'appointments', [
         ['id', target.id],
         ['provider_id', provider.id],
       ])
       return row ? { ok: true, patientId: row.patient_id } : { ok: false, status: 404 }
     }
-    case 'study': {
-      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
-      if (!provider) return { ok: false, status: 404 }
+    case 'study':
       return decideStudyForProvider(client, target.id, provider.id)
-    }
-    case 'report': {
-      const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
-      if (!provider) return { ok: false, status: 404 }
+    case 'report':
       return decideReportForProvider(client, target.id, provider.id)
-    }
     default:
       return assertNever(target)
   }
 }
 
-async function decideAdmin(client: Client, target: PhiTarget): Promise<GuardResult> {
+async function decideAdmin(client: Client, userId: string, target: PhiTarget): Promise<GuardResult> {
+  // SEC-2: "admin owns every target" applies only after the authenticated
+  // account is proven to be staff. Query membership with the caller-scoped
+  // client before collection, audit-log, or target-specific access.
+  const admin = await fetchRow<StaffAdminRow>(client, 'staff_admins', [['user_id', userId]])
+  if (!admin) return { ok: false, status: 404 }
+
   switch (target.kind) {
     case 'collection':
     case 'audit_log':
@@ -297,7 +299,7 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
     case 'provider':
       return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId }
     case 'admin':
-      return { result: await decideAdmin(client, target), authenticatedUserId }
+      return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId }
     default:
       return assertNever(actor)
   }

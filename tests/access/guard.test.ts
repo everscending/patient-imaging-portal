@@ -83,6 +83,10 @@
 //   admin actor userId differs from the authenticated session user → 401,
 //   no target lookup, one denial audit attributed to the session user
 //     → adminActorMismatchReturnsFourOhOneWithoutTargetLookup
+//   patient account claims the provider role for a collection → denied
+//     → patientAccountCannotClaimProviderRoleForCollection
+//   patient account claims the admin role for a collection or audit_log → denied
+//     → patientAccountCannotClaimAdminRoleForCollectionOrAuditLog
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -110,6 +114,7 @@ const {
   const tables: Record<string, FakeRow[]> = {
     patients: [],
     providers: [],
+    staff_admins: [],
     visits: [],
     studies: [],
     images: [],
@@ -245,6 +250,12 @@ function seedProvider(overrides: Partial<{ id: string; user_id: string | null }>
   return row
 }
 
+function seedAdmin(overrides: Partial<{ id: string; user_id: string }> = {}) {
+  const row = { id: overrides.id ?? nextId('admin'), user_id: overrides.user_id ?? nextId('admin-user') }
+  db.staff_admins!.push(row)
+  return row
+}
+
 function seedVisit(overrides: { id?: string; patient_id: string; provider_id: string }) {
   const row = { id: overrides.id ?? nextId('visit'), patient_id: overrides.patient_id, provider_id: overrides.provider_id }
   db.visits!.push(row)
@@ -348,6 +359,7 @@ describe("AC: every row of §5's status table, reproduced by a real guardPhiAcce
     // Report preliminary, provider or admin actor -> allowed
     const providerPrelim = await guardPhiAccess({ kind: 'provider', userId: 'st-user-prov-x' }, { kind: 'report', id: prelimReport.id }, 'report.view')
     expect(providerPrelim).toEqual({ ok: true, patientId: 'st-self' })
+    seedAdmin({ user_id: 'st-admin' })
     const adminPrelim = await guardPhiAccess({ kind: 'admin', userId: 'st-admin' }, { kind: 'report', id: prelimReport.id }, 'report.view')
     expect(adminPrelim).toEqual({ ok: true, patientId: 'st-self' })
   })
@@ -371,6 +383,7 @@ describe("AC: every row of §5's ownership table, reproduced by a real guardPhiA
     expect(db.patients!.some((row) => row.user_id === 'ot-user-prov')).toBe(false)
 
     // admin: always true, and always audited (SEC-2)
+    seedAdmin({ user_id: 'ot-admin' })
     const beforeAdminCount = auditCalls.length
     const ownedByAdmin = await guardPhiAccess({ kind: 'admin', userId: 'ot-admin' }, { kind: 'study', id: study.id }, 'study.view')
     expect(ownedByAdmin).toEqual({ ok: true, patientId: 'ot-p1' })
@@ -464,6 +477,7 @@ describe('AC: a preliminary report is 404 for its own patient and allowed for th
     const providerResult = await guardPhiAccess({ kind: 'provider', userId: 'pr-user-prov' }, { kind: 'report', id: report.id }, 'report.view')
     expect(providerResult).toEqual({ ok: true, patientId: patient.id })
 
+    seedAdmin({ user_id: 'pr-admin' })
     const adminResult = await guardPhiAccess({ kind: 'admin', userId: 'pr-admin' }, { kind: 'report', id: report.id }, 'report.view')
     expect(adminResult).toEqual({ ok: true, patientId: patient.id })
   })
@@ -476,6 +490,7 @@ describe("AC: {kind:'schedule'} and {kind:'audit_log'} return ok with patientId 
     const ownSchedule = await guardPhiAccess({ kind: 'provider', userId: 'sa-user-prov' }, { kind: 'schedule', id: provider.id }, 'schedule.view')
     expect(ownSchedule).toEqual({ ok: true, patientId: null })
 
+    seedAdmin({ user_id: 'sa-admin' })
     const adminSchedule = await guardPhiAccess({ kind: 'admin', userId: 'sa-admin' }, { kind: 'schedule', id: provider.id }, 'schedule.view')
     expect(adminSchedule).toEqual({ ok: true, patientId: null })
 
@@ -886,5 +901,39 @@ describe('mandatory adversarial: an admin actor cannot claim a different authent
     expect(auditCalls).toHaveLength(1)
     expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: authenticatedUserId, outcome: 'denied' })
     expect(auditCalls[0]!.actorRef).not.toBe(claimedUserId)
+  })
+})
+
+describe('mandatory adversarial: an authenticated patient account cannot claim the provider role', () => {
+  test('patientAccountCannotClaimProviderRoleForCollection', async function patientAccountCannotClaimProviderRoleForCollection() {
+    const patientUserId = 'm19-patient-user'
+    seedPatient({ id: 'm19-patient', user_id: patientUserId })
+
+    const result = await guardPhiAccess({ kind: 'provider', userId: patientUserId }, { kind: 'collection', of: 'study' }, 'study.view')
+
+    expect(result).toEqual({ ok: false, status: 404 })
+    expect(auditCalls).toHaveLength(1)
+    expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: patientUserId, outcome: 'denied' })
+  })
+})
+
+describe('mandatory adversarial: an authenticated patient account cannot claim the admin role', () => {
+  test('patientAccountCannotClaimAdminRoleForCollectionOrAuditLog', async function patientAccountCannotClaimAdminRoleForCollectionOrAuditLog() {
+    const patientUserId = 'm20-patient-user'
+    seedPatient({ id: 'm20-patient', user_id: patientUserId })
+
+    const targets: Array<[PhiTarget, AuditAction]> = [
+      [{ kind: 'collection', of: 'report' }, 'report.view'],
+      [{ kind: 'audit_log' }, 'audit.view'],
+    ]
+
+    for (const [target, action] of targets) {
+      const before = auditCalls.length
+      const result = await guardPhiAccess({ kind: 'admin', userId: patientUserId }, target, action)
+
+      expect(result).toEqual({ ok: false, status: 404 })
+      expect(auditCalls).toHaveLength(before + 1)
+      expect(auditCalls[before]).toMatchObject({ actorKind: 'account', actorRef: patientUserId, outcome: 'denied' })
+    }
   })
 })
