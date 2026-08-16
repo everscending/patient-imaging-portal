@@ -29,7 +29,10 @@ export function Filmstrip({ images, selectedImageId, onSelect }: FilmstripProps)
           {image.thumbUrl ? (
             <img alt="" className="pip-filmstrip-thumbnail" loading="lazy" src={image.thumbUrl} />
           ) : (
-            <span aria-hidden="true">{image.ordinal}</span>
+            <>
+              <span aria-hidden="true">{image.ordinal}</span>
+              <span className="pip-visually-hidden">Loading image {image.ordinal} thumbnail</span>
+            </>
           )}
         </button>
       ))}

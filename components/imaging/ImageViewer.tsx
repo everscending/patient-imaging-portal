@@ -15,6 +15,8 @@ export type ImageViewerProps = {
 }
 
 type Point = { x: number; y: number }
+type FullImageState = 'loading' | 'loaded' | 'error'
+type FullImageLoad = { key: string | undefined; state: FullImageState }
 const MIN_ZOOM = 1
 const MAX_ZOOM = 4
 const ZOOM_STEP = 0.25
@@ -33,19 +35,19 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   const [selectedImageId, setSelectedImageId] = useState(firstImageId)
   const [zoom, setZoom] = useState(MIN_ZOOM)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
-  const [fullLoaded, setFullLoaded] = useState(false)
+  const [fullImageLoad, setFullImageLoad] = useState<FullImageLoad>({ key: undefined, state: 'loading' })
+  const [failedThumbnailKey, setFailedThumbnailKey] = useState<string>()
   const pointers = useRef(new Map<number, Point>())
   const dragOrigin = useRef<Point | null>(null)
   const pinchOrigin = useRef<{ distance: number; zoom: number } | null>(null)
   const selected = images.find((image) => image.id === selectedImageId)
+  const selectedAssetKey = selected ? `${selected.id}:${selected.url}` : undefined
+  const selectedThumbnailKey = selected?.thumbUrl ? `${selected.id}:${selected.thumbUrl}` : undefined
+  const fullImageState = fullImageLoad.key === selectedAssetKey ? fullImageLoad.state : 'loading'
 
   useEffect(() => {
-    setSelectedImageId(firstImageId)
-  }, [firstImageId])
-
-  useEffect(() => {
-    setFullLoaded(false)
-  }, [selected?.id, selected?.url])
+    if (!images.some((image) => image.id === selectedImageId)) setSelectedImageId(firstImageId)
+  }, [firstImageId, images, selectedImageId])
 
   // URLs are issued by the study API. Refresh the server-rendered manifest
   // shortly before the current selection expires; this component never signs
@@ -53,6 +55,7 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   useEffect(() => {
     if (!selected?.expiresAt) return
     const millisecondsUntilRefresh = Date.parse(selected.expiresAt) - Date.now() - 60_000
+    if (!Number.isFinite(millisecondsUntilRefresh)) return
     const refreshTimer = window.setTimeout(router.refresh, Math.max(0, millisecondsUntilRefresh))
     return () => window.clearTimeout(refreshTimer)
   }, [router, selected?.expiresAt])
@@ -72,6 +75,12 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
     const [first, second] = [...pointers.current.values()]
     return first && second ? Math.hypot(first.x - second.x, first.y - second.y) : 0
   }
+  const finishPointer = (pointerId: number) => {
+    pointers.current.delete(pointerId)
+    pinchOrigin.current = null
+    const remaining = [...pointers.current.values()][0]
+    dragOrigin.current = remaining ?? null
+  }
 
   return (
     <section className={`pip-image-viewer pip-image-viewer--${variant}`} data-testid="image-viewer" aria-label="Image viewer">
@@ -79,7 +88,8 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         aria-label="Image canvas. Use arrow keys to pan, plus and minus to zoom."
         className="pip-image-canvas"
         data-testid="image-canvas"
-        aria-busy={Boolean(selected?.url) && !fullLoaded}
+        aria-busy={Boolean(selected?.url) && fullImageState === 'loading'}
+        aria-keyshortcuts="+ - 0 ArrowLeft ArrowRight ArrowUp ArrowDown"
         onDoubleClick={() => changeZoom(ZOOM_STEP)}
         onKeyDown={(event) => {
           if (event.key === '+' || event.key === '=') { event.preventDefault(); changeZoom(ZOOM_STEP) }
@@ -91,7 +101,7 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
           else if (event.key === 'ArrowDown') { event.preventDefault(); panBy(0, PAN_STEP) }
         }}
         onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId)
+          try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* Synthetic touch tests have no native pointer capture. */ }
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
           if (pointers.current.size === 1) dragOrigin.current = { x: event.clientX, y: event.clientY }
           if (pointers.current.size === 2) {
@@ -109,18 +119,19 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
             panBy(event.clientX - previous.x, event.clientY - previous.y)
           }
         }}
-        onPointerUp={(event) => { pointers.current.delete(event.pointerId); dragOrigin.current = null; pinchOrigin.current = null }}
-        onPointerCancel={(event) => { pointers.current.delete(event.pointerId); dragOrigin.current = null; pinchOrigin.current = null }}
+        onPointerUp={(event) => finishPointer(event.pointerId)}
+        onPointerCancel={(event) => finishPointer(event.pointerId)}
         onWheel={(event) => { event.preventDefault(); changeZoom(event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP) }}
         role="application"
         tabIndex={0}
       >
-        {selected?.thumbUrl && (
+        {selected?.thumbUrl && fullImageState !== 'loaded' && selectedThumbnailKey !== failedThumbnailKey && (
           <img
             alt=""
             className="pip-viewer-image pip-viewer-thumb"
             data-testid="image-thumbnail"
             height={selected.height}
+            onError={() => setFailedThumbnailKey(selectedThumbnailKey)}
             src={selected.thumbUrl}
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             width={selected.width}
@@ -132,20 +143,22 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
             className="pip-viewer-image pip-viewer-full"
             data-testid="image-full"
             height={selected.height}
-            onLoad={() => setFullLoaded(true)}
+            onError={() => setFullImageLoad({ key: selectedAssetKey, state: 'error' })}
+            onLoad={() => setFullImageLoad({ key: selectedAssetKey, state: 'loaded' })}
             src={selected.url}
-            style={{ opacity: fullLoaded ? 1 : 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+            style={{ opacity: fullImageState === 'loaded' ? 1 : 0, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             width={selected.width}
           />
         )}
-        {!fullLoaded && <p className="pip-viewer-loading" data-testid="image-loading" role="status">Loading full image…</p>}
+        {selected && fullImageState === 'loading' && <p className="pip-viewer-loading" data-testid="image-loading" role="status">Loading full image…</p>}
+        {selected && fullImageState === 'error' && <p className="pip-viewer-loading" data-testid="image-loading" role="status">Full image unavailable.</p>}
         {!selected && <p className="pip-viewer-loading" role="status">No images are available for this study.</p>}
       </div>
-      <div aria-label="Image controls" className="pip-viewer-controls">
+      <div aria-label="Image zoom controls" className="pip-viewer-controls" data-testid="image-zoom">
         <button aria-label="Zoom out" data-testid="zoom-out" onClick={() => changeZoom(-ZOOM_STEP)} type="button">−</button>
-        {variant === 'portal' && <button aria-label="Reset zoom to 100%" data-testid="zoom-reset" onClick={reset} type="button">100%</button>}
+        <button aria-label="Reset zoom to 100%" data-testid="zoom-reset" onClick={reset} type="button">100%</button>
         <button aria-label="Zoom in" data-testid="zoom-in" onClick={() => changeZoom(ZOOM_STEP)} type="button">+</button>
-        <output aria-live="polite" data-testid="zoom-level">Zoom {Math.round(zoom * 100)}%</output>
+        <output aria-atomic="true" aria-live="polite" data-testid="zoom-level">Zoom {Math.round(zoom * 100)}%</output>
       </div>
       {variant === 'portal' && <Filmstrip images={images} onSelect={changeSelection} selectedImageId={selectedImageId} />}
       <time className="pip-visually-hidden" dateTime={selected?.expiresAt}>Image URL expires at {selected?.expiresAt}</time>
@@ -153,9 +166,8 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         .pip-image-viewer { display: grid; gap: 0.5rem; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
         .pip-image-canvas {
           position: relative; display: grid; place-items: center; min-width: 0; min-height: min(65vh, 34rem);
-          overflow: hidden; touch-action: none; background: var(--pip-color-base-200); cursor: grab;
+          overflow: hidden; touch-action: none; background: var(--pip-color-base-content); cursor: grab;
         }
-        .pip-image-viewer--portal .pip-image-canvas { background: var(--pip-color-base-content); }
         .pip-image-canvas:focus-visible { outline: 3px solid var(--pip-color-accent); outline-offset: 2px; }
         .pip-viewer-image { position: absolute; max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity 120ms linear; }
         .pip-viewer-thumb { filter: blur(1px); transform: scale(1.01); }
