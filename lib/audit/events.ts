@@ -79,8 +79,20 @@ async function callerAccessToken(): Promise<string | null> {
   return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
 }
 
+const ACCOUNT_ACCESS_ACTIONS = new Set<AuditAction>([
+  'study.view',
+  'image.view',
+  'clip.view',
+  'report.view',
+  'share.create',
+  'share.view',
+  'appointment.view',
+  'schedule.view',
+  'audit.view',
+])
+
 function serviceRoleAllowed(input: RecordAuditEventInput): boolean {
-  return input.actorKind === 'account' && input.outcome === 'denied'
+  return input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied' && ACCOUNT_ACCESS_ACTIONS.has(input.action)
 }
 
 async function writeClient(input: RecordAuditEventInput): Promise<WriteClient> {

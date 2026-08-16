@@ -32,17 +32,31 @@ function assertNever(value: never): never {
   throw new Error(`lib/access/guard.ts: unreachable variant ${JSON.stringify(value)}`)
 }
 
-function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipient'; actorRef: string } {
+function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipient'; actorRef: string | null } {
   switch (actor.kind) {
     case 'patient':
     case 'provider':
     case 'admin':
-      return { actorKind: 'account', actorRef: actor.userId }
+      // The supplied account id is only a claim until the session is
+      // authenticated. Missing/invalid sessions must not attribute an
+      // elevated audit write to that unverified value.
+      return { actorKind: 'account', actorRef: null }
     case 'share_recipient':
       return { actorKind: 'share_recipient', actorRef: actor.shareLinkId }
     default:
       return assertNever(actor)
   }
+}
+
+const COLLECTION_ACTIONS: Record<Extract<PhiTarget, { kind: 'collection' }>['of'], AuditAction> = {
+  study: 'study.view',
+  report: 'report.view',
+  appointment: 'appointment.view',
+  share: 'share.view',
+}
+
+function recordedAction(target: PhiTarget, requestedAction: AuditAction): AuditAction {
+  return target.kind === 'collection' ? COLLECTION_ACTIONS[target.of] : requestedAction
 }
 
 function targetAuditFields(target: PhiTarget): { targetKind: string; targetId: string | null } {
@@ -89,13 +103,13 @@ const PATIENT_SCOPED_TABLES: Record<'study' | 'image' | 'clip' | 'appointment', 
   appointment: 'appointments',
 }
 
-async function fetchRow<T>(client: Client, table: string, filters: Array<[string, string]>): Promise<T | null> {
-  let query = client.from(table).select('*')
+async function fetchRow<T>(client: Client, table: string, columns: string, filters: Array<[string, string]>): Promise<T | null> {
+  let query = client.from(table).select(columns)
   for (const [column, value] of filters) {
     query = query.eq(column, value)
   }
   const { data, error } = await query.maybeSingle()
-  if (error) throw new Error(`guard: failed to read ${table}: ${error.message}`)
+  if (error) throw new Error('guard: authorization dependency read failed')
   return (data as T | null) ?? null
 }
 
@@ -108,7 +122,7 @@ async function callerAccessToken(): Promise<string | null> {
 }
 
 async function decidePatientReport(client: Client, reportId: string, patientId: string): Promise<GuardResult> {
-  const report = await fetchRow<ReportRow>(client, 'reports', [
+  const report = await fetchRow<ReportRow>(client, 'reports', 'id, patient_id, status', [
     ['id', reportId],
     ['patient_id', patientId],
   ])
@@ -123,7 +137,7 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
   // §4: the identity link is patients.user_id, read through the caller's own
   // client under the patients_self policy — zero rows for an unlinked or
   // deleted-underneath-them account, identical to "never linked" (ADR-0011).
-  const patient = await fetchRow<PatientLinkRow>(client, 'patients', [['user_id', userId]])
+  const patient = await fetchRow<PatientLinkRow>(client, 'patients', 'id', [['user_id', userId]])
   if (!patient) return { ok: false, status: 403 }
   const patientId = patient.id
 
@@ -142,7 +156,7 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
     case 'image':
     case 'clip':
     case 'appointment': {
-      const row = await fetchRow<OwnedRow>(client, PATIENT_SCOPED_TABLES[target.kind], [
+      const row = await fetchRow<OwnedRow>(client, PATIENT_SCOPED_TABLES[target.kind], 'id, patient_id', [
         ['id', target.id],
         ['patient_id', patientId],
       ])
@@ -154,9 +168,9 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
 }
 
 async function decideStudyForProvider(client: Client, studyId: string, providerId: string): Promise<GuardResult> {
-  const study = await fetchRow<StudyRow>(client, 'studies', [['id', studyId]])
+  const study = await fetchRow<StudyRow>(client, 'studies', 'id, patient_id, visit_id', [['id', studyId]])
   if (!study) return { ok: false, status: 404 }
-  const visit = await fetchRow<VisitRow>(client, 'visits', [
+  const visit = await fetchRow<VisitRow>(client, 'visits', 'id', [
     ['id', study.visit_id],
     ['provider_id', providerId],
   ])
@@ -165,11 +179,11 @@ async function decideStudyForProvider(client: Client, studyId: string, providerI
 }
 
 async function decideReportForProvider(client: Client, reportId: string, providerId: string): Promise<GuardResult> {
-  const report = await fetchRow<ReportWithStudyRow>(client, 'reports', [['id', reportId]])
+  const report = await fetchRow<ReportWithStudyRow>(client, 'reports', 'id, patient_id, study_id', [['id', reportId]])
   if (!report) return { ok: false, status: 404 }
-  const study = await fetchRow<StudyRow>(client, 'studies', [['id', report.study_id]])
+  const study = await fetchRow<StudyRow>(client, 'studies', 'id, patient_id, visit_id', [['id', report.study_id]])
   if (!study) return { ok: false, status: 404 }
-  const visit = await fetchRow<VisitRow>(client, 'visits', [
+  const visit = await fetchRow<VisitRow>(client, 'visits', 'id', [
     ['id', study.visit_id],
     ['provider_id', providerId],
   ])
@@ -183,7 +197,7 @@ async function decideProvider(client: Client, userId: string, target: PhiTarget)
   // SEC-2: matching the authenticated account id is not enough to establish
   // the claimed role. Resolve provider membership through the caller's own
   // client before any provider-specific grant, including a collection.
-  const provider = await fetchRow<ProviderRow>(client, 'providers', [['user_id', userId]])
+  const provider = await fetchRow<ProviderRow>(client, 'providers', 'id', [['user_id', userId]])
   if (!provider) return { ok: false, status: 404 }
 
   switch (target.kind) {
@@ -200,7 +214,7 @@ async function decideProvider(client: Client, userId: string, target: PhiTarget)
     case 'schedule':
       return provider.id === target.id ? { ok: true, patientId: null } : { ok: false, status: 404 }
     case 'appointment': {
-      const row = await fetchRow<OwnedRow>(client, 'appointments', [
+      const row = await fetchRow<OwnedRow>(client, 'appointments', 'id, patient_id', [
         ['id', target.id],
         ['provider_id', provider.id],
       ])
@@ -219,7 +233,7 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
   // SEC-2: "admin owns every target" applies only after the authenticated
   // account is proven to be staff. Query membership with the caller-scoped
   // client before collection, audit-log, or target-specific access.
-  const admin = await fetchRow<StaffAdminRow>(client, 'staff_admins', [['user_id', userId]])
+  const admin = await fetchRow<StaffAdminRow>(client, 'staff_admins', 'id', [['user_id', userId]])
   if (!admin) return { ok: false, status: 404 }
 
   switch (target.kind) {
@@ -229,19 +243,19 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
       // audit write happens unconditionally in guardPhiAccess below.
       return { ok: true, patientId: null }
     case 'schedule': {
-      const provider = await fetchRow<ProviderRow>(client, 'providers', [['id', target.id]])
+      const provider = await fetchRow<ProviderRow>(client, 'providers', 'id', [['id', target.id]])
       return provider ? { ok: true, patientId: null } : { ok: false, status: 404 }
     }
     case 'study':
     case 'image':
     case 'clip':
     case 'appointment': {
-      const row = await fetchRow<OwnedRow>(client, PATIENT_SCOPED_TABLES[target.kind], [['id', target.id]])
+      const row = await fetchRow<OwnedRow>(client, PATIENT_SCOPED_TABLES[target.kind], 'id, patient_id', [['id', target.id]])
       return row ? { ok: true, patientId: row.patient_id } : { ok: false, status: 404 }
     }
     case 'report': {
       // Preliminary is allowed for admin (§5) — no status check needed.
-      const row = await fetchRow<ReportRow>(client, 'reports', [['id', target.id]])
+      const row = await fetchRow<ReportRow>(client, 'reports', 'id, patient_id, status', [['id', target.id]])
       return row ? { ok: true, patientId: row.patient_id } : { ok: false, status: 404 }
     }
     default:
@@ -261,7 +275,7 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
 async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Promise<GuardResult> {
   if (target.kind !== 'image' && target.kind !== 'report') return { ok: false, status: 404 }
 
-  const link = await fetchRow<ShareLinkRow>(serviceClient(), 'share_links', [['id', shareLinkId]])
+  const link = await fetchRow<ShareLinkRow>(serviceClient(), 'share_links', 'id, patient_id, image_id, report_id', [['id', shareLinkId]])
   if (!link) return { ok: false, status: 404 }
 
   const namedId = target.kind === 'image' ? link.image_id : link.report_id
@@ -273,11 +287,16 @@ async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Pro
 type AccessDecision = {
   result: GuardResult
   authenticatedUserId?: string
+  dependencyFailed?: boolean
 }
 
 async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> {
   if (actor.kind === 'share_recipient') {
-    return { result: await decideShareRecipient(actor.shareLinkId, target) }
+    try {
+      return { result: await decideShareRecipient(actor.shareLinkId, target) }
+    } catch {
+      return { result: { ok: false, status: 404 }, dependencyFailed: true }
+    }
   }
 
   const token = await callerAccessToken()
@@ -293,15 +312,19 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
 
   const client = anonClient(token)
 
-  switch (actor.kind) {
-    case 'patient':
-      return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId }
-    case 'provider':
-      return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId }
-    case 'admin':
-      return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId }
-    default:
-      return assertNever(actor)
+  try {
+    switch (actor.kind) {
+      case 'patient':
+        return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId }
+      case 'provider':
+        return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId }
+      case 'admin':
+        return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId }
+      default:
+        return assertNever(actor)
+    }
+  } catch {
+    return { result: { ok: false, status: 404 }, authenticatedUserId, dependencyFailed: true }
   }
 }
 
@@ -317,27 +340,21 @@ export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: Au
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
 
-  // Never throws out of this function (never a 500): an unexpected failure
-  // anywhere in decide() — a dropped connection, a deleted-underneath-them
-  // row surfacing as something other than a clean zero-row read — collapses
-  // to the same conservative denial a missing session gets.
-  let accessDecision: AccessDecision
-  try {
-    accessDecision = await decide(actor, target)
-  } catch {
-    accessDecision = { result: { ok: false, status: 401 } }
-  }
-
+  const accessDecision = await decide(actor, target)
   const decision = accessDecision.result
 
   await recordAuditEvent({
     actorKind,
     actorRef: accessDecision.authenticatedUserId ?? actorRef,
-    action,
+    action: recordedAction(target, action),
     targetKind,
     targetId,
     outcome: decision.ok ? 'granted' : 'denied',
   })
+
+  if (accessDecision.dependencyFailed) {
+    throw new Error('guardPhiAccess: authorization dependency unavailable')
+  }
 
   return decision
 }

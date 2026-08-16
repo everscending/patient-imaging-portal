@@ -163,7 +163,7 @@ describe('audit persistence across the real PHI guard and centralized writer', (
 
     expect(result).toEqual({ ok: false, status: 401 })
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: 'missing-account', outcome: 'denied' })
+    expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: null, outcome: 'denied' })
     expect(writeScopes).toEqual(['service'])
   })
 
@@ -174,7 +174,7 @@ describe('audit persistence across the real PHI guard and centralized writer', (
 
     expect(result).toEqual({ ok: false, status: 401 })
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: 'expired-account', outcome: 'denied' })
+    expect(auditRows[0]).toMatchObject({ actor_kind: 'account', actor_ref: null, outcome: 'denied' })
     expect(writeScopes).toEqual(['service'])
   })
 

@@ -103,7 +103,9 @@ const {
   anonClientMock,
   serviceClientMock,
   authClientMock,
+  selectedColumns,
   resetFake,
+  setReadFailureTable,
   setCallerHasSession,
   setSessionTokenValid,
   setSessionUserId,
@@ -127,6 +129,8 @@ const {
   let sessionPresent = true
   let sessionValid = true
   let sessionUserId = 'session-user'
+  let readFailureTable: string | null = null
+  const selections: Array<{ table: string; columns: string }> = []
 
   function matches(row: FakeRow, filters: Array<[string, unknown]>): boolean {
     return filters.every(([column, value]) => row[column] === value)
@@ -138,7 +142,8 @@ const {
         if (!(table in tables)) throw new Error(`fake client: unexpected table "${table}"`)
         const filters: Array<[string, unknown]> = []
         const api = {
-          select() {
+          select(columns: string) {
+            selections.push({ table, columns })
             return api
           },
           eq(column: string, value: unknown) {
@@ -146,6 +151,9 @@ const {
             return api
           },
           async maybeSingle() {
+            if (table === readFailureTable) {
+              return { data: null, error: { message: 'SECRET_DATABASE_ERROR_MUST_NOT_ESCAPE' } }
+            }
             const row = tables[table]?.find((candidate) => matches(candidate, filters)) ?? null
             return { data: row, error: null }
           },
@@ -168,12 +176,18 @@ const {
         },
       },
     })),
+    selectedColumns: selections,
     resetFake: () => {
       for (const key of Object.keys(tables)) tables[key]!.length = 0
       audits.length = 0
       sessionPresent = true
       sessionValid = true
       sessionUserId = 'session-user'
+      readFailureTable = null
+      selections.length = 0
+    },
+    setReadFailureTable: (table: string | null) => {
+      readFailureTable = table
     },
     setCallerHasSession: (next: boolean) => {
       sessionPresent = next
@@ -558,6 +572,36 @@ describe("AC: a collection read's recorded action is the *.view action of that k
       await guardPhiAccess({ kind: 'patient', userId: 'ca-user' }, { kind: 'collection', of }, action)
       expect(auditCalls[auditCalls.length - 1]).toMatchObject({ action })
     }
+
+    await guardPhiAccess({ kind: 'patient', userId: 'ca-user' }, { kind: 'collection', of: 'report' }, 'study.view')
+    expect(auditCalls[auditCalls.length - 1]).toMatchObject({ action: 'report.view' })
+  })
+})
+
+describe('SEC-5: ownership checks select only the columns they need', () => {
+  test('ownershipQueriesNeverSelectStar', async function ownershipQueriesNeverSelectStar() {
+    const patient = seedPatient({ id: 'minimum-patient', user_id: 'minimum-user' })
+    const provider = seedProvider({ id: 'minimum-provider', user_id: 'minimum-provider-user' })
+    const visit = seedVisit({ patient_id: patient.id, provider_id: provider.id })
+    const study = seedStudy({ visit_id: visit.id, patient_id: patient.id })
+
+    await guardPhiAccess({ kind: 'patient', userId: 'minimum-user' }, { kind: 'study', id: study.id }, 'study.view')
+
+    expect(selectedColumns.length).toBeGreaterThan(0)
+    expect(selectedColumns.map(({ columns }) => columns)).not.toContain('*')
+  })
+})
+
+describe('dependency failures are not reported as authentication failures', () => {
+  test('ownershipReadFailureAuditsThenThrowsSanitizedDependencyError', async function ownershipReadFailureAuditsThenThrowsSanitizedDependencyError() {
+    setReadFailureTable('patients')
+
+    await expect(
+      guardPhiAccess({ kind: 'patient', userId: 'dependency-user' }, { kind: 'collection', of: 'study' }, 'study.view'),
+    ).rejects.toThrow('guardPhiAccess: authorization dependency unavailable')
+
+    expect(auditCalls).toHaveLength(1)
+    expect(auditCalls[0]).toMatchObject({ actorKind: 'account', actorRef: 'dependency-user', outcome: 'denied' })
   })
 })
 
