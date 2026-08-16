@@ -49,6 +49,24 @@ type WriteClient = ReturnType<typeof anonClient>
 
 type DetailValue = string | number | boolean
 
+export type AuditLogEvent = {
+  id: number | string
+  occurred_at: string
+  actor_kind: 'account' | 'share_recipient' | 'system'
+  actor_ref: string | null
+  action: string
+  target_kind: string
+  target_id: string | null
+  outcome: 'granted' | 'denied'
+}
+
+export type AuditLogReadFilters = {
+  from?: string
+  to?: string
+  actorRef?: string
+  action?: string
+}
+
 // SEC-6/SEC-7: detail is a closed schema, not a denylist. An exact key alone
 // is not enough for string fields: restricting transport to its public enum
 // also prevents a credential from being hidden under an approved key.
@@ -150,4 +168,24 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
  */
 export async function recordPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
   return appendAuditEvent(input, true)
+}
+
+/** Reads the append-only audit log through the caller-scoped admin RLS policy. */
+export async function readAuditLog(filters: AuditLogReadFilters): Promise<AuditLogEvent[]> {
+  const accessToken = await callerAccessToken()
+  if (!accessToken) return []
+
+  let request = anonClient(accessToken)
+    .from('audit_events')
+    .select('id, occurred_at, actor_kind, actor_ref, action, target_kind, target_id, outcome')
+    .order('occurred_at', { ascending: false })
+    .order('id', { ascending: false })
+  if (filters.from) request = request.gte('occurred_at', filters.from)
+  if (filters.to) request = request.lte('occurred_at', filters.to)
+  if (filters.actorRef) request = request.eq('actor_ref', filters.actorRef)
+  if (filters.action) request = request.eq('action', filters.action)
+
+  const { data, error } = await request
+  if (error) throw new Error('audit log unavailable')
+  return (data as AuditLogEvent[] | null) ?? []
 }
