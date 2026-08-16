@@ -11,7 +11,7 @@ on:
   pull_request:
 
 jobs:
-  gate:
+  product-ui-gate:
     runs-on: ubuntu-latest
     env:
       # PORT is explicit and never a bare well-known port (ARCHITECTURE.md
@@ -42,3 +42,25 @@ jobs:
       - run: npx playwright install --with-deps
 
       - run: scripts/gate.sh ui
+
+  certification:
+    runs-on: ubuntu-latest
+    env:
+      PORT: "4310"
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SOURCE_REF_SALT: ${{ secrets.SOURCE_REF_SALT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps
+
+      - run: scripts/gate.sh certification

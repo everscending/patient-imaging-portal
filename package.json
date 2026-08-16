@@ -8,7 +8,8 @@
     "start": "node scripts/run-next.mjs start",
     "gate:logic": "scripts/gate.sh logic",
     "gate:api": "scripts/gate.sh api",
-    "gate:ui": "scripts/gate.sh ui"
+    "gate:ui": "scripts/gate.sh ui",
+    "gate:certification": "scripts/gate.sh certification"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

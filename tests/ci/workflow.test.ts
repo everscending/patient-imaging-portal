@@ -30,13 +30,22 @@ describe('triggers — acceptance: every push and every pull request', () => {
   })
 })
 
-describe('gate invocation — acceptance: exactly one test invocation, scripts/gate.sh ui', () => {
-  test('the workflow calls scripts/gate.sh exactly once', () => {
-    expect(gateInvocations).toHaveLength(1)
+describe('gate invocations — acceptance: product UI and certification are separate', () => {
+  const productGateInvocation = gateInvocations.find((line) => /scripts\/gate\.sh ui\s*$/.test(line))
+  const certificationInvocation = gateInvocations.find((line) => /scripts\/gate\.sh certification\s*$/.test(line))
+
+  test('the workflow calls each entry point exactly once', () => {
+    expect(gateInvocations).toHaveLength(2)
+    expect(gateInvocations.filter((line) => /scripts\/gate\.sh ui\s*$/.test(line))).toHaveLength(1)
+    expect(gateInvocations.filter((line) => /scripts\/gate\.sh certification\s*$/.test(line))).toHaveLength(1)
   })
 
-  test('that one call is the ui tier — logic, api, integration and end-to-end in one command', () => {
-    expect(gateInvocations[0]).toMatch(/scripts\/gate\.sh ui\s*$/)
+  test('the product UI entry point retains cumulative logic, API, and ordinary product end-to-end coverage', () => {
+    expect(productGateInvocation).toMatch(/scripts\/gate\.sh ui\s*$/)
+  })
+
+  test('the certification entry point runs independently', () => {
+    expect(certificationInvocation).toMatch(/scripts\/gate\.sh certification\s*$/)
   })
 
   test('adversarial: no step calls eslint, tsc, vitest, or playwright directly, bypassing the gate runner', () => {
@@ -58,21 +67,22 @@ describe('gate.sh ui cannot have its failure swallowed by the workflow step', ()
   // workflow step could still get wrong is masking that exit code — the
   // three adversarial scenarios below are all instances of the same
   // property, named separately because the ticket names them separately.
-  const gateStepAndAfter = workflow.slice(workflow.indexOf(gateInvocations[0]))
+  const productGateInvocation = gateInvocations.find((line) => /scripts\/gate\.sh ui\s*$/.test(line))
+  const gateStepAndAfter = workflow.slice(workflow.indexOf(productGateInvocation ?? ''))
 
   test('adversarial: a lint violation (e.g. a lib/** import of app/**) cannot turn the run green', () => {
     expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
-    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+    expect(productGateInvocation).not.toMatch(/\|\|\s*true/)
   })
 
   test('adversarial: a failing unit test cannot turn the run green', () => {
     expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
-    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+    expect(productGateInvocation).not.toMatch(/\|\|\s*true/)
   })
 
   test('adversarial: a failing end-to-end test cannot turn the run green', () => {
     expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
-    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+    expect(productGateInvocation).not.toMatch(/\|\|\s*true/)
   })
 })
 

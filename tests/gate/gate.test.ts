@@ -22,6 +22,20 @@ function run(
   }
 }
 
+function listPlaywrightProject(project: 'product' | 'certification'): { status: number; stdout: string; stderr: string } {
+  try {
+    const stdout = execFileSync('npx', ['playwright', 'test', `--project=${project}`, '--list'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 16,
+    })
+    return { status: 0, stdout, stderr: '' }
+  } catch (error) {
+    const e = error as { status: number | null; stdout: string; stderr: string }
+    return { status: e.status ?? 1, stdout: e.stdout, stderr: e.stderr }
+  }
+}
+
 describe('argument handling — acceptance + adversarial: a typo fails the gate, never skips it', () => {
   test('adversarial: no argument is not a silent success', () => {
     const result = run([])
@@ -110,6 +124,38 @@ describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the 
       expect(declared[tier]).toEqual(resolved)
     },
   )
+
+  test('adversarial: .loom.yml UI cannot bypass the ordinary product project', () => {
+    expect(declared.ui.at(-1)).toBe('npx playwright test --project=product')
+    expect(run(['ui', '--list']).stdout.trim().split('\n').at(-1)).toBe(declared.ui.at(-1))
+  })
+})
+
+describe('Playwright project separation — acceptance + mandatory adversarial', () => {
+  const wiringSpecs = ['e0-wiring.spec.ts', 'e1-wiring.spec.ts']
+  const productGate = run(['ui', '--list'])
+  const productSelection = listPlaywrightProject('product')
+  const certificationSelection = listPlaywrightProject('certification')
+
+  test('terminal zero: one product UI gate selects zero fresh-clone proofs that invoke scripts/gate.sh ui', () => {
+    // This lists the exact project named by scripts/gate.sh ui. Removing the
+    // product project's structural ignores makes either proof appear here,
+    // which turns the measured count non-zero before a recursive gate runs.
+    expect(productGate.status).toBe(0)
+    expect(productGate.stdout.trim().split('\n').at(-1)).toBe('npx playwright test --project=product')
+    expect(productSelection.status, productSelection.stdout + productSelection.stderr).toBe(0)
+    expect(wiringSpecs.filter((spec) => productSelection.stdout.includes(spec))).toEqual([])
+  })
+
+  test('adversarial: product project rejects e0 and e1 wiring specs', () => {
+    for (const spec of wiringSpecs) expect(productSelection.stdout).not.toContain(spec)
+  })
+
+  test('adversarial: certification command cannot silently omit either fresh-clone wiring proof', () => {
+    expect(run(['certification', '--list']).stdout.trim()).toBe('npx playwright test --project=certification')
+    expect(certificationSelection.status, certificationSelection.stdout + certificationSelection.stderr).toBe(0)
+    for (const spec of wiringSpecs) expect(certificationSelection.stdout).toContain(spec)
+  })
 })
 
 describe('playwright config — acceptance + adversarial: baseURL is derived, never hardcoded', () => {

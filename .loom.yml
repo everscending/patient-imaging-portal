@@ -4,8 +4,10 @@
 # requirement, so a document-only ticket takes `logic`. Three tiers only.
 # Tiers are cumulative: api repeats logic's commands, ui repeats api's
 # (ARCHITECTURE.md §15) — a tier that skipped its parent would let a type
-# error through an end-to-end pass. scripts/gate.sh resolves the identical
-# list per tier; tests/gate/gate.test.ts asserts the two never drift apart.
+# error through an end-to-end pass. The UI tier selects only the ordinary
+# product Playwright project; fresh-clone certification is a separate CI
+# obligation. scripts/gate.sh resolves the identical list per tier;
+# tests/gate/gate.test.ts asserts the two never drift apart.
 gates:
   logic:
     - "npx tsc --noEmit"
@@ -21,4 +23,4 @@ gates:
     - "npx eslint ."
     - "npx vitest run --project unit"
     - "npx vitest run --project integration"
-    - "npx playwright test"
+    - "npx playwright test --project=product"

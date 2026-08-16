@@ -9,8 +9,8 @@ set -euo pipefail
 VALID_TIERS="logic api ui"
 
 usage() {
-  echo "usage: scripts/gate.sh <tier> [--list]" >&2
-  echo "valid tiers: logic, api, ui" >&2
+  echo "usage: scripts/gate.sh <tier|certification> [--list]" >&2
+  echo "valid tiers: logic, api, ui; certification" >&2
 }
 
 TIER="${1:-}"
@@ -22,7 +22,7 @@ if [[ -z "$TIER" ]]; then
 fi
 
 case "$TIER" in
-  logic|api|ui) ;;
+  logic|api|ui|certification) ;;
   *)
     usage
     exit 1
@@ -62,11 +62,16 @@ run_api() {
 
 run_ui() {
   run_api
-  step PLAYWRIGHT npx playwright test
+  step PLAYWRIGHT_PRODUCT npx playwright test --project=product
+}
+
+run_certification() {
+  step PLAYWRIGHT_CERTIFICATION npx playwright test --project=certification
 }
 
 case "$TIER" in
   logic) run_logic ;;
   api) run_api ;;
   ui) run_ui ;;
+  certification) run_certification ;;
 esac

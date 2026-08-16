@@ -5,6 +5,19 @@ import { config } from './lib/config'
 // so a second worktree booting on its own PORT never collides with this one.
 export default defineConfig({
   testDir: './e2e',
+  // The cumulative UI gate covers product behavior only. Fresh-clone wiring
+  // proofs are deliberately isolated: they run gates inside scratch clones,
+  // so selecting them from the product project would recurse into UI gates.
+  projects: [
+    {
+      name: 'product',
+      testIgnore: ['e0-wiring.spec.ts', 'e1-wiring.spec.ts'],
+    },
+    {
+      name: 'certification',
+      testMatch: ['e0-wiring.spec.ts', 'e1-wiring.spec.ts'],
+    },
+  ],
   use: {
     baseURL: `http://localhost:${config.port}`,
   },
