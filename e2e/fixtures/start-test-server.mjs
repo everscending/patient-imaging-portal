@@ -39,9 +39,7 @@ await mkdir(localDir, { recursive: true })
 await writeFile(path.join(localDir, 'fake-auth-server.json'), JSON.stringify({ url: fakeAuthServer.url }))
 
 const envTest = await readEnvTest()
-// Keep both the launcher and its working directory inside this worktree.
-// Playwright may be invoked from a checkout that encloses a lane worktree.
-const child = spawn(process.execPath, [path.join(REPO_ROOT, 'scripts', 'run-next.mjs'), 'dev'], {
+const child = spawn('node', ['scripts/run-next.mjs', 'dev'], {
   cwd: REPO_ROOT,
   stdio: 'inherit',
   env: {

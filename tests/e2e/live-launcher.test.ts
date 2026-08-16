@@ -2,13 +2,39 @@
 // Next application it serves.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:http'
-import { existsSync } from 'node:fs'
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
-const PARENT_CHECKOUT = path.resolve(REPO_ROOT, '..', '..')
 const children: ChildProcess[] = []
+const temporaryDirectories: string[] = []
+
+async function nestedWorktreeFixture(): Promise<{ parentCheckout: string; worktree: string }> {
+  const parentCheckout = await mkdtemp(path.join(tmpdir(), 'jor-283-parent-checkout-'))
+  temporaryDirectories.push(parentCheckout)
+  const worktree = path.join(parentCheckout, '.worktrees', 'lane')
+  await mkdir(worktree, { recursive: true })
+
+  await Promise.all(
+    ['app', 'components', 'e2e', 'lib', 'scripts'].map((entry) =>
+      cp(path.join(REPO_ROOT, entry), path.join(worktree, entry), { recursive: true }),
+    ),
+  )
+  await Promise.all(
+    ['.env.test', 'next-env.d.ts', 'next.config.ts', 'package-lock.json', 'package.json', 'tsconfig.json'].map((entry) =>
+      cp(path.join(REPO_ROOT, entry), path.join(worktree, entry)),
+    ),
+  )
+  await symlink(path.join(REPO_ROOT, 'node_modules'), path.join(worktree, 'node_modules'), 'dir')
+  await writeFile(
+    path.join(parentCheckout, 'package-lock.json'),
+    JSON.stringify({ name: 'enclosing-checkout', lockfileVersion: 3 }),
+  )
+
+  return { parentCheckout, worktree }
+}
 
 async function unusedPort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -50,22 +76,23 @@ afterEach(async () => {
         }),
     ),
   )
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
 test(
   'adversarial: live launcher started from parent checkout serves worktree routes',
   async function liveLauncherStartedFromParentCheckoutServesWorktreeRoutes() {
-    expect(existsSync(path.join(PARENT_CHECKOUT, 'package-lock.json')), 'the enclosing checkout must have a lockfile').toBe(true)
+    const { parentCheckout, worktree } = await nestedWorktreeFixture()
     const port = await unusedPort()
-    const child = spawn(process.execPath, [path.join(REPO_ROOT, 'e2e', 'fixtures', 'start-test-server.mjs')], {
-      cwd: PARENT_CHECKOUT,
-      env: { PORT: String(port), WATCHPACK_POLLING: 'true' },
+    const child = spawn(process.execPath, [path.join(worktree, 'e2e', 'fixtures', 'start-test-server.mjs')], {
+      cwd: parentCheckout,
+      env: { ...process.env, PORT: String(port), WATCHPACK_POLLING: 'true' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     children.push(child)
     let output = ''
-    child.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString()))
-    child.stderr?.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()))
+    child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()))
 
     const baseUrl = `http://127.0.0.1:${port}`
     const register = await waitForServer(`${baseUrl}/register`, child)
