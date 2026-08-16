@@ -132,6 +132,24 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
   })
 })
 
+describe('anonymous health Playwright check — regression: uses its lane base URL', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'e2e/degraded.spec.ts'), 'utf8')
+  const healthNoSessionTest = source.match(
+    /test\('acceptance: health_noSessionNoCookies_returns200',[\s\S]*?\n  }\)\n\n  test\('acceptance \(static\)/,
+  )?.[0]
+
+  test('healthNoSessionNoCookies_usesFreshCookieFreeContextAtPlaywrightBaseUrl', () => {
+    expect(healthNoSessionTest).toBeDefined()
+    expect(healthNoSessionTest).toMatch(/async \(\{ baseURL, playwright \}\)/)
+    expect(healthNoSessionTest).toMatch(/playwright\.request\.newContext\(\{ baseURL \}\)/)
+    expect(healthNoSessionTest).toMatch(/anonymous\.get\('\/api\/health'\)/)
+  })
+
+  test('adversarial: healthNoSessionNoCookies_rejectsFixedApplicationPort', () => {
+    expect(healthNoSessionTest).not.toMatch(/localhost:\d+/)
+  })
+})
+
 describe('repo-wide guards', () => {
   test('no bare well-known port (3000, 5432, 5433, 8080) in this ticket\'s files', () => {
     // tests/setup/postgres.ts is exempt: postgres:16-alpine always listens on
