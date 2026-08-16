@@ -68,7 +68,7 @@ export async function mintShareLink(input: {
   resourceKind: ResourceKind
   resourceId: string
   recipientEmail: string
-}): Promise<{ id: string; url: string; expiresAt: string; recipientEmail: string; delivery: 'sent' | 'failed' }> {
+}): Promise<{ id: string; url: string; expiresAt: string; recipientEmail: string }> {
   const target = { kind: input.resourceKind, id: input.resourceId } as const
   const access = await guardPhiAccess({ kind: 'patient', userId: input.actorUserId }, target, 'share.create')
   if (!access.ok || access.patientId !== input.patientId) throw new Error('share: resource not found')
@@ -88,13 +88,18 @@ export async function mintShareLink(input: {
   if (error || !data) throw new Error('share: link could not be created')
 
   // PHI-free, queued only: this request never invokes an email transport.
-  const { error: outboxError } = await client.from('email_outbox').insert({
-    recipient: input.recipientEmail,
-    subject: 'Someone shared a secure medical file with you',
-    body: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
-  })
+  try {
+    await client.from('email_outbox').insert({
+      recipient: input.recipientEmail,
+      subject: 'Someone shared a secure medical file with you',
+      body: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
+    })
+  } catch {
+    // The link is already durable. A queue outage must not revoke it or turn
+    // its successful creation into an error response.
+  }
 
-  return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail, delivery: outboxError ? 'failed' : 'sent' }
+  return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail }
 }
 
 export async function resolveShareToken(token: string): Promise<
@@ -161,6 +166,7 @@ export async function sharedPayload(resolved: Extract<Awaited<ReturnType<typeof 
     if (error || !image) return null
     const signed = await signStorageKeys([image.storage_key, ...(image.thumb_key ? [image.thumb_key] : [])])
     const urls = new Map(signed.map((entry) => [entry.key, entry.url]))
+    if (!(await resolvedLinkIsStillActive(client, resolved))) return null
     return { id: image.id, width: image.width, height: image.height, ordinal: image.ordinal, url: urls.get(image.storage_key) ?? null, thumbUrl: image.thumb_key ? (urls.get(image.thumb_key) ?? null) : null, expiresAt: imageExpiry() }
   }
   const { data, error } = await client.from('reports').select('id, study_id, findings, impression, signed_at, studies!inner(description), patients!inner(patient_ref), providers!reports_signed_by_fkey(full_name)').eq('id', resolved.resourceId).maybeSingle()
@@ -169,5 +175,21 @@ export async function sharedPayload(resolved: Extract<Awaited<ReturnType<typeof 
   const patient = report ? one(report.patients) : null
   const provider = report ? one(report.providers) : null
   if (error || !report || !study || !patient) return null
+  if (!(await resolvedLinkIsStillActive(client, resolved))) return null
   return { id: report.id, studyId: report.study_id, studyDescription: study.description, patientRef: patient.patient_ref, findings: report.findings, impression: report.impression, signedByName: provider?.full_name ?? null, signedAt: report.signed_at }
+}
+
+async function resolvedLinkIsStillActive(
+  client: ReturnType<typeof serviceClient>,
+  resolved: Extract<Awaited<ReturnType<typeof resolveShareToken>>, { ok: true }>,
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('share_links')
+    .select('id, patient_id, image_id, report_id, expires_at, revoked_at')
+    .eq('id', resolved.shareLinkId)
+    .maybeSingle()
+  const link = data as LinkRow | null
+  if (error || !link || stateOf(link) !== 'active' || link.patient_id !== resolved.patientId) return false
+  if (resolved.resourceKind === 'image') return link.image_id === resolved.resourceId && link.report_id === null
+  return link.report_id === resolved.resourceId && link.image_id === null
 }
