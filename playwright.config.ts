@@ -5,6 +5,7 @@ import { config } from './lib/config'
 // so a second worktree booting on its own PORT never collides with this one.
 export default defineConfig({
   testDir: './e2e',
+  reporter: [['line'], ['json', { outputFile: 'test-results/playwright.json' }]],
   use: {
     baseURL: `http://localhost:${config.port}`,
   },

@@ -22,3 +22,4 @@ gates:
     - "npx vitest run --project unit"
     - "npx vitest run --project integration"
     - "npx playwright test"
+    - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts"
