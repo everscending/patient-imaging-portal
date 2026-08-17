@@ -77,25 +77,25 @@ export default function StudiesPage() {
   return (
     <main className="pip-studies-page">
       <h1>Imaging</h1>
-      {state.kind === 'loading' ? (
-        <p aria-busy="true" aria-label="Loading imaging studies" aria-live="polite" role="status">
-          Loading your imaging studies…
-        </p>
-      ) : null}
-      {state.kind === 'degraded' ? (
-        <p data-testid="studies-degraded" role="alert">
-          Images are temporarily unavailable. Please try again.
-        </p>
-      ) : null}
-      {state.kind === 'ready' ? (
-        <section aria-label="Imaging studies" className="pip-study-list" data-testid="study-list">
-          {state.studies.length === 0 ? (
+      <section aria-label="Imaging studies" className="pip-study-list" data-testid="study-list">
+        {state.kind === 'loading' ? (
+          <p aria-busy="true" aria-label="Loading imaging studies" aria-live="polite" role="status">
+            Loading your imaging studies…
+          </p>
+        ) : null}
+        {state.kind === 'degraded' ? (
+          <p data-testid="studies-degraded" role="alert">
+            Images are temporarily unavailable. Please try again.
+          </p>
+        ) : null}
+        {state.kind === 'ready' ? (
+          state.studies.length === 0 ? (
             <p>No images yet — images appear here once a completed visit has been processed by the clinic.</p>
           ) : (
             state.studies.map((study) => <StudyCard key={study.id} study={study} />)
-          )}
-        </section>
-      ) : null}
+          )
+        ) : null}
+      </section>
       <style>{`
         .pip-studies-page { max-width: 72rem; margin: 0 auto; overflow-wrap: anywhere; }
         .pip-study-list { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }

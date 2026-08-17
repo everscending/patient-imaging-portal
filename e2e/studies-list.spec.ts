@@ -129,6 +129,7 @@ test('mandatory adversarial: studies_slowResponse_keepsLabelledLoadingState', as
   })
   await page.goto('/studies')
 
+  await expect(page.getByTestId('study-list')).toBeVisible()
   await expect(page.getByRole('status', { name: 'Loading imaging studies' })).toBeVisible()
   expect(releaseResponse).toBeDefined()
   releaseResponse!()
@@ -137,6 +138,7 @@ test('mandatory adversarial: studies_slowResponse_keepsLabelledLoadingState', as
 
 test('mandatory adversarial: studies_malformedResponse_degradesWithoutStackTraceOrDatabaseString', async ({ page }) => {
   await showStudies(page, { studies: [{ description: 'missing required fields' }] })
+  await expect(page.getByTestId('study-list')).toBeVisible()
   await expect(page.getByTestId('studies-degraded')).toHaveText('Images are temporarily unavailable. Please try again.')
   const body = await page.locator('body').innerText()
   expect(body).not.toMatch(/at .*\(.*:\d+:\d+\)|postgres|database|ECONNREFUSED/i)
@@ -159,6 +161,7 @@ test('mandatory adversarial: studies_wellTypedButInvalidRecords_degradeSafely', 
   for (const study of invalidStudies) {
     responseBody = { studies: [study] }
     await page.goto('/studies')
+    await expect(page.getByTestId('study-list')).toBeVisible()
     await expect(page.getByTestId('studies-degraded')).toHaveText(
       'Images are temporarily unavailable. Please try again.',
     )
