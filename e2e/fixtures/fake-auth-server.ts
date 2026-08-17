@@ -703,9 +703,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/provider_services') {
       const serviceId = queryValue(url, 'service_id')
-      const rows = serviceId === E2_BOOK_SERVICE_ID || serviceId === '77887788-7788-4788-8788-778877887788'
-        ? [{ providers: { id: E2_OTHER_PROVIDER_ID, full_name: 'Dr. Riley Patel', time_zone: 'America/New_York' }, provider_id: E2_OTHER_PROVIDER_ID }]
-        : []
+      const providerId = queryValue(url, 'provider_id')
+      const offerings = [
+        { serviceId: E2_BOOK_SERVICE_ID, provider: providers.find((candidate) => candidate.id === E2_OTHER_PROVIDER_ID)! },
+        { serviceId: E2_BOOK_SERVICE_ID, provider: providers.find((candidate) => candidate.id === E2_PROVIDER_ID)! },
+        { serviceId: '77887788-7788-4788-8788-778877887788', provider: providers.find((candidate) => candidate.id === E2_OTHER_PROVIDER_ID)! },
+      ]
+      const rows = offerings
+        .filter((offering) => offering.serviceId === serviceId && (providerId === null || offering.provider.id === providerId))
+        .map(({ provider }) => ({
+          providers: { id: provider.id, full_name: provider.full_name, time_zone: provider.time_zone },
+          provider_id: provider.id,
+        }))
       sendPostgrestRows(req, res, rows)
       return
     }

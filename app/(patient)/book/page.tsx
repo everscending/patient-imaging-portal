@@ -9,7 +9,8 @@ type Slot = { id: string; startsAt: string; endsAt: string }
 type Appointment = { id: string; providerName: string; serviceName: string; startsAt: string }
 type ApiError = { error?: string; message?: string }
 
-const LOSER_COPY = 'That slot is no longer available. Someone booked it moments ago. Please choose another time.'
+const LOSER_HEADING = 'That slot is no longer available.'
+const LOSER_GUIDANCE = ' Someone booked it moments ago. Please choose another time.'
 
 function viewerTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
@@ -95,6 +96,7 @@ export default function BookPage() {
     setIdempotencyKey(crypto.randomUUID())
     setConflict(false)
     setError(null)
+    setSuccess(null)
   }
 
   async function confirm(): Promise<void> {
@@ -152,7 +154,7 @@ export default function BookPage() {
           <button type="button" className="pip-button-primary" data-testid="book-submit" onClick={() => void confirm()}>Confirm appointment</button>
         </section>
       )}
-      {conflict && <p className="pip-error" data-testid="booking-conflict">{LOSER_COPY}</p>}
+      {conflict && <p className="pip-error" data-testid="booking-conflict"><strong>{LOSER_HEADING}</strong>{LOSER_GUIDANCE}</p>}
       {error && <p className="pip-error" role="alert">{error}</p>}
       {success && <p className="pip-save-summary" data-testid="booking-success">Booked {success.serviceName} with {success.providerName} at {localTime(success.startsAt, viewerZone)}.</p>}
     </main>

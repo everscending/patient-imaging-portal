@@ -58,28 +58,46 @@ test.describe.serial('JOR-253 /book', () => {
     expect((await page.request.post(`${await fixtureUrl()}/__test__/book-slot`, { data: { slotId } })).status()).toBe(201)
     await page.getByTestId('book-submit').click()
     await expect(page.getByTestId('booking-conflict')).toHaveText('That slot is no longer available. Someone booked it moments ago. Please choose another time.')
+    await expect(page.getByTestId('booking-conflict').locator('strong')).toHaveText('That slot is no longer available.')
     await expect(page.getByTestId('slot-item').first()).toBeDisabled()
+    await expect(page.getByTestId('slot-item').nth(1)).toBeEnabled()
     expect((await bookingState(page.request)).appointments).toHaveLength(1)
   })
 
   // Mandatory adversarial: Two rapid confirms: one appointment.
   test('twoRapidConfirmsReuseOneIdempotencyKeyAndCreateOneAppointment', async ({ page }) => {
     await chooseFirstSlot(page)
+    const posts: Array<{ slotId: string; serviceId: string; idempotencyKey: string }> = []
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/appointments') {
+        posts.push(request.postDataJSON() as { slotId: string; serviceId: string; idempotencyKey: string })
+      }
+    })
     await Promise.all([page.getByTestId('book-submit').click(), page.getByTestId('book-submit').click()])
     await expect(page.getByTestId('booking-success')).toBeVisible()
+    await expect.poll(() => posts).toHaveLength(2)
+    expect(posts[0]!.idempotencyKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+    expect(posts[1]!.idempotencyKey).toBe(posts[0]!.idempotencyKey)
+    expect(posts[1]!.slotId).toBe(posts[0]!.slotId)
     expect((await bookingState(page.request)).appointments).toHaveLength(1)
   })
 
   test('idempotencyKeyReusedIsDistinctFromTheLoserMessage', async ({ page }) => {
-    await page.route('**/api/appointments', (route) => route.fulfill({
-      status: 409,
-      contentType: 'application/json',
-      body: JSON.stringify({ error: 'idempotency_key_reused', message: 'That request key was already used for a different slot.' }),
-    }))
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        value: () => '12345678-1234-4123-8123-123456789abc',
+      })
+    })
     await chooseFirstSlot(page)
+    await page.getByTestId('book-submit').click()
+    await expect(page.getByTestId('booking-success')).toBeVisible()
+    await page.getByTestId('slot-item').first().click()
+    await expect(page.getByTestId('booking-success')).toHaveCount(0)
     await page.getByTestId('book-submit').click()
     await expect(page.getByRole('alert')).toContainText('This confirmation key was already used. Choose a slot again.')
     await expect(page.getByTestId('booking-conflict')).toHaveCount(0)
+    await expect(page.getByTestId('booking-success')).toHaveCount(0)
+    expect((await bookingState(page.request)).appointments).toHaveLength(1)
   })
 
   // Mandatory adversarial: Availability regeneration after listing: no crash or booking nonexistent slot.
@@ -93,10 +111,9 @@ test.describe.serial('JOR-253 /book', () => {
 
   // Mandatory adversarial: slots: [].
   test('emptySlotsRendersCleanState', async ({ page }) => {
-    await page.route('**/api/slots?**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ slots: [] }) }))
     await page.goto('/book')
     await page.getByTestId('service-select').selectOption(E2_BOOK_SERVICE_ID)
-    await page.getByTestId('provider-select').selectOption({ label: 'Dr. Riley Patel' })
+    await page.getByTestId('provider-select').selectOption({ label: 'Dr. Avery Chen' })
     await expect(page.getByTestId('slot-empty')).toBeVisible()
   })
 
@@ -113,8 +130,11 @@ test.describe.serial('JOR-253 /book', () => {
     await chooseFirstSlot(page)
     for (const text of await page.getByTestId('slot-item').allTextContents()) expect(text).toMatch(/\b(?:[A-Z]{2,4}|GMT[+-]\d+)\b/)
     await expect(page.getByText('Provider time zone: America/New_York.')).toBeVisible()
+    await expect(page.getByText(/Provider-local time:.*\b(?:[A-Z]{2,4}|GMT[+-]\d+)\b/)).toBeVisible()
     const first = page.getByTestId('slot-item').first()
-    expect((await first.boundingBox())?.height).toBeGreaterThanOrEqual(44)
+    const tapTarget = await first.boundingBox()
+    expect(tapTarget?.width).toBeGreaterThanOrEqual(44)
+    expect(tapTarget?.height).toBeGreaterThanOrEqual(44)
     expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
   })
@@ -130,7 +150,9 @@ test.describe.serial('JOR-253 /book', () => {
     await chooseFirstSlot(page)
     const bookedSlotId = (await page.getByTestId('slot-item').first().getAttribute('data-slot-id')) ?? ''
     await page.getByTestId('book-submit').click()
+    await expect(page.getByTestId('booking-success')).toContainText('Ultrasound')
     await expect(page.getByTestId('booking-success')).toContainText('Dr. Riley Patel')
+    await expect(page.getByTestId('booking-success')).toHaveText(/\b(?:[A-Z]{2,4}|GMT[+-]\d+)\b/)
     await page.reload()
     await page.getByTestId('service-select').selectOption(E2_BOOK_SERVICE_ID)
     await page.getByTestId('provider-select').selectOption({ label: 'Dr. Riley Patel' })
