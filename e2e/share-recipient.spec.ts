@@ -34,8 +34,11 @@ async function stubShareApi(page: Page, token: string, body: unknown): Promise<{
 }
 
 async function unavailableText(page: Page): Promise<string> {
-  await expect(page.getByTestId('share-unavailable')).toBeVisible()
-  return page.getByTestId('share-unavailable').innerText()
+  const screen = page.getByTestId('share-unavailable')
+  await expect(screen).toBeVisible()
+  await expect(screen.getByRole('heading', { level: 1 })).toHaveText('Link unavailable')
+  await expect(screen.getByText(UNAVAILABLE_COPY, { exact: true })).toBeVisible()
+  return screen.innerText()
 }
 
 test.describe('JOR-239 shared recipient', () => {
@@ -90,7 +93,6 @@ test.describe('JOR-239 shared recipient', () => {
     await expect(page.getByTestId('report-view')).toHaveCount(0)
     await page.goto(`/s/${unknown}`)
     expect(await unavailableText(page)).toBe(expiredScreen)
-    expect(expiredScreen).toBe(`Link unavailable\n${UNAVAILABLE_COPY}`)
   })
 
   test('revokedLinkInvalidatesCachedRecipientContentAndMatchesUnknownScreen', async ({ page }) => {
@@ -109,7 +111,6 @@ test.describe('JOR-239 shared recipient', () => {
     await expect(page.getByTestId('image-viewer')).toHaveCount(0)
     await page.goto(`/s/${unknown}`)
     expect(await unavailableText(page)).toBe(revokedScreen)
-    expect(revokedScreen).toBe(`Link unavailable\n${UNAVAILABLE_COPY}`)
   })
 
   test('noindexNoStoreAndNoPhiOrRawTokenLeakageArePinned', async ({ page }) => {
