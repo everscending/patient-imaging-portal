@@ -106,9 +106,10 @@ test.describe.serial('JOR-236 sharing', () => {
     await page.getByTestId('share-create').click()
     await page.getByLabel('Recipient email').fill('recipient@example.com')
     await page.getByRole('button', { name: 'Send secure link' }).click()
-    await expect(page.getByRole('alert')).toContainText('Delivery failed, but your secure link is active.')
-    await expect(page.getByLabel('Active share link')).toHaveValue('https://portal.example/s/copyable-link')
-    await expect(page.getByRole('button', { name: 'Copy active share link' })).toBeVisible()
+    const dialog = page.getByRole('dialog', { name: 'Share secure link' })
+    await expect(dialog.getByRole('alert')).toContainText('Delivery failed, but your secure link is active.')
+    await expect(dialog.getByRole('textbox', { name: 'Active share link', exact: true })).toHaveValue('https://portal.example/s/copyable-link')
+    await expect(dialog.getByRole('button', { name: 'Copy active share link', exact: true })).toBeVisible()
   })
 
   test('cineHasNoShareControl', async () => {
