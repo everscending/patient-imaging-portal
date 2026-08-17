@@ -51,6 +51,7 @@ test.describe('JOR-257 appointments', () => {
   test('allowedTransitionsEmpty_hasNoAction', async ({ page }) => {
     await signedIn(page)
     await show(page, [appointment({ allowedTransitions: [], canChange: false })])
+    await expect(page.locator('[data-testid="appointment-notice-locked"]:visible')).toHaveText(NOTICE)
     await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(0)
     await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
   })
@@ -70,20 +71,28 @@ test.describe('JOR-257 appointments', () => {
     await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
   })
 
+  test('outOfHours_serverOfferedActionsRemainAvailable', async ({ page }) => {
+    await signedIn(page)
+    await show(page, [appointment({ outOfHours: true })])
+    await expect(page.locator('[data-testid="appointment-out-of-hours"]:visible')).toHaveText('Outside hours. Your appointment is unaffected.')
+    await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(1)
+    await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(1)
+  })
+
   test('changeDeadlinePassesWhileOpen_serverRefusalShowsPinnedNotice', async ({ page }) => {
     await signedIn(page)
-    await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 422, contentType: 'application/json', body: '{"error":"minimum_notice"}' }))
+    await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 422, contentType: 'application/json', body: '{"error":"minimum_notice","message":"Changes are not allowed within 24 hours of the appointment."}' }))
     await show(page, [appointment()])
     await page.locator('[data-testid="appointment-cancel"]:visible').click()
-    await expect(page.locator('[role="alert"]:visible')).toHaveText(NOTICE)
+    await expect(page.locator('[role="alert"]:visible')).toHaveText('Changes are not allowed within 24 hours of the appointment.')
   })
 
   test('cancelReturningMinimumNotice_leavesItemUnchanged', async ({ page }) => {
     await signedIn(page)
-    await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 422, contentType: 'application/json', body: '{"error":"minimum_notice"}' }))
+    await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 422, contentType: 'application/json', body: '{"error":"minimum_notice","message":"Changes are not allowed within 24 hours of the appointment."}' }))
     await show(page, [appointment()])
     await page.locator('[data-testid="appointment-cancel"]:visible').click()
-    await expect(page.locator('[role="alert"]:visible')).toHaveText(NOTICE)
+    await expect(page.locator('[role="alert"]:visible')).toHaveText('Changes are not allowed within 24 hours of the appointment.')
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: Requested')
   })
 
@@ -113,6 +122,19 @@ test.describe('JOR-257 appointments', () => {
     await page.locator('[data-testid="appointment-cancel"]:visible').click()
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: Cancelled')
     expect(collectionReads).toBe(1)
+  })
+
+  test('rescheduleResponseReplacesItemWithNewTime', async ({ page }) => {
+    await signedIn(page)
+    await page.route('**/api/appointments/*', (route) => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(appointment({ startsAt: '2030-06-11T14:00:00-05:00' })),
+    }))
+    await show(page, [appointment()])
+    await page.locator('[data-testid="appointment-reschedule"]:visible').click()
+    await page.locator('input:visible').fill(SLOT_ID)
+    await page.getByRole('button', { name: 'Confirm reschedule' }).click()
+    await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Jun 11, 2030')
   })
 
   test('zeroAppointments_rendersCleanEmptyState', async ({ page }) => {

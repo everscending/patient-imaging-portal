@@ -84,7 +84,7 @@ function AppointmentItem({ appointment, onUpdated, asTableRow = false }: Appoint
       const payload = await response.json() as Appointment | { error?: string; message?: string }
       if (!response.ok) {
         const error = payload as { error?: string; message?: string }
-        setMessage(error.error === 'minimum_notice' || error.error === 'not_reschedulable' ? NOTICE_LOCKED_MESSAGE : error.message ?? 'Unable to change this appointment.')
+        setMessage(error.message ?? 'Unable to change this appointment.')
         return
       }
       onUpdated(payload as Appointment)
