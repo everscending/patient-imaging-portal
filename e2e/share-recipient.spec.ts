@@ -29,6 +29,7 @@ const AUTHORIZED_TICKET_FILES = new Set([
   'components/share/SharedResource.tsx',
   'e2e/e2-wiring.spec.ts',
   'e2e/fixtures/fake-auth-server.ts',
+  'e2e/image-viewer.spec.ts',
   'e2e/reports.spec.ts',
   'e2e/share-recipient.spec.ts',
   'lib/reports/ReportView.tsx',
