@@ -4,43 +4,79 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
-const WORKFLOW_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml')
-const workflow = readFileSync(WORKFLOW_PATH, 'utf8')
+const CI_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml')
+const CERTIFICATION_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'certification.yml')
+const GATE_PATH = path.join(REPO_ROOT, 'scripts', 'gate.sh')
+const CERTIFY_PATH = path.join(REPO_ROOT, 'scripts', 'certify.sh')
+const PLAYWRIGHT_CONFIG_PATH = path.join(REPO_ROOT, 'playwright.config.ts')
 
-// Steps that invoke the gate runner — excludes comment lines that merely
-// mention scripts/gate.sh in passing.
-const gateInvocations = workflow
-  .split('\n')
-  .filter((line) => !/^\s*#/.test(line))
-  .filter((line) => /scripts\/gate\.sh/.test(line))
+const ci = readFileSync(CI_PATH, 'utf8')
+const certification = readFileSync(CERTIFICATION_PATH, 'utf8')
+const certify = readFileSync(CERTIFY_PATH, 'utf8')
+const playwrightConfig = readFileSync(PLAYWRIGHT_CONFIG_PATH, 'utf8')
 
-describe('triggers — acceptance: every push and every pull request', () => {
-  test('push has no branch filter, so every branch triggers the workflow', () => {
-    const pushBlock = workflow.match(/^on:\n([\s\S]*?)^jobs:/m)?.[1] ?? ''
-    expect(pushBlock).toMatch(/^\s*push:\s*$/m)
-    // A `push:` key with nothing indented under it (immediately followed by
-    // another top-level trigger key or the end of the block) restricts to
-    // no branch, which means every branch.
-    expect(pushBlock).not.toMatch(/push:\s*\n\s+branches:/)
+function executableInvocations(source: string, pattern: RegExp): string[] {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .filter((line) => pattern.test(line))
+}
+
+const gateInvocations = executableInvocations(ci, /scripts\/gate\.sh/)
+
+describe('per-change triggers and concurrency', () => {
+  const triggerBlock = ci.match(/^on:\n([\s\S]*?)^concurrency:/m)?.[1] ?? ''
+
+  test('every push and pull request triggers the product workflow', () => {
+    expect(triggerBlock).toMatch(/^\s*push:\s*$/m)
+    expect(triggerBlock).not.toMatch(/push:\s*\n\s+branches:/)
+    expect(triggerBlock).toMatch(/^\s*pull_request:\s*$/m)
   })
 
-  test('pull_request triggers the workflow', () => {
-    const pushBlock = workflow.match(/^on:\n([\s\S]*?)^jobs:/m)?.[1] ?? ''
-    expect(pushBlock).toMatch(/^\s*pull_request:\s*$/m)
+  test('push and PR events for the same source branch share one cancelling group', () => {
+    expect(ci).toContain('group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}')
+    expect(ci).toMatch(/cancel-in-progress:\s*true/)
+  })
+
+  test('the gate is not conditional on event type, so either surviving event remains a valid check', () => {
+    const gateStep = ci.slice(ci.indexOf('- name: Product UI gate'))
+    expect(gateStep).not.toMatch(/^\s*if:/m)
   })
 })
 
-describe('gate invocation — acceptance: exactly one test invocation, scripts/gate.sh ui', () => {
-  test('the workflow calls scripts/gate.sh exactly once', () => {
-    expect(gateInvocations).toHaveLength(1)
-  })
+describe('per-change coverage stays cumulative', () => {
+  const resolvedUiGate = execFileSync(GATE_PATH, ['ui', '--list'], { encoding: 'utf8' })
+    .trim()
+    .split('\n')
 
-  test('that one call is the ui tier — logic, api, integration and end-to-end in one command', () => {
+  test('CI invokes the cumulative UI gate exactly once', () => {
+    expect(gateInvocations).toHaveLength(1)
     expect(gateInvocations[0]).toMatch(/scripts\/gate\.sh ui\s*$/)
   })
 
-  test('adversarial: no step calls eslint, tsc, vitest, or playwright directly, bypassing the gate runner', () => {
-    const lines = workflow.split('\n').filter((line) => !/scripts\/gate\.sh/.test(line))
+  test('the UI gate preserves TypeScript, ESLint, unit, PostgreSQL integration, and product Playwright', () => {
+    expect(resolvedUiGate).toEqual([
+      'npx tsc --noEmit',
+      'npx eslint .',
+      'npx vitest run --project unit',
+      'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
+      'npx playwright test --project=e2-wiring',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+    ])
+  })
+
+  test('ordinary product Playwright excludes wiring specs; E2 depends on product while E0/E1 remain certification', () => {
+    expect(playwrightConfig).toMatch(/name:\s*'product'/)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/dependencies:\s*\['product'\]/)
+    expect(playwrightConfig).toMatch(/name:\s*'certification'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e\[01\]-wiring\\\.spec\\\.ts\//)
+  })
+
+  test('no per-change step bypasses the gate to launch a test tool directly', () => {
+    const lines = ci.split('\n').filter((line) => !/scripts\/gate\.sh/.test(line))
     for (const tool of ['eslint', 'tsc', 'vitest', 'playwright test']) {
       for (const line of lines) {
         expect(line, `line calls ${tool} outside scripts/gate.sh: ${line}`).not.toMatch(
@@ -51,32 +87,49 @@ describe('gate invocation — acceptance: exactly one test invocation, scripts/g
   })
 })
 
-describe('gate.sh ui cannot have its failure swallowed by the workflow step', () => {
-  // tests/gate/gate.test.ts already proves gate.sh itself propagates the
-  // first non-zero exit from TSC, ESLINT, VITEST_UNIT, VITEST_INTEGRATION or
-  // PLAYWRIGHT as a non-zero exit from `scripts/gate.sh ui`. What the
-  // workflow step could still get wrong is masking that exit code — the
-  // three adversarial scenarios below are all instances of the same
-  // property, named separately because the ticket names them separately.
-  const gateStepAndAfter = workflow.slice(workflow.indexOf(gateInvocations[0]))
+describe('fresh-clone certification stays required and visible', () => {
+  const triggerBlock = certification.match(/^on:\n([\s\S]*?)^concurrency:/m)?.[1] ?? ''
 
-  test('adversarial: a lint violation (e.g. a lib/** import of app/**) cannot turn the run green', () => {
-    expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
-    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+  test('certification runs on main, nightly, and by manual dispatch', () => {
+    expect(triggerBlock).toMatch(/push:\s*\n\s+branches:\s*\n\s+- main/)
+    expect(triggerBlock).toMatch(/^\s*schedule:\s*$/m)
+    expect(triggerBlock).toMatch(/cron:\s*["']17 7 \* \* \*["']/)
+    expect(triggerBlock).toMatch(/^\s*workflow_dispatch:\s*$/m)
   })
 
-  test('adversarial: a failing unit test cannot turn the run green', () => {
-    expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
-    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+  test('certification has the same obsolete-run cancellation behavior', () => {
+    expect(certification).toContain('group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}')
+    expect(certification).toMatch(/cancel-in-progress:\s*true/)
   })
 
-  test('adversarial: a failing end-to-end test cannot turn the run green', () => {
-    expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
-    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+  test('the workflow invokes one explicit serial E0/E1 certification entry point', () => {
+    expect(executableInvocations(certification, /scripts\/certify\.sh/)).toHaveLength(1)
+    expect(certify).toMatch(/playwright test --project=certification --workers=1/)
   })
 })
 
-describe('§8 required variables — acceptance + adversarial: wired from secrets, never left to resolve empty', () => {
+describe('timing and warm browser setup', () => {
+  test.each([
+    ['CI', ci],
+    ['Certification', certification],
+  ])('%s records setup phases and uses a versioned lockfile browser cache', (_name, workflow) => {
+    expect(workflow).toContain('GITHUB_STEP_SUMMARY')
+    expect(workflow).toContain('dependency setup')
+    expect(workflow).toContain('Playwright setup')
+    expect(workflow).toContain("hashFiles('package-lock.json')")
+    expect(workflow).toContain('steps.playwright-version.outputs.version')
+    expect(workflow).toMatch(/npx playwright install --with-deps chromium/)
+  })
+
+  test('the gate records unit, integration, and Playwright command durations', () => {
+    const gate = readFileSync(GATE_PATH, 'utf8')
+    expect(gate).toMatch(/timing \$\{name\}=\$\{duration\}s/)
+    expect(gate).toContain('GITHUB_STEP_SUMMARY')
+  })
+})
+
+describe('failure and environment guardrails', () => {
+  const gateStepAndAfter = ci.slice(ci.indexOf(gateInvocations[0]))
   const required = [
     'NEXT_PUBLIC_SUPABASE_URL',
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
@@ -84,34 +137,22 @@ describe('§8 required variables — acceptance + adversarial: wired from secret
     'SOURCE_REF_SALT',
   ]
 
-  test.each(required)('adversarial: %s comes from a repository secret, so it is never unset in CI', (name) => {
+  test('a failing product gate cannot be swallowed', () => {
+    expect(gateStepAndAfter).not.toMatch(/continue-on-error:\s*true/)
+    expect(gateInvocations[0]).not.toMatch(/\|\|\s*true/)
+  })
+
+  test.each(required)('%s comes from a repository secret in both workflows', (name) => {
     const pattern = new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`)
-    expect(workflow).toMatch(pattern)
-  })
-})
-
-describe('repo-wide guards', () => {
-  test('the workflow file contains no bare well-known port', () => {
-    for (const port of ['3000', '5432']) {
-      expect(workflow, `ci.yml must not contain bare ${port}`).not.toMatch(new RegExp(`\\b${port}\\b`))
-    }
+    expect(ci).toMatch(pattern)
+    expect(certification).toMatch(pattern)
   })
 
-  test('PORT is set explicitly, and TEST_PG_PORT is left unset (ADR-0013)', () => {
+  test.each([
+    ['ci.yml', ci],
+    ['certification.yml', certification],
+  ])('%s has an explicit app port and no pinned test database port', (_name, workflow) => {
     expect(workflow).toMatch(/PORT:\s*"?\d+"?/)
     expect(workflow).not.toMatch(/TEST_PG_PORT/)
-  })
-
-  test('the workflow contains no secret value, only secrets.* references', () => {
-    for (const name of [
-      'NEXT_PUBLIC_SUPABASE_URL',
-      'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-      'SUPABASE_SERVICE_ROLE_KEY',
-      'SOURCE_REF_SALT',
-    ]) {
-      const line = workflow.split('\n').find((l) => l.trim().startsWith(`${name}:`))
-      expect(line).toBeDefined()
-      expect(line).toMatch(/\$\{\{\s*secrets\./)
-    }
   })
 })

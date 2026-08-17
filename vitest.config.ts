@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config'
 
 // Two projects (ARCHITECTURE.md §15): `unit` is everything tests/** except
 // tests/integration/**, run by the `logic` tier; `integration` is
-// tests/integration/**, run by the `api` tier against a migrated
+// tests/integration/** plus the named booking concurrency proof, run by the
+// `api` tier against a migrated
 // pip_run_<random> database via tests/setup/postgres.ts's globalSetup
 // (ADR-0013). Coverage is configured so CQ-1's 80% threshold has a reporter
 // to enforce against once a later ticket sets it — no threshold here yet.
@@ -23,7 +24,7 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/**/*.test.ts'],
-          exclude: ['tests/integration/**'],
+          exclude: ['tests/integration/**', 'tests/scheduling/booking-concurrency.test.ts'],
         },
       },
       {
@@ -31,7 +32,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
-          include: ['tests/integration/**/*.test.ts'],
+          include: ['tests/integration/**/*.test.ts', 'tests/scheduling/booking-concurrency.test.ts'],
           globalSetup: ['./tests/setup/postgres.ts'],
         },
       },

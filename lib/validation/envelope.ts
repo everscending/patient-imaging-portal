@@ -9,3 +9,8 @@ export function errorResponse(status: number, error: string, message: string): R
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+/** The only way a route returns a successful response without a body. */
+export function noContentResponse(): Response {
+  return new Response(null, { status: 204 })
+}
