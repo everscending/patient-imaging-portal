@@ -1,32 +1,23 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { E2_FOREIGN_STUDY_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
 const SEEDED_PATIENT = { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' }
-const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
 const SECOND_IMAGE_ID = '10000000-0000-4000-8000-000000000002'
+let identityFixtureLockToken: string | undefined
 
 async function source(file: string): Promise<string> {
   return readFile(path.join(REPO_ROOT, file), 'utf8')
-}
-
-async function acquireIdentityFixture(): Promise<void> {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    try {
-      await mkdir(IDENTITY_FIXTURE_LOCK)
-      return
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  throw new Error('identity fixture lock timed out')
 }
 
 async function fakeServerUrl(): Promise<string> {
@@ -73,11 +64,12 @@ async function openViewer(page: Page): Promise<void> {
 
 test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverage', () => {
   test.beforeAll(async () => {
-    await acquireIdentityFixture()
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    identityFixtureLockToken = await acquireIdentityFixtureLock()
   })
 
   test.afterAll(async () => {
-    await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
+    await releaseIdentityFixtureLock(identityFixtureLockToken)
   })
 
   test('pinnedContract_preservesVariantsImageMetadataInitialImageAndZoomPanControls', async function pinnedContract_preservesVariantsImageMetadataInitialImageAndZoomPanControls() {

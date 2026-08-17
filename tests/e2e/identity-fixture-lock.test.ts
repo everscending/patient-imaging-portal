@@ -1,0 +1,40 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { describe, expect, test } from 'vitest'
+import {
+  acquireIdentityFixtureLock,
+  releaseIdentityFixtureLock,
+} from '../../e2e/fixtures/identity-fixture-lock'
+
+describe('shared identity fixture lock ownership', () => {
+  test('a timed-out suite cannot release the active suite lease', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'pip-identity-lock-'))
+    const lockPath = path.join(root, 'lock')
+    let ownerToken: string | undefined
+    let timedOutToken: string | undefined
+    try {
+      ownerToken = await acquireIdentityFixtureLock({ lockPath, timeoutMs: 50, pollMs: 1 })
+      await expect(
+        acquireIdentityFixtureLock({ lockPath, timeoutMs: 5, pollMs: 1 }).then((token) => {
+          timedOutToken = token
+        }),
+      ).rejects.toThrow('identity fixture lock timed out')
+
+      // Playwright still runs afterAll when beforeAll times out. Cleanup by
+      // that non-owner must not remove the lease held by the active suite.
+      await releaseIdentityFixtureLock(timedOutToken, { lockPath })
+      await expect(
+        acquireIdentityFixtureLock({ lockPath, timeoutMs: 5, pollMs: 1 }),
+      ).rejects.toThrow('identity fixture lock timed out')
+
+      await releaseIdentityFixtureLock(ownerToken, { lockPath })
+      ownerToken = undefined
+      const successorToken = await acquireIdentityFixtureLock({ lockPath, timeoutMs: 50, pollMs: 1 })
+      await releaseIdentityFixtureLock(successorToken, { lockPath })
+    } finally {
+      await releaseIdentityFixtureLock(ownerToken, { lockPath })
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
