@@ -338,6 +338,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     ],
   ])
   const sessionsByToken = new Map<string, FakeSession>()
+  const staffAdminUserIds = new Set<string>()
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
@@ -348,6 +349,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let availabilityBlocks: FakeAvailabilityBlock[] = []
   let generatedSlotRangesByProvider = new Map<string, string[]>()
   const auditEvents: Record<string, unknown>[] = []
+  let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
   const healthState: { database: DependencyState; storage: DependencyState } = {
@@ -373,6 +375,23 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     if (body.database) healthState.database = body.database
     if (body.storage) healthState.storage = body.storage
     sendJson(res, 200, { ...healthState })
+  }
+
+  async function handleSeedAdmin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const email = String(body.email ?? '').toLowerCase()
+    const password = String(body.password ?? '')
+    if (!email || !password) {
+      sendJson(res, 422, { error: 'validation_failed' })
+      return
+    }
+    let user = usersByEmail.get(email)
+    if (!user) {
+      user = { id: randomUUID(), email, password, userMetadata: {}, appMetadata: { provider: 'email', providers: ['email'] } }
+      usersByEmail.set(email, user)
+    }
+    staffAdminUserIds.add(user.id)
+    sendJson(res, 200, { userId: user.id })
   }
 
   function count(name: string): void {
@@ -565,7 +584,6 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       sendJson(res, 405, { message: 'method not allowed' })
       return
     }
-
     // Availability is provider-owned data.  Model the RLS boundary here,
     // rather than relying on the route's prior authorization: the real route
     // performs three separate PostgREST reads and the fake must not let a
@@ -573,14 +591,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const caller = authenticatedUser(req)
     const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
 
-    if (url.pathname === '/rest/v1/providers' || url.pathname === '/rest/v1/staff_admins') {
+    if (url.pathname === '/rest/v1/providers') {
       sendPostgrestRows(
         req,
         res,
-        url.pathname === '/rest/v1/providers' && callerProvider
-          ? applyEqualityFilters([callerProvider], url)
-          : [],
+        callerProvider ? applyEqualityFilters([callerProvider], url) : [],
       )
+      return
+    }
+
+    if (url.pathname === '/rest/v1/staff_admins') {
+      const rows = caller && staffAdminUserIds.has(caller.id) ? [{ id: `admin-${caller.id}`, user_id: caller.id }] : []
+      sendPostgrestRows(req, res, applyEqualityFilters(rows, url))
       return
     }
 
@@ -676,7 +698,26 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 405, { message: 'method not allowed' })
   }
 
-  async function handleAuditEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleAuditEvents(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (req.method === 'GET') {
+      const user = authenticatedUser(req)
+      if (!user || !staffAdminUserIds.has(user.id)) {
+        sendJson(res, 200, [])
+        return
+      }
+      let rows = [...auditEvents]
+      for (const [key, field] of [['actor_ref', 'actor_ref'], ['action', 'action']] as const) {
+        const value = queryValue(url, key)
+        if (value !== null) rows = rows.filter((row) => row[field] === value)
+      }
+      const from = queryValue(url, 'occurred_at', 'gte')
+      const to = url.searchParams.getAll('occurred_at').find((value) => value.startsWith('lte.'))?.slice(4) ?? null
+      if (from !== null) rows = rows.filter((row) => String(row.occurred_at) >= from)
+      if (to !== null) rows = rows.filter((row) => String(row.occurred_at) <= to)
+      rows.sort((left, right) => Number(right.id) - Number(left.id))
+      sendPostgrestRows(req, res, rows)
+      return
+    }
     if (req.method !== 'POST') {
       sendJson(res, 405, { message: 'method not allowed' })
       return
@@ -685,6 +726,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Record<string, unknown>[]
     auditEvents.push(
       ...rows.map((row) => ({
+        id: nextAuditEventId++,
         ...row,
         occurred_at: row.occurred_at ?? new Date().toISOString(),
       })),
@@ -840,6 +882,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       resetIdentityState(res)
       return
     }
+    if (req.method === 'POST' && url.pathname === '/__test__/seed-admin') {
+      void handleSeedAdmin(req, res)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/__test__/reset-availability') {
       resetAvailabilityState(res)
       return
@@ -897,7 +943,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (url.pathname === '/rest/v1/audit_events') {
-      void handleAuditEvents(req, res)
+      void handleAuditEvents(req, res, url)
       return
     }
     if (url.pathname === LINK_PATIENT_RPC_PATH) {
