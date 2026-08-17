@@ -116,8 +116,11 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select slot_id from appointments where id = '${id}';`)).toBe(f.slotIds[1])
     expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('open')
     expect(psql(`select status::text from slots where id = '${f.slotIds[1]}';`)).toBe('booked')
-    expect(psql(`select from_status::text || '|' || to_status::text || '|' || actor_user_id
-      from appointment_transitions where appointment_id = '${id}';`)).toBe(`requested|requested|${f.actorUserId}`)
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select actor_kind::text || '|' || actor_ref || '|' || action || '|' || target_kind || '|' || target_id || '|' || outcome
+      from audit_events where target_id = '${id}';`)).toBe(
+      `account|${f.actorUserId}|booking.reschedule|appointment|${id}|granted`,
+    )
   })
 
   test('concurrentReschedulesToOneOpenSlot_serializeToOneWinnerAndOneSlotUnavailable', async () => {
@@ -140,7 +143,9 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(decoded.filter((result) => result.result_error === 'slot_unavailable')).toHaveLength(1)
     expect(psql(`select count(*) from appointments where slot_id = '${target}' and status in ('requested', 'confirmed');`)).toBe('1')
     expect(psql(`select count(*) from appointment_transitions
-      where appointment_id in ('${firstAppointment}', '${secondAppointment}');`)).toBe('1')
+      where appointment_id in ('${firstAppointment}', '${secondAppointment}');`)).toBe('0')
+    expect(psql(`select count(*) from audit_events
+      where target_id in ('${firstAppointment}', '${secondAppointment}') and action = 'booking.reschedule';`)).toBe('1')
   })
 
   test('reschedule_minimumNoticeAndInvalidState_leaveAppointmentSlotsAndHistoryUnchanged', () => {
@@ -151,32 +156,35 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select status::text from slots where id = '${near.slotIds[0]}';`)).toBe('booked')
     expect(psql(`select status::text from slots where id = '${near.slotIds[1]}';`)).toBe('open')
     expect(psql(`select count(*) from appointment_transitions where appointment_id = '${nearId}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${nearId}';`)).toBe('0')
 
     psql(`update appointments set status = 'cancelled' where id = '${nearId}';`)
     expect(JSON.parse(psql(rescheduleCall(near, nearId, near.slotIds[1]!))).result_error).toBe('not_reschedulable')
     expect(psql(`select slot_id || '|' || status::text from appointments where id = '${nearId}';`)).toBe(`${near.slotIds[0]}|cancelled`)
     expect(psql(`select count(*) from appointment_transitions where appointment_id = '${nearId}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${nearId}';`)).toBe('0')
     expect(psql(`select status::text from slots where id = '${near.slotIds[0]}';`)).toBe('open')
     expect(psql(`select status::text from slots where id = '${near.slotIds[1]}';`)).toBe('open')
   })
 
-  test('reschedule_historyFailure_rollsBackAppointmentBothSlotsAndHistory', () => {
+  test('reschedule_auditFailure_rollsBackAppointmentBothSlotsTransitionAndAudit', () => {
     const f = fixture()
     const id = appointment(f)
     psql(`create function reschedule_rpc_rollback_probe() returns trigger language plpgsql as $$
-            begin raise exception 'reschedule history rejected' using errcode = 'check_violation'; end $$;
-          create trigger reschedule_rpc_rollback_probe before insert on appointment_transitions
-            for each row when (new.appointment_id = '${id}')
+            begin raise exception 'reschedule audit rejected' using errcode = 'check_violation'; end $$;
+          create trigger reschedule_rpc_rollback_probe before insert on audit_events
+            for each row when (new.target_id = '${id}' and new.action = 'booking.reschedule')
             execute function reschedule_rpc_rollback_probe();`)
     try {
-      expectSqlState(rescheduleCall(f, id, f.slotIds[1]!), 'reschedule history rejected')
+      expectSqlState(rescheduleCall(f, id, f.slotIds[1]!), 'reschedule audit rejected')
     } finally {
-      psql('drop trigger reschedule_rpc_rollback_probe on appointment_transitions; drop function reschedule_rpc_rollback_probe();')
+      psql('drop trigger reschedule_rpc_rollback_probe on audit_events; drop function reschedule_rpc_rollback_probe();')
     }
     expect(psql(`select slot_id || '|' || status::text from appointments where id = '${id}';`)).toBe(`${f.slotIds[0]}|requested`)
     expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('booked')
     expect(psql(`select status::text from slots where id = '${f.slotIds[1]}';`)).toBe('open')
     expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
   })
 
   test('rescheduleRpc_defersConstraintToAllowTwoAppointmentSwapAndKeepsSlotStatesConsistent', () => {
@@ -200,8 +208,8 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select slot_id from appointments where id = '${a}';`)).toBe(f.slotIds[1])
     expect(psql(`select slot_id from appointments where id = '${b}';`)).toBe(f.slotIds[0])
     expect(psql(`select count(*) from slots where id in ('${f.slotIds.join("','")}') and status = 'booked';`)).toBe('2')
-    expect(psql(`select from_status::text || '|' || to_status::text
-      from appointment_transitions where appointment_id = '${a}';`)).toBe('requested|requested')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${a}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${a}' and action = 'booking.reschedule';`)).toBe('1')
   })
 
   test('cancel_atomicallyWritesTransitionAndOpensSlotForAnotherAppointment', () => {
@@ -210,6 +218,10 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
     expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('cancelled')
     expect(psql(`select from_status::text || '|' || to_status::text from appointment_transitions where appointment_id = '${id}';`)).toBe('requested|cancelled')
+    expect(psql(`select actor_kind::text || '|' || actor_ref || '|' || action || '|' || target_kind || '|' || target_id || '|' || outcome
+      from audit_events where target_id = '${id}';`)).toBe(
+      `account|${f.actorUserId}|booking.cancel|appointment|${id}|granted`,
+    )
     expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('open')
     expect(psql(`insert into appointments (slot_id, patient_id, provider_id, service_id, idempotency_key)
       values ('${f.slotIds[0]}', '${f.patientId}', '${f.providerId}', '${f.serviceId}', '${randomUUID()}') returning id;`)).toMatch(/[0-9a-f-]{36}/)
@@ -222,6 +234,7 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select status::text from appointments where id = '${nearId}';`)).toBe('requested')
     expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('booked')
     expect(psql(`select count(*) from appointment_transitions where appointment_id = '${nearId}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${nearId}';`)).toBe('0')
 
     const far = fixture()
     const farId = appointment(far)
@@ -237,6 +250,26 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select status::text from appointments where id = '${farId}';`)).toBe('requested')
     expect(psql(`select status::text from slots where id = '${far.slotIds[0]}';`)).toBe('booked')
     expect(psql(`select count(*) from appointment_transitions where appointment_id = '${farId}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${farId}';`)).toBe('0')
+  })
+
+  test('cancel_auditFailure_rollsBackAppointmentSlotTransitionAndAudit', () => {
+    const f = fixture()
+    const id = appointment(f)
+    psql(`create function cancel_audit_rollback_probe() returns trigger language plpgsql as $$
+            begin raise exception 'cancel audit rejected' using errcode = 'check_violation'; end $$;
+          create trigger cancel_audit_rollback_probe before insert on audit_events
+            for each row when (new.target_id = '${id}' and new.action = 'booking.cancel')
+            execute function cancel_audit_rollback_probe();`)
+    try {
+      expectSqlState(cancelCall(f, id), 'cancel audit rejected')
+    } finally {
+      psql('drop trigger cancel_audit_rollback_probe on audit_events; drop function cancel_audit_rollback_probe();')
+    }
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('requested')
+    expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('booked')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
   })
 
   test('appUser_canExecuteRpcWithoutReceivingNewDirectSlotPrivileges', () => {
@@ -244,5 +277,12 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     const id = appointment(f)
     expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
     expectSqlState(appSql(f.actorUserId, `update slots set status = 'booked' where id = '${f.slotIds[0]}';`), 'permission denied for table slots')
+    expect(psql(`select has_table_privilege('booking_executor', 'audit_events', 'INSERT')::text || '|' ||
+      has_table_privilege('booking_executor', 'audit_events', 'SELECT')::text || '|' ||
+      has_table_privilege('booking_executor', 'audit_events', 'UPDATE')::text || '|' ||
+      has_table_privilege('booking_executor', 'audit_events', 'DELETE')::text;`)).toBe('true|false|false|false')
+    expect(psql(`select has_sequence_privilege('booking_executor', 'audit_events_id_seq', 'USAGE')::text || '|' ||
+      has_sequence_privilege('booking_executor', 'audit_events_id_seq', 'SELECT')::text || '|' ||
+      has_sequence_privilege('booking_executor', 'audit_events_id_seq', 'UPDATE')::text;`)).toBe('true|false|false')
   })
 })
