@@ -4,6 +4,9 @@
 -- UPDATE on slots or broader table grants.
 
 grant update on appointments to booking_executor;
+grant insert on audit_events to booking_executor;
+grant usage on sequence audit_events_id_seq to booking_executor;
+revoke select on sequence audit_events_id_seq from booking_executor;
 
 -- A reschedule must lock its currently-booked slot as well as an open target.
 -- The original booking policy admitted only open rows, which is correct for a
@@ -112,13 +115,11 @@ begin
          out_of_hours = false
    where id = v_appointment.id;
 
-  -- A reschedule does not change lifecycle status, but it is still a recorded
-  -- appointment mutation.  The equal endpoints distinguish that history row
-  -- from cancellation while keeping it in the existing transition ledger.
-  insert into appointment_transitions (
-    appointment_id, from_status, to_status, actor_user_id
+  insert into audit_events (
+    actor_kind, actor_ref, action, target_kind, target_id, outcome
   ) values (
-    v_appointment.id, v_appointment.status, v_appointment.status, p_actor_user_id
+    'account', p_actor_user_id::text, 'booking.reschedule',
+    'appointment', v_appointment.id, 'granted'
   );
 
   return query
@@ -189,6 +190,12 @@ begin
   update appointments set status = 'cancelled' where id = v_appointment.id;
   insert into appointment_transitions (appointment_id, from_status, to_status, actor_user_id)
   values (v_appointment.id, v_appointment.status, 'cancelled', p_actor_user_id);
+  insert into audit_events (
+    actor_kind, actor_ref, action, target_kind, target_id, outcome
+  ) values (
+    'account', p_actor_user_id::text, 'booking.cancel',
+    'appointment', v_appointment.id, 'granted'
+  );
 
   return query
   select null::text, a.id, a.slot_id, s.starts_at, s.ends_at, a.status,
