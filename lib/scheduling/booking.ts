@@ -34,9 +34,9 @@ export type ChangeResult =
   | { ok: true; appointment: AppointmentDto }
   | { ok: false; error: 'slot_unavailable' | 'minimum_notice' | 'not_reschedulable' }
 
-type BookRpcRow = {
-  result_error: BookError | null
-  result_reused: boolean | null
+type ChangeError = Extract<ChangeResult, { ok: false }>['error']
+
+type AppointmentRpcRow = {
   appointment_id: string | null
   starts_at: string | null
   ends_at: string | null
@@ -47,7 +47,19 @@ type BookRpcRow = {
   out_of_hours: boolean | null
 }
 
+type BookRpcRow = AppointmentRpcRow & {
+  result_error: BookError | null
+  result_reused: boolean | null
+}
+
+type ChangeRpcRow = AppointmentRpcRow & {
+  result_error: string | null
+  appointment_slot_id: string | null
+}
+
 type CallerClient = ReturnType<typeof anonClient>
+
+const CHANGE_ERRORS = new Set<ChangeError>(['slot_unavailable', 'minimum_notice', 'not_reschedulable'])
 
 async function callerClient() {
   const cookieStore = await cookies()
@@ -74,7 +86,7 @@ async function resolveActorRole(client: CallerClient, actorUserId: string): Prom
   throw new Error('booking: actor has no scheduling role')
 }
 
-function appointmentDto(row: BookRpcRow, role: SchedulingRole): AppointmentDto {
+function appointmentDto(row: AppointmentRpcRow, role: SchedulingRole): AppointmentDto {
   const startsAt = new Date(required(row.starts_at, 'starts_at'))
   const endsAt = new Date(required(row.ends_at, 'ends_at'))
   if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
@@ -101,6 +113,41 @@ function appointmentDto(row: BookRpcRow, role: SchedulingRole): AppointmentDto {
     changeDeadline: toRfc3339(providerTimeZone, changeDeadline),
     allowedTransitions: transitions,
   }
+}
+
+function isChangeError(error: string): error is ChangeError {
+  return CHANGE_ERRORS.has(error as ChangeError)
+}
+
+function minimumNoticeInterval(): string {
+  return `${config.minChangeNoticeHours} hours`
+}
+
+async function changeAppointment(
+  rpcName: 'reschedule_appointment' | 'cancel_appointment',
+  input: { appointmentId: string; actorUserId: string; slotId?: string },
+): Promise<ChangeResult> {
+  const client = await callerClient()
+  const role = await resolveActorRole(client, input.actorUserId)
+  const rpcInput = {
+    p_appointment_id: input.appointmentId,
+    p_actor_user_id: input.actorUserId,
+    p_minimum_notice: minimumNoticeInterval(),
+    ...(input.slotId === undefined ? {} : { p_slot_id: input.slotId }),
+  }
+  const { data, error } = await client.rpc(rpcName, rpcInput)
+
+  if (error) throw new Error('booking: transactional write failed')
+  const row = (Array.isArray(data) ? data[0] : data) as ChangeRpcRow | null
+  if (!row) throw new Error('booking: transactional write returned no result')
+  if (row.result_error !== null) {
+    if (!isChangeError(row.result_error)) {
+      throw new Error('booking: transactional write returned an invalid result')
+    }
+    return { ok: false, error: row.result_error }
+  }
+
+  return { ok: true, appointment: appointmentDto(row, role) }
 }
 
 export async function book(input: {
@@ -139,4 +186,16 @@ export async function book(input: {
   }
 
   return { ok: true, appointment, reused }
+}
+
+export async function reschedule(input: {
+  appointmentId: string
+  slotId: string
+  actorUserId: string
+}): Promise<ChangeResult> {
+  return changeAppointment('reschedule_appointment', input)
+}
+
+export async function cancel(input: { appointmentId: string; actorUserId: string }): Promise<ChangeResult> {
+  return changeAppointment('cancel_appointment', input)
 }
