@@ -39,7 +39,13 @@ const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.h
 })
 
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: callerMock }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: callerMock,
+  resolveAuthenticatedSession: async () => {
+    const userId = await callerMock()
+    return userId ? { accessToken: 'caller-token', userId } : null
+  },
+}))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonMock }))
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signingMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
