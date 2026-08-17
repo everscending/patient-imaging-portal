@@ -7,6 +7,19 @@ import { afterEach, describe, expect, test } from 'vitest'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
 const PROBE = path.join(REPO_ROOT, 'scripts', 'probe.sh')
+const HOST_ENV = Object.fromEntries(
+  execFileSync('env', ['-0'], { encoding: 'utf8' })
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf('=')
+      return [entry.slice(0, separator), entry.slice(separator + 1)]
+    }),
+)
+const NODE_ENV: NodeJS.ProcessEnv['NODE_ENV'] =
+  HOST_ENV.NODE_ENV === 'production' || HOST_ENV.NODE_ENV === 'development'
+    ? HOST_ENV.NODE_ENV
+    : 'test'
 const temporaryDirectories: string[] = []
 
 type ProbeFixture = {
@@ -48,8 +61,8 @@ exit "\${FAKE_EXIT:-0}"
     cleanup,
     ready,
     env: {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      ...HOST_ENV,
+      PATH: `${bin}:${HOST_ENV.PATH ?? ''}`,
       PORT: '45678',
       APP_BASE_URL: 'http://127.0.0.1:45678',
       LOOM_HOST_PROBE_HEAD: '0123456789abcdef',
@@ -70,7 +83,7 @@ function runProbe(
   const childEnv: NodeJS.ProcessEnv = {
     ...fixture.env,
     ...env,
-    NODE_ENV: process.env.NODE_ENV,
+    NODE_ENV,
   }
   return spawnSync(PROBE, args, {
     cwd: REPO_ROOT,
@@ -178,7 +191,7 @@ describe('repository-owned E2 host probe', () => {
     const childEnv: NodeJS.ProcessEnv = {
       ...fixture.env,
       FAKE_WAIT: '1',
-      NODE_ENV: process.env.NODE_ENV,
+      NODE_ENV,
     }
     const child: ChildProcess = spawn(PROBE, ['e2'], { cwd: REPO_ROOT, env: childEnv, stdio: 'ignore' })
 
