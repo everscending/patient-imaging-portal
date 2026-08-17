@@ -3,7 +3,7 @@
 import { ShareDialog } from '../../components/share/ShareDialog'
 import type { JSX } from 'react'
 
-export type ReportViewProps = {
+type ReportViewBaseProps = {
   report: {
     id: string
     studyId: string
@@ -14,9 +14,12 @@ export type ReportViewProps = {
     signedByName: string
     signedAt: string
   }
-  shareLinkTtlHours: number
-  variant: 'portal' | 'shared'
 }
+
+export type ReportViewProps = ReportViewBaseProps & (
+  | { variant: 'portal'; shareLinkTtlHours: number }
+  | { variant: 'shared'; shareLinkTtlHours?: never }
+)
 
 function signingTimestamp(value: string): string {
   if (!value) return 'Not recorded'
@@ -27,11 +30,8 @@ function signingTimestamp(value: string): string {
 }
 
 /** The sole structured-text renderer for portal and shared report views. */
-export function ReportView({
-  report,
-  shareLinkTtlHours,
-  variant,
-}: ReportViewProps): JSX.Element {
+export function ReportView(props: ReportViewProps): JSX.Element {
+  const { report, variant } = props
   return (
     <article className="pip-report" data-testid="report-view">
       <style>{`
@@ -82,7 +82,7 @@ export function ReportView({
 
       {variant === 'portal' ? (
         <div className="pip-report-actions" aria-label="Report actions">
-          <ShareDialog resourceKind="report" resourceId={report.id} shareLinkTtlHours={shareLinkTtlHours} />
+          <ShareDialog resourceKind="report" resourceId={report.id} shareLinkTtlHours={props.shareLinkTtlHours} />
           <button className="pip-report-action pip-report-print" type="button" onClick={() => window.print()}>
             Print
           </button>
