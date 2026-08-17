@@ -135,6 +135,13 @@ describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the 
       expect(declared[tier]).toEqual(resolved)
     },
   )
+
+  test('api names the timing acceptance test explicitly', () => {
+    const api = run(['api', '--list']).stdout.trim().split('\n')
+    expect(api).toContain(
+      'npx vitest run --project unit tests/observability/timing.test.ts',
+    )
+  })
 })
 
 describe('playwright config — acceptance + adversarial: baseURL is derived, never hardcoded', () => {
