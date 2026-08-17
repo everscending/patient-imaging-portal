@@ -28,29 +28,6 @@ the T1 skeleton only.
   the Supabase project settings and in the Vercel project's environment
   variables below — never in this repository (SEC-7).
 
-### Reminder cron configuration
-
-Vercel environment variables do not configure Postgres sessions. After the
-database migrations are applied, provision the scheduler explicitly from the
-same deployment values:
-
-```bash
-PGHOST="$PGHOST" PGDATABASE="$PGDATABASE" \
-PGUSER="$PGUSER" PGPASSWORD="$PGPASSWORD" \
-APP_BASE_URL="$APP_BASE_URL" \
-CRON_SECRET="$CRON_SECRET" \
-REMINDER_CRON_MINUTES="${REMINDER_CRON_MINUTES:-5}" \
-REMINDER_WINDOW_MINUTES="${REMINDER_WINDOW_MINUTES:-30}" \
-scripts/configure-reminder-cron.sh
-```
-
-The fixed SQL at `db/deploy/reminder-cron.sql` persists the URL, secret, and
-cadence as database settings, then replaces `patient-imaging-reminders` with a
-schedule using that cadence. Migration 004 fails closed when the target or
-secret has not yet been provisioned: it creates no unauthenticated, null-target
-job. Re-run the command whenever any of these deployment values changes. Real
-values remain in the deployment environment and are never written to Git.
-
 ## Storage: the `phi` bucket
 
 `db/storage/bucket.sql` is the reviewable source of the one bucket §9 pins:

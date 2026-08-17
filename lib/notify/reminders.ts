@@ -5,12 +5,24 @@ import { config } from '../config'
 import { serviceClient } from '../db/client'
 import { sendEmail, type EmailMessage, type SendOutcome } from './email'
 
-type DueAppointment = { id: string; patients: { email: string }[] | null }
-type OutboxRow = { id: string; recipient: string; subject: string; body: string; attempts: number }
+type RelatedPatient = { email: string }
+type DueAppointment = { id: string; patients: RelatedPatient | RelatedPatient[] | null }
+type OutboxRow = {
+  id: string
+  recipient: string
+  subject: string
+  body: string
+  attempts: number
+  next_attempt_at: string
+}
+type DatabaseError = { code?: string }
 
 export type ReminderRun = { due: number; sent: number; skipped: number; failed: number }
 
 const REMINDER_SUBJECT = 'Appointment reminder'
+const MINUTES_PER_HOUR = 60
+const MILLISECONDS_PER_MINUTE = 60_000
+const UNIQUE_VIOLATION = '23505'
 
 export function reminderMessage(recipient: string): EmailMessage {
   return {
@@ -38,36 +50,66 @@ function safeProviderCode(): string {
   return 'email_delivery_failed'
 }
 
+function patientEmail(appointment: DueAppointment): string {
+  const patient = Array.isArray(appointment.patients) ? appointment.patients[0] : appointment.patients
+  return patient?.email ?? ''
+}
+
 async function drainOutbox(client: ReturnType<typeof serviceClient>): Promise<void> {
   const { data, error } = await client
     .from('email_outbox')
-    .select('id, recipient, subject, body, attempts')
+    .select('id, recipient, subject, body, attempts, next_attempt_at')
     .is('sent_at', null)
     .lte('next_attempt_at', new Date().toISOString())
     .order('created_at', { ascending: true })
   if (error || !data) return
 
   for (const row of data as OutboxRow[]) {
+    // Move the eligible row's due instant forward as an atomic lease. Matching
+    // the value read above means only one overlapping drain receives the row
+    // from UPDATE ... RETURNING and therefore only one calls the adapter.
+    const claimedUntil = new Date(Date.now() + config.reminderCronMinutes * MILLISECONDS_PER_MINUTE).toISOString()
+    const { data: claimed, error: claimError } = await client
+      .from('email_outbox')
+      .update({ next_attempt_at: claimedUntil })
+      .eq('id', row.id)
+      .is('sent_at', null)
+      .eq('next_attempt_at', row.next_attempt_at)
+      .select('id')
+    if (claimError) throw new Error('email outbox claim unavailable')
+    if (!claimed?.length) continue
+
     const result = await sendEmail({ to: row.recipient, subject: row.subject, text: row.body })
     if (result.outcome === 'sent') {
-      await client.from('email_outbox').update({ sent_at: new Date().toISOString() }).eq('id', row.id).is('sent_at', null)
+      const { error: sentError } = await client
+        .from('email_outbox')
+        .update({ sent_at: new Date().toISOString() })
+        .eq('id', row.id)
+        .is('sent_at', null)
+      if (sentError) throw new Error('email outbox completion unavailable')
       continue
     }
     const attempts = row.attempts + 1
-    const nextAttemptAt = new Date(Date.now() + config.reminderCronMinutes * attempts * 60_000).toISOString()
-    await client
+    const nextAttemptAt = new Date(
+      Date.now() + config.reminderCronMinutes * attempts * MILLISECONDS_PER_MINUTE,
+    ).toISOString()
+    const { error: failureError } = await client
       .from('email_outbox')
       .update({ attempts, next_attempt_at: nextAttemptAt, last_error: safeProviderCode() })
       .eq('id', row.id)
       .is('sent_at', null)
+    if (failureError) throw new Error('email outbox retry unavailable')
   }
 }
 
 /** Dispatches due reminders then drains durable share-email work. */
 export async function dispatchReminders(): Promise<ReminderRun> {
   const client = serviceClient()
-  const leadStart = new Date(Date.now() + config.reminderLeadHours * 60 * 60_000).toISOString()
-  const leadEnd = new Date(Date.now() + (config.reminderLeadHours * 60 + config.reminderWindowMinutes) * 60_000).toISOString()
+  const leadMinutes = config.reminderLeadHours * MINUTES_PER_HOUR
+  const leadStart = new Date(Date.now() + leadMinutes * MILLISECONDS_PER_MINUTE).toISOString()
+  const leadEnd = new Date(
+    Date.now() + (leadMinutes + config.reminderWindowMinutes) * MILLISECONDS_PER_MINUTE,
+  ).toISOString()
   const { data, error } = await client
     .from('appointments')
     .select('id, patients!inner(email), slots!inner(starts_at)')
@@ -80,7 +122,14 @@ export async function dispatchReminders(): Promise<ReminderRun> {
   for (const appointment of (data ?? []) as DueAppointment[]) {
     // A previous failed pre-send record represents an ordinary retry. This is
     // the only delete in the build; a sent record can never satisfy it.
-    await client.from('reminder_sends').delete().eq('appointment_id', appointment.id).eq('lead_hours', config.reminderLeadHours).eq('outcome', 'failed')
+    const { error: retryClearError } = await client
+      .from('reminder_sends')
+      .delete()
+      .eq('appointment_id', appointment.id)
+      .eq('lead_hours', config.reminderLeadHours)
+      .eq('outcome', 'failed')
+    if (retryClearError) throw new Error('reminder retry unavailable')
+
     const { data: inserted, error: insertError } = await client
       .from('reminder_sends')
       .insert({ appointment_id: appointment.id, lead_hours: config.reminderLeadHours, outcome: 'failed' })
@@ -88,14 +137,17 @@ export async function dispatchReminders(): Promise<ReminderRun> {
     if (insertError) {
       // A conflicting primary key means another run owns the send; conflict is
       // expected under overlapping cron invocations and is never surfaced.
-      run.skipped += 1
-      continue
+      if ((insertError as DatabaseError).code === UNIQUE_VIOLATION) {
+        run.skipped += 1
+        continue
+      }
+      throw new Error('reminder send claim unavailable')
     }
     if (!inserted?.length) {
       run.skipped += 1
       continue
     }
-    const result = await sendEmail(reminderMessage(appointment.patients?.[0]?.email ?? ''))
+    const result = await sendEmail(reminderMessage(patientEmail(appointment)))
     await audit(appointment.id, result)
     if (result.outcome === 'sent') {
       const { error: updateError } = await client

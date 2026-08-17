@@ -17,10 +17,11 @@ do $$ begin
   if exists (select 1 from pg_extension where extname = 'pg_cron')
      and exists (select 1 from pg_extension where extname = 'pg_net')
      and nullif(current_setting('app.app_base_url', true), '') is not null
-     and nullif(current_setting('app.cron_secret', true), '') is not null then
+     and nullif(current_setting('app.cron_secret', true), '') is not null
+     and nullif(current_setting('app.reminder_cron_minutes', true), '') is not null then
     perform cron.schedule(
       'patient-imaging-reminders',
-      '*/' || coalesce(nullif(current_setting('app.reminder_cron_minutes', true), ''), '5') || ' * * * *',
+      '*/' || current_setting('app.reminder_cron_minutes', true) || ' * * * *',
       format($job$
         select net.http_post(
           url := %L,
