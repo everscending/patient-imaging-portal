@@ -2,28 +2,15 @@
 // middleware.ts's matcher (that gates the six §7 "verified patient" routes,
 // not the verification endpoint itself), so the session check happens here,
 // before any identity_attempts row can be written.
-import { z } from 'zod'
 import { computeSourceRef, resolveCallerId, verifyIdentity } from '../../../../lib/access/identity'
 import { errorResponse } from '../../../../lib/validation/envelope'
-import { parseBody } from '../../../../lib/validation'
-
-// .strict() rejects an extra patientId or userId field outright. The date
-// pattern is exact-length (YYYY-MM-DD): "1988-3-14", "14/03/1988", an empty
-// string and an oversized string all fail the same regex, ahead of any
-// database contact.
-const VerifyRequestSchema = z
-  .object({
-    patientRef: z.string().trim().min(1).max(64),
-    dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  })
-  .strict()
+import { identityVerifyRequestSchema, parseBody } from '../../../../lib/validation'
 
 export async function POST(request: Request): Promise<Response> {
-  const parsed = await parseBody(VerifyRequestSchema, request)
-  if (!parsed.ok) return parsed.response
-
   const callerId = await resolveCallerId()
   if (!callerId) return errorResponse(401, 'session_required', 'Sign in to continue.')
+  const parsed = await parseBody(identityVerifyRequestSchema, request)
+  if (!parsed.ok) return parsed.response
 
   const { patientRef, dateOfBirth } = parsed.value
   const sourceRef = computeSourceRef(request)
