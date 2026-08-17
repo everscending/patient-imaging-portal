@@ -190,28 +190,17 @@ export async function transition(input: {
   const currentDto = selectedAppointmentDto(current, role)
   if (!currentDto.allowedTransitions.includes(input.status)) return { ok: false, error: 'invalid_transition' }
 
-  const { data: updatedData, error: updateError } = await client
-    .from('appointments')
-    .update({ status: input.status })
-    .eq('id', input.appointmentId)
-    .eq('status', current.status)
-    .select(APPOINTMENT_SELECT)
-    .maybeSingle()
-  if (updateError) throw new Error('booking: appointment transition write failed')
-  const updated = updatedData as AppointmentSelectRow | null
-  if (!updated) return { ok: false, error: 'invalid_transition' }
-  const { error: historyError } = await client.from('appointment_transitions').insert({
-    appointment_id: input.appointmentId,
-    from_status: current.status,
-    to_status: input.status,
-    actor_user_id: input.actorUserId,
+  const { data, error } = await client.rpc('transition_appointment', {
+    p_appointment_id: input.appointmentId,
+    p_status: input.status,
+    p_actor_user_id: input.actorUserId,
   })
-  if (historyError) throw new Error('booking: appointment transition history failed')
-  await recordAuditEvent({
-    actorKind: 'account', actorRef: input.actorUserId, action: 'appointment.transition',
-    targetKind: 'appointment', targetId: input.appointmentId, outcome: 'granted',
-  })
-  return { ok: true, appointment: selectedAppointmentDto(updated, role) }
+  if (error) throw new Error('booking: appointment transition write failed')
+  const row = (Array.isArray(data) ? data[0] : data) as ChangeRpcRow | null
+  if (!row) throw new Error('booking: appointment transition returned no result')
+  if (row.result_error === 'invalid_transition') return { ok: false, error: 'invalid_transition' }
+  if (row.result_error !== null) throw new Error('booking: appointment transition returned an invalid result')
+  return { ok: true, appointment: appointmentDto(row, role) }
 }
 
 function isChangeError(error: string): error is ChangeError {

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-const { anonClientMock, auditMock, fromMock } = vi.hoisted(() => ({
+const { anonClientMock, auditMock, fromMock, rpcMock } = vi.hoisted(() => ({
   anonClientMock: vi.fn(),
   auditMock: vi.fn(),
   fromMock: vi.fn(),
+  rpcMock: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -24,8 +25,6 @@ const ACTOR_USER_ID = '22222222-2222-4222-8222-222222222222'
 type Query = {
   select: () => Query
   eq: () => Query
-  update: (value: { status: string }) => Query
-  insert: (value: Record<string, string>) => Promise<{ error: null }>
   maybeSingle: () => Promise<{ data: unknown; error: null }>
 }
 
@@ -39,38 +38,35 @@ const appointment = {
 }
 
 let roleRows: Record<'patients' | 'providers' | 'staff_admins', object | null>
-let updateRows: Array<{ status: string }>
-let transitionRows: Array<Record<string, string>>
-
 beforeEach(() => {
   vi.clearAllMocks()
   roleRows = { patients: null, providers: null, staff_admins: null }
-  updateRows = []
-  transitionRows = []
   fromMock.mockImplementation((table: string) => {
-    let updatedStatus: string | null = null
     const query = {} as Query
     query.select = () => query
     query.eq = () => query
-    query.update = (value) => {
-      updatedStatus = value.status
-      updateRows.push(value)
-      return query
-    }
-    query.insert = async (value) => {
-      transitionRows.push(value)
-      return { error: null }
-    }
     query.maybeSingle = async () => {
       if (table in roleRows) return { data: roleRows[table as keyof typeof roleRows], error: null }
-      if (table === 'appointments') {
-        return { data: updatedStatus === null ? appointment : { ...appointment, status: updatedStatus }, error: null }
-      }
+      if (table === 'appointments') return { data: appointment, error: null }
       return { data: null, error: null }
     }
     return query
   })
-  anonClientMock.mockReturnValue({ from: fromMock })
+  rpcMock.mockResolvedValue({
+    data: {
+      result_error: null,
+      appointment_id: APPOINTMENT_ID,
+      starts_at: appointment.slots.starts_at,
+      ends_at: appointment.slots.ends_at,
+      appointment_status: 'confirmed',
+      provider_name: appointment.providers.full_name,
+      provider_time_zone: appointment.providers.time_zone,
+      service_name: appointment.services.name,
+      out_of_hours: false,
+    },
+    error: null,
+  })
+  anonClientMock.mockReturnValue({ from: fromMock, rpc: rpcMock })
 })
 
 describe('persisted appointment transition role authority', () => {
@@ -86,14 +82,12 @@ describe('persisted appointment transition role authority', () => {
       actorUserId: ACTOR_USER_ID,
     })).resolves.toMatchObject({ ok: true, appointment: { status: 'confirmed' } })
 
-    expect(updateRows).toEqual([{ status: 'confirmed' }])
-    expect(transitionRows).toEqual([{
-      appointment_id: APPOINTMENT_ID,
-      from_status: 'requested',
-      to_status: 'confirmed',
-      actor_user_id: ACTOR_USER_ID,
-    }])
-    expect(auditMock).toHaveBeenCalledOnce()
+    expect(rpcMock).toHaveBeenCalledWith('transition_appointment', {
+      p_appointment_id: APPOINTMENT_ID,
+      p_status: 'confirmed',
+      p_actor_user_id: ACTOR_USER_ID,
+    })
+    expect(auditMock).not.toHaveBeenCalled()
   })
 
   test('patient-only requested-to-confirmed remains denied without persisted side effects', async () => {
@@ -105,8 +99,7 @@ describe('persisted appointment transition role authority', () => {
       actorUserId: ACTOR_USER_ID,
     })).resolves.toEqual({ ok: false, error: 'invalid_transition' })
 
-    expect(updateRows).toEqual([])
-    expect(transitionRows).toEqual([])
+    expect(rpcMock).not.toHaveBeenCalled()
     expect(auditMock).not.toHaveBeenCalled()
   })
 })

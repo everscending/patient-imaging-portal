@@ -95,6 +95,12 @@ function cancelCall(f: Fixture, appointmentId: string, minimumNotice = MINIMUM_N
   ) result;`)
 }
 
+function transitionCall(f: Fixture, appointmentId: string, status: 'confirmed' | 'completed' | 'no_show'): string {
+  return appSql(f.actorUserId, `select row_to_json(result) from transition_appointment(
+    '${appointmentId}'::uuid, '${status}'::appointment_status, '${f.actorUserId}'::uuid
+  ) result;`)
+}
+
 function makeActorClinician(f: Fixture, role: 'provider' | 'admin', retainPatientLink = false): void {
   psql(`${retainPatientLink ? '' : `update patients set user_id = null where id = '${f.patientId}';`}
     ${role === 'provider'
@@ -114,6 +120,82 @@ afterAll(async () => {
 })
 
 describe('reschedule/cancel RPC — atomic database transaction contract', () => {
+  test('authenticated patient cannot bypass lifecycle authority with a direct appointment update', () => {
+    const f = fixture()
+    const id = appointment(f)
+
+    expectSqlState(
+      appSql(f.actorUserId, `update appointments set status = 'confirmed' where id = '${id}';`),
+      'permission denied for table appointments',
+    )
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('requested')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+  })
+
+  test.each(['provider', 'admin'] as const)('%sWithPatientLink_canUseTransactionalClinicianTransition', (role) => {
+    const f = fixture()
+    const id = appointment(f)
+    makeActorClinician(f, role, true)
+
+    expect(JSON.parse(psql(transitionCall(f, id, 'confirmed'))).result_error).toBeNull()
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('confirmed')
+    expect(psql(`select from_status::text || '|' || to_status::text || '|' || actor_user_id
+      from appointment_transitions where appointment_id = '${id}';`)).toBe(`requested|confirmed|${f.actorUserId}`)
+    expect(psql(`select action || '|' || actor_ref || '|' || outcome
+      from audit_events where target_id = '${id}';`)).toBe(`appointment.transition|${f.actorUserId}|granted`)
+  })
+
+  test('patientOnly_transactionalClinicianTransition_isDeniedWithoutSideEffects', () => {
+    const f = fixture()
+    const id = appointment(f)
+
+    expect(JSON.parse(psql(transitionCall(f, id, 'confirmed'))).result_error).toBe('invalid_transition')
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('requested')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
+  })
+
+  test('clinicianCannotCompleteBeforeAppointmentStartsThroughDirectRpc', () => {
+    const f = fixture()
+    const id = appointment(f, 0, 'confirmed')
+    makeActorClinician(f, 'provider', true)
+
+    expect(JSON.parse(psql(transitionCall(f, id, 'completed'))).result_error).toBe('invalid_transition')
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('confirmed')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
+  })
+
+  test('clinicianCanCompleteAfterAppointmentStartsThroughTransactionalRpc', () => {
+    const f = fixture({ startsInHours: -2 })
+    const id = appointment(f, 0, 'confirmed')
+    makeActorClinician(f, 'provider', true)
+
+    expect(JSON.parse(psql(transitionCall(f, id, 'completed'))).result_error).toBeNull()
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('completed')
+    expect(psql(`select from_status::text || '|' || to_status::text
+      from appointment_transitions where appointment_id = '${id}';`)).toBe('confirmed|completed')
+  })
+
+  test('transition_auditFailure_rollsBackStatusAndHistory', () => {
+    const f = fixture()
+    const id = appointment(f)
+    makeActorClinician(f, 'provider', true)
+    psql(`create function transition_audit_rollback_probe() returns trigger language plpgsql as $$
+            begin raise exception 'transition audit rejected' using errcode = 'check_violation'; end $$;
+          create trigger transition_audit_rollback_probe before insert on audit_events
+            for each row when (new.target_id = '${id}' and new.action = 'appointment.transition')
+            execute function transition_audit_rollback_probe();`)
+    try {
+      expectSqlState(transitionCall(f, id, 'confirmed'), 'transition audit rejected')
+    } finally {
+      psql('drop trigger transition_audit_rollback_probe on audit_events; drop function transition_audit_rollback_probe();')
+    }
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('requested')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
+  })
+
   test('reschedule_atomicallyMovesAppointmentAndLetsTriggerDeriveBothSlotStates', () => {
     const f = fixture()
     const id = appointment(f)
@@ -269,6 +351,7 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
             select * from reschedule_appointment(
               '${a}', '${f.slotIds[1]}', '${f.actorUserId}', ${MINIMUM_NOTICE}
             );
+            reset role;
             update appointments set slot_id = '${f.slotIds[0]}' where id = '${b}';
           commit;`)
     expect(psql(`select slot_id from appointments where id = '${a}';`)).toBe(f.slotIds[1])
@@ -343,6 +426,8 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     const id = appointment(f)
     expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
     expectSqlState(appSql(f.actorUserId, `update slots set status = 'booked' where id = '${f.slotIds[0]}';`), 'permission denied for table slots')
+    expect(psql(`select has_table_privilege('app_user', 'appointments', 'UPDATE')::text || '|' ||
+      has_table_privilege('app_user', 'appointment_transitions', 'INSERT')::text;`)).toBe('false|false')
     expect(psql(`select has_table_privilege('booking_executor', 'audit_events', 'INSERT')::text || '|' ||
       has_table_privilege('booking_executor', 'audit_events', 'SELECT')::text || '|' ||
       has_table_privilege('booking_executor', 'audit_events', 'UPDATE')::text || '|' ||
