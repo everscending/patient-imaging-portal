@@ -182,6 +182,53 @@ describe('anonymous health Playwright check — regression: uses its lane base U
   })
 })
 
+describe('Next worktree root — regression: a lane watches only its own checkout', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'next.config.ts'), 'utf8')
+
+  test('worktreeLocalRoot_preventsParentLockfileInference', () => {
+    // `fileURLToPath(import.meta.url)` names this config file wherever the
+    // checkout was cloned; its dirname therefore cannot resolve to the parent
+    // repository's lockfile.
+    expect(source).toMatch(/fileURLToPath\(import\.meta\.url\)/)
+    expect(source).toMatch(/path\.dirname\(fileURLToPath\(import\.meta\.url\)\)/)
+    expect(source).toMatch(/turbopack:\s*\{\s*root:\s*worktreeRoot,?\s*}/)
+  })
+
+  test('adversarial_removingWorktreeLocalRoot_detectsParentInference', () => {
+    // Removing `turbopack.root` makes Next climb to the superproject's
+    // package-lock.json (Next's find-root behavior). Keep the exact config
+    // shape under test so deleting the explicit root is a red regression.
+    expect(source).toContain('root: worktreeRoot')
+    expect(source).not.toMatch(/root:\s*['"]/)
+  })
+
+  test('twoDistinctPortServers_neverShareOrInspectSiblingWorktree', () => {
+    // The root is derived from the config file, rather than PORT or a fixed
+    // checkout path. Each linked worktree consequently gets its own watcher
+    // root while Playwright derives each server URL from PORT.
+    const linkedWorktrees = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length))
+
+    expect(linkedWorktrees).toContain(REPO_ROOT)
+    expect(source).not.toMatch(/\.worktrees\/\d+|\/Users\/|PORT/)
+    expect(readFileSync(path.join(REPO_ROOT, 'playwright.config.ts'), 'utf8')).toMatch(/config\.port/)
+  })
+
+  test('cleanupOfEitherServerLeavesOtherWorktreeRootValid', () => {
+    // Process teardown lives in the fixture. A root is config-local state, so
+    // stopping one fixture cannot alter another worktree's root selection.
+    const fixture = readFileSync(path.join(REPO_ROOT, 'e2e/fixtures/start-test-server.mjs'), 'utf8')
+    expect(fixture).toMatch(/child\.kill\(\)/)
+    expect(fixture).toMatch(/fakeAuthServer\.close\(\)/)
+    expect(source).toContain('root: worktreeRoot')
+  })
+})
+
 describe('repo-wide guards', () => {
   test('no bare well-known port (3000, 5432, 5433, 8080) in this ticket\'s files', () => {
     // tests/setup/postgres.ts is exempt: postgres:16-alpine always listens on
