@@ -21,7 +21,7 @@ function expiresAt(): string {
 }
 
 function calendarDate(occurredAt: string): string {
-  return occurredAt.slice(0, 10)
+  return new Date(occurredAt).toISOString().slice(0, 10)
 }
 
 async function rows<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Promise<T[]> {
