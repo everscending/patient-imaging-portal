@@ -1,20 +1,17 @@
 import { cookies } from 'next/headers'
-import { z } from 'zod'
 
 import type { Actor } from '../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../lib/access/identity'
 import { anonClient } from '../../../../lib/db/client'
 import { revokeShareLink } from '../../../../lib/share/links'
 import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
-import { parseParams, uuidSchema } from '../../../../lib/validation'
+import { parseParams, shareParamsSchema } from '../../../../lib/validation'
 import { errorResponse, noContentResponse } from '../../../../lib/validation/envelope'
-
-const ParamsSchema = z.object({ id: uuidSchema })
 
 void (null as unknown as Actor)
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
-  const parsed = parseParams(ParamsSchema, await context.params)
+  const parsed = parseParams(shareParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
   const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
   const userId = await resolveCallerId()

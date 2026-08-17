@@ -1,19 +1,12 @@
 import { cookies } from 'next/headers'
-import { z } from 'zod'
 
 import type { Actor } from '../../../lib/access/guard'
 import { resolveCallerId } from '../../../lib/access/identity'
 import { anonClient } from '../../../lib/db/client'
 import { listShareLinks, mintShareLink } from '../../../lib/share/links'
 import { SESSION_COOKIE_NAME } from '../../../lib/session-cookie'
-import { parseBody } from '../../../lib/validation'
+import { createShareSchema, parseBody } from '../../../lib/validation'
 import { errorResponse } from '../../../lib/validation/envelope'
-
-const CreateShareSchema = z.object({
-  resourceKind: z.enum(['image', 'report']),
-  resourceId: z.string().uuid(),
-  recipientEmail: z.string().trim().email().max(320),
-}).strict()
 
 void (null as unknown as Actor)
 
@@ -33,11 +26,11 @@ async function caller(): Promise<{ userId: string; patientId: string | null } | 
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const parsed = await parseBody(CreateShareSchema, request)
-  if (!parsed.ok) return parsed.response
   const actor = await caller()
   if (!actor) return accessError(401)
   if (!actor.patientId) return accessError(403)
+  const parsed = await parseBody(createShareSchema, request)
+  if (!parsed.ok) return parsed.response
   try {
     const share = await mintShareLink({ patientId: actor.patientId, actorUserId: actor.userId, ...parsed.value })
     const created = { id: share.id, url: share.url, expiresAt: share.expiresAt, recipientEmail: share.recipientEmail }

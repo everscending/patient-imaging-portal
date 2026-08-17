@@ -1,12 +1,9 @@
 import { cookies } from 'next/headers'
-import { z } from 'zod'
 import type {} from '../../../lib/access/guard'
 import { anonClient } from '../../../lib/db/client'
 import { SESSION_COOKIE_NAME } from '../../../lib/session-cookie'
-import { parseQuery, uuidSchema } from '../../../lib/validation'
+import { parseQuery, providersQuerySchema } from '../../../lib/validation'
 import { errorResponse } from '../../../lib/validation/envelope'
-
-const ProvidersQuerySchema = z.object({ serviceId: uuidSchema }).strict()
 
 function sessionRequired(): Response {
   return errorResponse(401, 'session_required', 'Sign in to continue.')
@@ -24,11 +21,10 @@ type Provider = { id: string; full_name: string; time_zone: string }
 type ProviderJoin = { providers: Provider | Provider[] | null }
 
 export async function GET(request: Request): Promise<Response> {
-  const parsed = parseQuery(ProvidersQuerySchema, request)
-  if (!parsed.ok) return parsed.response
-
   const client = await authenticatedClient()
   if (!client) return sessionRequired()
+  const parsed = parseQuery(providersQuerySchema, new URL(request.url))
+  if (!parsed.ok) return parsed.response
 
   const { data, error } = await client
     .from('provider_services')

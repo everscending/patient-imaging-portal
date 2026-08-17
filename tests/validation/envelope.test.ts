@@ -41,8 +41,8 @@ function jsonRequest(body: string, contentType = 'application/json'): Request {
   })
 }
 
-function queryRequest(search: string): Request {
-  return new Request(`http://localhost/api/slots${search}`)
+function queryUrl(search: string): URL {
+  return new URL(`http://localhost/api/slots${search}`)
 }
 
 async function readEnvelope(response: Response): Promise<{ error: string; message: string }> {
@@ -177,28 +177,28 @@ describe('parseBody', () => {
 
 describe('parseQuery', () => {
   test('parseQuery_rejectsNonIntegerLimit', () => {
-    const result = parseQuery(listQuerySchema, queryRequest('?limit=abc'))
+    const result = parseQuery(listQuerySchema, queryUrl('?limit=abc'))
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.response.status).toBe(422)
   })
 
   test('parseQuery_rejectsUndeclaredParameterAlongsideValidOnes', async () => {
-    const result = parseQuery(listQuerySchema, queryRequest('?limit=10&unexpected=1'))
+    const result = parseQuery(listQuerySchema, queryUrl('?limit=10&unexpected=1'))
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect((await readEnvelope(result.response)).error).toBe('validation_failed')
   })
 
   test('parseQuery_acceptsValidQuery', () => {
-    const result = parseQuery(listQuerySchema, queryRequest('?limit=10'))
+    const result = parseQuery(listQuerySchema, queryUrl('?limit=10'))
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.value).toEqual({ limit: 10 })
   })
 
   test('parseQuery_neverThrowsForAnyInput', () => {
-    expect(() => parseQuery(listQuerySchema, queryRequest('?limit=%zz'))).not.toThrow()
+    expect(() => parseQuery(listQuerySchema, queryUrl('?limit=%zz'))).not.toThrow()
   })
 })
 

@@ -1,15 +1,12 @@
 import { cookies } from 'next/headers'
-import { z } from 'zod'
 
 import type { Actor } from '../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../lib/access/identity'
 import { anonClient } from '../../../../lib/db/client'
 import { getReport } from '../../../../lib/reports/reports'
 import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
-import { parseParams, uuidSchema } from '../../../../lib/validation'
+import { parseParams, reportParamsSchema } from '../../../../lib/validation'
 import { errorResponse } from '../../../../lib/validation/envelope'
-
-const ReportParamsSchema = z.object({ reportId: uuidSchema })
 
 function accessError(status: 401 | 403 | 404): Response {
   if (status === 401) return errorResponse(401, 'session_required', 'Sign in to continue.')
@@ -30,7 +27,7 @@ async function resolveActor(accessToken: string, userId: string): Promise<Actor>
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ reportId: string }> }): Promise<Response> {
-  const parsed = parseParams(ReportParamsSchema, await context.params)
+  const parsed = parseParams(reportParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
 
   const cookieStore = await cookies()

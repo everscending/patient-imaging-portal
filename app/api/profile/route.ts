@@ -3,18 +3,10 @@
 // It reads patients solely to expose the caller's already-linked reference;
 // every write targets the caller's own Supabase Auth metadata.
 import { cookies } from 'next/headers'
-import { z } from 'zod'
 import { anonClient, updateOwnAccountMetadata } from '../../../lib/db/client'
 import { SESSION_COOKIE_NAME } from '../../../lib/session-cookie'
-import { parseBody } from '../../../lib/validation'
+import { parseBody, profilePatchSchema } from '../../../lib/validation'
 import { errorResponse } from '../../../lib/validation/envelope'
-
-const ProfilePatchSchema = z
-  .object({
-    fullName: z.string().trim().min(1).max(200),
-    phone: z.union([z.string().trim().min(1).max(64), z.null()]),
-  })
-  .strict()
 
 type Profile = {
   email: string
@@ -76,11 +68,10 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PATCH(request: Request): Promise<Response> {
-  const parsed = await parseBody(ProfilePatchSchema, request)
-  if (!parsed.ok) return parsed.response
-
   const token = await sessionToken()
   if (!token) return sessionRequired()
+  const parsed = await parseBody(profilePatchSchema, request)
+  if (!parsed.ok) return parsed.response
 
   // Resolve the caller before the write. A syntactically valid but expired
   // token is a 401 and never reaches the Auth metadata endpoint.
