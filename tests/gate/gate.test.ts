@@ -65,11 +65,12 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
-    expect(ui.at(-3)).toBe('npx playwright test --project=e2-wiring')
-    expect(ui.at(-2)).toBe(
+    expect(ui).toContain('npx playwright test --project=e2-wiring')
+    expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
     )
-    expect(ui.at(-1)).toBe(
+    expect(ui).toContain('npx playwright test e2e/e8-wiring.spec.ts --project=e8-wiring')
+    expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     )
   })

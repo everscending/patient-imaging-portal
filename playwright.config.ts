@@ -20,6 +20,10 @@ export default defineConfig({
       dependencies: ['product'],
     },
     {
+      name: 'e8-wiring',
+      testMatch: /e8-wiring\.spec\.ts/,
+    },
+    {
       name: 'certification',
       testMatch: /e[01]-wiring\.spec\.ts/,
     },
