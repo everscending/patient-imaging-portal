@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
@@ -9,7 +9,7 @@ import { z } from 'zod'
 vi.mock('../../lib/config', () => ({ config: { maxRequestBodyBytes: 65536 } }))
 
 import { config } from '../../lib/config'
-import { errorResponse } from '../../lib/validation/envelope'
+import { errorResponse, noContentResponse } from '../../lib/validation/envelope'
 import { parseBody, parseParams, parseQuery, uuidSchema } from '../../lib/validation'
 
 // Mirrors a typical route body schema: two required fields, unknown keys
@@ -49,36 +49,61 @@ async function readEnvelope(response: Response): Promise<{ error: string; messag
   return (await response.json()) as { error: string; message: string }
 }
 
+function responseConstructionOffenders(): string[] {
+  const roots = ['lib', 'app']
+  const offenders: string[] = []
+
+  function walk(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      const full = path.join(dir, entry)
+      const stat = statSync(full)
+      if (stat.isDirectory()) {
+        walk(full)
+        continue
+      }
+      if (!/\.(ts|tsx)$/.test(entry)) continue
+      if (full === path.join('lib', 'validation', 'envelope.ts')) continue
+      const source = readFileSync(full, 'utf-8')
+      if (/new Response\(/.test(source)) offenders.push(full)
+    }
+  }
+
+  for (const root of roots) walk(root)
+  return offenders
+}
+
 describe('errorResponse', () => {
   test('errorResponse_returnsExactShapeAndStatus', async () => {
     const response = errorResponse(422, 'validation_failed', 'The request could not be validated.')
     expect(response.status).toBe(422)
+    expect(response.headers.get('Content-Type')).toBe('application/json')
     const body = await response.json()
     expect(Object.keys(body).sort()).toEqual(['error', 'message'])
     expect(body).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
   })
 
-  test('errorResponse_isTheOnlyNonTwoXxProducer', () => {
-    const roots = ['lib', 'app']
-    const offenders: string[] = []
+  test('noContentResponse_returnsGenuinelyEmpty204', async () => {
+    const response = noContentResponse()
+    expect(response.status).toBe(204)
+    expect(response.body).toBeNull()
+    await expect(response.text()).resolves.toBe('')
+  })
 
-    function walk(dir: string) {
-      for (const entry of readdirSync(dir)) {
-        const full = path.join(dir, entry)
-        const stat = statSync(full)
-        if (stat.isDirectory()) {
-          walk(full)
-          continue
-        }
-        if (!/\.(ts|tsx)$/.test(entry)) continue
-        if (full === path.join('lib', 'validation', 'envelope.ts')) continue
-        const source = readFileSync(full, 'utf-8')
-        if (/new Response\(/.test(source)) offenders.push(full)
-      }
+  test('responseConstructionGuard_rejectsDirectResponseInRouteModules', () => {
+    const plantedRouteDir = path.join('app', 'api', '__response-construction-guard-test__')
+    const plantedRoute = path.join(plantedRouteDir, 'route.ts')
+    mkdirSync(plantedRouteDir, { recursive: true })
+    writeFileSync(plantedRoute, 'export function GET() { return new Response(null) }')
+
+    try {
+      expect(responseConstructionOffenders()).toContain(plantedRoute)
+    } finally {
+      rmSync(plantedRouteDir, { recursive: true, force: true })
     }
+  })
 
-    for (const root of roots) walk(root)
-    expect(offenders).toEqual([])
+  test('responseConstructionGuard_allowsOnlyEnvelopeModuleToConstructResponses', () => {
+    expect(responseConstructionOffenders()).toEqual([])
   })
 })
 
