@@ -7,6 +7,7 @@ import { config } from '../config'
 import { anonClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 import { toRfc3339 } from '../time/zones'
+import { timed } from '../observability/timing'
 import { allowedTransitions, canChange, type AppointmentStatus, type ClinicianTransitionStatus, type SchedulingRole } from './lifecycle'
 
 type Transition = 'confirmed' | 'completed' | 'cancelled' | 'no_show'
@@ -245,35 +246,40 @@ export async function book(input: {
   idempotencyKey: string
   actorUserId: string
 }): Promise<BookResult> {
-  const client = await callerClient()
-  const role = await resolveActorRole(client, input.actorUserId)
-  const { data, error } = await client.rpc('book_appointment', {
-    p_patient_id: input.patientId,
-    p_slot_id: input.slotId,
-    p_service_id: input.serviceId,
-    p_idempotency_key: input.idempotencyKey,
-    p_actor_user_id: input.actorUserId,
-  })
-
-  if (error) throw new Error('booking: transactional write failed')
-  const row = (Array.isArray(data) ? data[0] : data) as BookRpcRow | null
-  if (!row) throw new Error('booking: transactional write returned no result')
-  if (row.result_error) return { ok: false, error: row.result_error }
-
-  const appointment = appointmentDto(row, role)
-  const reused = required(row.result_reused, 'result_reused')
-  if (!reused) {
-    await recordAuditEvent({
-      actorKind: 'account',
-      actorRef: input.actorUserId,
-      action: 'booking.create',
-      targetKind: 'appointment',
-      targetId: appointment.id,
-      outcome: 'granted',
+  return timed('booking.create', async () => {
+    const client = await callerClient()
+    const role = await resolveActorRole(client, input.actorUserId)
+    const { data, error } = await client.rpc('book_appointment', {
+      p_patient_id: input.patientId,
+      p_slot_id: input.slotId,
+      p_service_id: input.serviceId,
+      p_idempotency_key: input.idempotencyKey,
+      p_actor_user_id: input.actorUserId,
     })
-  }
 
-  return { ok: true, appointment, reused }
+    if (error) throw new Error('booking: transactional write failed')
+    const row = (Array.isArray(data) ? data[0] : data) as BookRpcRow | null
+    if (!row) throw new Error('booking: transactional write returned no result')
+    if (row.result_error) return { ok: false, error: row.result_error }
+
+    const appointment = appointmentDto(row, role)
+    const reused = required(row.result_reused, 'result_reused')
+    if (!reused) {
+      await recordAuditEvent({
+        actorKind: 'account',
+        actorRef: input.actorUserId,
+        action: 'booking.create',
+        targetKind: 'appointment',
+        targetId: appointment.id,
+        outcome: 'granted',
+      })
+    }
+
+    return { ok: true, appointment, reused }
+  }, (result) => {
+    if (result.ok) return 'ok'
+    return result.error === 'slot_unavailable' || result.error === 'idempotency_key_reused' ? 'conflict' : 'error'
+  })
 }
 
 export async function reschedule(input: {
