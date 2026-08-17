@@ -18,10 +18,10 @@ async function authenticatedClient(): Promise<ReturnType<typeof anonClient> | nu
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const client = await authenticatedClient()
-  if (!client) return sessionRequired()
   const parsed = parseQuery(slotsQuerySchema, new URL(request.url))
   if (!parsed.ok) return parsed.response
+  const client = await authenticatedClient()
+  if (!client) return sessionRequired()
 
   const { data: offering, error: offeringError } = await client
     .from('provider_services')

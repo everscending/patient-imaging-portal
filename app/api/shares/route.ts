@@ -26,11 +26,11 @@ async function caller(): Promise<{ userId: string; patientId: string | null } | 
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const parsed = await parseBody(createShareSchema, request)
+  if (!parsed.ok) return parsed.response
   const actor = await caller()
   if (!actor) return accessError(401)
   if (!actor.patientId) return accessError(403)
-  const parsed = await parseBody(createShareSchema, request)
-  if (!parsed.ok) return parsed.response
   try {
     const share = await mintShareLink({ patientId: actor.patientId, actorUserId: actor.userId, ...parsed.value })
     const created = { id: share.id, url: share.url, expiresAt: share.expiresAt, recipientEmail: share.recipientEmail }

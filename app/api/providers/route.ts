@@ -21,10 +21,10 @@ type Provider = { id: string; full_name: string; time_zone: string }
 type ProviderJoin = { providers: Provider | Provider[] | null }
 
 export async function GET(request: Request): Promise<Response> {
-  const client = await authenticatedClient()
-  if (!client) return sessionRequired()
   const parsed = parseQuery(providersQuerySchema, new URL(request.url))
   if (!parsed.ok) return parsed.response
+  const client = await authenticatedClient()
+  if (!client) return sessionRequired()
 
   const { data, error } = await client
     .from('provider_services')

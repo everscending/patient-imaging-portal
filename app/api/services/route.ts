@@ -18,10 +18,10 @@ async function authenticatedClient(): Promise<ReturnType<typeof anonClient> | nu
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const client = await authenticatedClient()
-  if (!client) return sessionRequired()
   const parsed = parseQuery(servicesQuerySchema, new URL(request.url))
   if (!parsed.ok) return parsed.response
+  const client = await authenticatedClient()
+  if (!client) return sessionRequired()
 
   const { data, error } = await client.from('services').select('id, slug, name').order('name')
   if (error) return errorResponse(500, 'services_unavailable', 'Services are temporarily unavailable.')
