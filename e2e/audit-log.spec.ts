@@ -109,6 +109,29 @@ test.describe('GET /api/admin/audit and /admin/audit', () => {
     expect(events.filter((event) => event.action === 'audit.view' && event.outcome === 'granted')).toHaveLength(6)
   })
 
+  test('mandatory adversarial: syntacticallyValidMatchingForgedCursorIsRejected', async ({ request }) => {
+    await resetAuditLog(request)
+    await seedAndSignInAdmin(request)
+
+    const firstPage = await request.get('/api/admin/audit')
+    expect(firstPage.status()).toBe(200)
+    const { events } = (await firstPage.json()) as {
+      events: Array<{ id: string; occurredAt: string }>
+    }
+    const exposedEvent = events[0]
+    expect(exposedEvent).toBeDefined()
+
+    const forgedCursor = Buffer.from(JSON.stringify({
+      id: exposedEvent.id,
+      occurredAt: exposedEvent.occurredAt,
+      filters: {},
+    })).toString('base64url')
+    const response = await request.get(`/api/admin/audit?cursor=${encodeURIComponent(forgedCursor)}`)
+
+    expect(response.status()).toBe(422)
+    expect(await response.json()).toEqual({ error: 'validation_failed', message: expect.any(String) })
+  })
+
   test('mandatory adversarial: unsupportedMethodsAreRejected', async ({ request }) => {
     await seedAndSignInAdmin(request)
     for (const method of ['post', 'patch', 'delete'] as const) {

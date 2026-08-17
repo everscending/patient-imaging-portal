@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import type { AuditAction } from '../audit/events'
@@ -158,11 +159,32 @@ const auditLogCursorSchema = z
   })
   .strict()
 
+const AUDIT_LOG_CURSOR_PURPOSE = 'audit-log-cursor-v1'
+
+function authenticateAuditLogCursor(payload: string): Buffer {
+  return createHmac('sha256', config.sourceRefSalt)
+    .update(AUDIT_LOG_CURSOR_PURPOSE)
+    .update('\0')
+    .update(payload)
+    .digest()
+}
+
 /** Decodes only cursors issued for the same audit-log filter tuple. */
 export function parseAuditLogCursor(cursor: string | undefined, query: AuditLogQuery): AuditLogCursor | null {
   if (!cursor) return { id: '', occurredAt: '', filters: withoutAuditLogCursor(query) }
   try {
-    const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
+    const [payload, signature, extra] = cursor.split('.')
+    if (!payload || !signature || extra !== undefined || !/^[A-Za-z0-9_-]{43}$/.test(signature)) return null
+
+    const decodedPayload = Buffer.from(payload, 'base64url')
+    if (decodedPayload.toString('base64url') !== payload) return null
+    const submittedSignature = Buffer.from(signature, 'base64url')
+    const expectedSignature = authenticateAuditLogCursor(payload)
+    if (submittedSignature.length !== expectedSignature.length || !timingSafeEqual(submittedSignature, expectedSignature)) {
+      return null
+    }
+
+    const decoded = decodedPayload.toString('utf8')
     const parsed = auditLogCursorSchema.safeParse(JSON.parse(decoded))
     if (!parsed.success || !sameAuditLogFilters(parsed.data.filters, withoutAuditLogCursor(query))) return null
     return parsed.data
@@ -172,7 +194,8 @@ export function parseAuditLogCursor(cursor: string | undefined, query: AuditLogQ
 }
 
 export function createAuditLogCursor(cursor: AuditLogCursor): string {
-  return Buffer.from(JSON.stringify(cursor)).toString('base64url')
+  const payload = Buffer.from(JSON.stringify(cursor)).toString('base64url')
+  return `${payload}.${authenticateAuditLogCursor(payload).toString('base64url')}`
 }
 
 function withoutAuditLogCursor(query: AuditLogQuery): Omit<AuditLogQuery, 'cursor'> {
