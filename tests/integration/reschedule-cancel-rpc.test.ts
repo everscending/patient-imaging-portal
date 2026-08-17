@@ -106,7 +106,7 @@ afterAll(async () => {
   if (run) await stopRun(run)
 })
 
-describe('reschedule/cancel RPC — atomic database contract', () => {
+describe('reschedule/cancel RPC — atomic database transaction contract', () => {
   test('reschedule_atomicallyMovesAppointmentAndLetsTriggerDeriveBothSlotStates', () => {
     const f = fixture()
     const id = appointment(f)
@@ -152,19 +152,41 @@ describe('reschedule/cancel RPC — atomic database contract', () => {
     expect(psql(`select status::text from slots where id = '${near.slotIds[1]}';`)).toBe('open')
   })
 
-  test('deferredConstraint_allowsTwoAppointmentSwapAndKeepsSlotStatesConsistent', () => {
+  test('reschedule_slotTriggerFailure_rollsBackAppointmentBothSlotsAndHistory', () => {
     const f = fixture()
-    const anotherPatient = randomUUID()
-    psql(`insert into auth.users (id) values ('${anotherPatient}');
-          insert into patients (user_id, patient_ref, date_of_birth, full_name, email)
-          values ('${anotherPatient}', 'PT-${randomUUID().slice(0, 8)}', '1990-01-01', 'Swap Patient', '${randomUUID()}@example.test');`)
+    const id = appointment(f)
+    psql(`create function reschedule_rpc_rollback_probe() returns trigger language plpgsql as $$
+            begin raise exception 'target slot rejected' using errcode = 'check_violation'; end $$;
+          create trigger reschedule_rpc_rollback_probe before update on slots
+            for each row when (new.id = '${f.slotIds[1]}' and new.status = 'booked')
+            execute function reschedule_rpc_rollback_probe();`)
+    try {
+      expectSqlState(rescheduleCall(f, id, f.slotIds[1]!), 'target slot rejected')
+    } finally {
+      psql('drop trigger reschedule_rpc_rollback_probe on slots; drop function reschedule_rpc_rollback_probe();')
+    }
+    expect(psql(`select slot_id || '|' || status::text from appointments where id = '${id}';`)).toBe(`${f.slotIds[0]}|requested`)
+    expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('booked')
+    expect(psql(`select status::text from slots where id = '${f.slotIds[1]}';`)).toBe('open')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+  })
+
+  test('rescheduleRpc_defersConstraintToAllowTwoAppointmentSwapAndKeepsSlotStatesConsistent', () => {
+    const f = fixture()
     const a = appointment(f, 0)
     const b = psql(`insert into appointments (slot_id, patient_id, provider_id, service_id, idempotency_key)
-      select '${f.slotIds[1]}', id, '${f.providerId}', '${f.serviceId}', '${randomUUID()}' from patients where user_id = '${anotherPatient}' returning id;`)
+      values ('${f.slotIds[1]}', '${f.patientId}', '${f.providerId}', '${f.serviceId}', '${randomUUID()}') returning id;`)
 
-    psql(`begin;
-            set constraints appointments_one_live_per_slot deferred;
-            update appointments set slot_id = '${f.slotIds[1]}' where id = '${a}';
+    // The public reschedule contract accepts only an open target. Planting a
+    // stale open marker lets this transaction reach the constraint collision;
+    // the appointment triggers restore both derived states before commit.
+    psql(`update slots set status = 'open' where id = '${f.slotIds[1]}';
+          begin;
+            set local role app_user;
+            set local request.jwt.claim.sub = '${f.actorUserId}';
+            select * from reschedule_appointment(
+              '${a}', '${f.slotIds[1]}', '${f.actorUserId}', ${MINIMUM_NOTICE}
+            );
             update appointments set slot_id = '${f.slotIds[0]}' where id = '${b}';
           commit;`)
     expect(psql(`select slot_id from appointments where id = '${a}';`)).toBe(f.slotIds[1])

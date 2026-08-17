@@ -24,7 +24,7 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/**/*.test.ts'],
-          exclude: ['tests/integration/**', 'tests/scheduling/booking-concurrency.test.ts', 'tests/scheduling/reschedule-cancel-rpc.test.ts'],
+          exclude: ['tests/integration/**', 'tests/scheduling/booking-concurrency.test.ts'],
         },
       },
       {
@@ -32,11 +32,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
-          include: [
-            'tests/integration/**/*.test.ts',
-            'tests/scheduling/booking-concurrency.test.ts',
-            'tests/scheduling/reschedule-cancel-rpc.test.ts',
-          ],
+          include: ['tests/integration/**/*.test.ts', 'tests/scheduling/booking-concurrency.test.ts'],
           globalSetup: ['./tests/setup/postgres.ts'],
         },
       },
