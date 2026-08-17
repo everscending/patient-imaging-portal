@@ -81,9 +81,14 @@ set -e
 probe_pid=
 cat "$probe_log"
 
-if [ "$probe_rc" -eq 0 ]; then
+if [ "$probe_rc" -eq 0 ] && grep -Eiq '(^|[^0-9])11 passed([^0-9]|$)' "$probe_log"; then
   write_artifact pass 'targeted E2 browser acceptance passed'
   exit 0
+fi
+
+if [ "$probe_rc" -eq 0 ]; then
+  write_artifact infrastructure 'targeted E2 browser acceptance completed without confirming all 11 targeted checks'
+  exit 10
 fi
 
 if is_infrastructure_failure "$probe_rc"; then

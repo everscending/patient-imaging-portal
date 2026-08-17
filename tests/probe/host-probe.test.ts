@@ -92,7 +92,7 @@ afterEach(() => {
 describe('repository-owned E2 host probe', () => {
   test('e2 maps to only the targeted browser acceptance and preserves the host environment', () => {
     const fixture = probeFixture()
-    const result = runProbe(fixture)
+    const result = runProbe(fixture, ['e2'], { FAKE_OUTPUT: '11 passed' })
 
     expect(result.status).toBe(0)
     expect(readFileSync(fixture.args, 'utf8').trim().split('\n')).toEqual([
@@ -112,6 +112,20 @@ describe('repository-owned E2 host probe', () => {
       classification: 'pass',
       summary: 'targeted E2 browser acceptance passed',
     })
+  })
+
+  test('a zero exit without all 11 targeted checks is infrastructure, never a pass', () => {
+    const fixture = probeFixture()
+    const result = runProbe(fixture)
+
+    expect(result.status).toBe(10)
+    expect(artifact(fixture)).toEqual(expect.objectContaining({
+      schema: 1,
+      probe: 'e2',
+      head: '0123456789abcdef',
+      classification: 'infrastructure',
+      summary: 'targeted E2 browser acceptance completed without confirming all 11 targeted checks',
+    }))
   })
 
   test('an E2 assertion failure is classified as a product failure', () => {
@@ -148,8 +162,8 @@ describe('repository-owned E2 host probe', () => {
     }))
   })
 
-  test('unknown IDs and extra arguments cannot become host commands', () => {
-    for (const args of [['e2;touch-pwned'], ['e2', '--grep', 'anything']]) {
+  test('unknown, missing, and extra IDs cannot become host commands', () => {
+    for (const args of [[], ['e2;touch-pwned'], ['e2', '--grep', 'anything']]) {
       const fixture = probeFixture()
       const result = runProbe(fixture, args)
       expect(result.status).not.toBe(0)
