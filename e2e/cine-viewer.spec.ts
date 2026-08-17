@@ -15,6 +15,7 @@ const STUDY_ID = '99669966-9966-4966-8966-996699669966'
 const CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
 const PASSWORD = 'CorrectHorseBattery9'
 const SEEDED_DATE_OF_BIRTH = '1988-03-14'
+const CINE_VIEWER_READY_TIMEOUT_MS = 15_000
 
 type SeededPatient = { patientRef: string; dateOfBirth: string }
 
@@ -60,14 +61,15 @@ async function signInLinkedPatient(request: APIRequestContext, patient: SeededPa
   expect(verification.status(), await verification.text()).toBe(200)
 }
 
-async function openClip(page: Page, payload: Manifest): Promise<void> {
+async function openClip(page: Page, payload: Manifest, responseDelayMs = 0): Promise<void> {
   const apiPattern = `**/api/studies/${STUDY_ID}/clips/${CLIP_ID}`
   await page.unroute(apiPattern)
-  await page.route(apiPattern, (route) =>
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify(payload) }),
-  )
+  await page.route(apiPattern, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, responseDelayMs))
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(payload) })
+  })
   await page.goto(`/studies/${STUDY_ID}/clips/${CLIP_ID}`)
-  await expect(page.getByTestId('cine-viewer')).toBeVisible()
+  await expect(page.getByTestId('cine-viewer')).toBeVisible({ timeout: CINE_VIEWER_READY_TIMEOUT_MS })
 }
 
 test.describe.serial('cine viewer', () => {
@@ -88,6 +90,14 @@ test.describe.serial('cine viewer', () => {
     expect(state.patients.find((patient) => patient.patient_ref === seededPatient.patientRef)?.user_id).toEqual(
       expect.any(String),
     )
+  })
+
+  test('openClip_waitsForDelayedHydrationBeyondGenericAssertionTimeout', async ({ page }) => {
+    test.setTimeout(60_000)
+    await signInLinkedPatient(page.request, seededPatient)
+    await openClip(page, manifest([{ index: 0, available: false }]))
+    await openClip(page, manifest([{ index: 0, available: false }]), 6_000)
+    await expect(page.getByTestId('cine-viewer')).toBeVisible()
   })
 
   test('mandatory adversarial: apiDrivenGaps_continuePlaybackWithCorrectDenominatorAndMarkers', async ({ page }) => {
