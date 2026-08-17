@@ -93,9 +93,11 @@ async function resolveActorRole(client: CallerClient, actorUserId: string): Prom
     client.from('staff_admins').select('id').eq('user_id', actorUserId).maybeSingle(),
   ])
   if (patient.error || provider.error || admin.error) throw new Error('booking: actor role could not be resolved')
-  if (patient.data) return 'patient'
+  // Keep persisted transition authority aligned with the route guard: a dual-role
+  // clinician acts as a provider/admin without widening patient-only transitions.
   if (provider.data) return 'provider'
   if (admin.data) return 'admin'
+  if (patient.data) return 'patient'
   throw new Error('booking: actor has no scheduling role')
 }
 
