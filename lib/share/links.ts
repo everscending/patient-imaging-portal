@@ -9,6 +9,7 @@ import { guardPhiAccess } from '../access/guard'
 import { config } from '../config'
 import { anonClient, serviceClient } from '../db/client'
 import { signStorageKeys } from '../imaging/signing'
+import { timed } from '../observability/timing'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
 export type ShareState = 'active' | 'expired' | 'revoked'
@@ -69,39 +70,41 @@ export async function mintShareLink(input: {
   resourceId: string
   recipientEmail: string
 }): Promise<{ id: string; url: string; expiresAt: string; recipientEmail: string; delivery: 'sent' | 'failed' }> {
-  const target = { kind: input.resourceKind, id: input.resourceId } as const
-  const access = await guardPhiAccess({ kind: 'patient', userId: input.actorUserId }, target, 'share.create')
-  if (!access.ok || access.patientId !== input.patientId) throw new Error('share: resource not found')
+  return timed('share.create', async () => {
+    const target = { kind: input.resourceKind, id: input.resourceId } as const
+    const access = await guardPhiAccess({ kind: 'patient', userId: input.actorUserId }, target, 'share.create')
+    if (!access.ok || access.patientId !== input.patientId) throw new Error('share: resource not found')
 
-  const token = mintToken()
-  const url = new URL(`/s/${token}`, config.appBaseUrl).toString()
-  const expiresAt = new Date(Date.now() + config.shareLinkTtlHours * 60 * 60 * 1000).toISOString()
-  const accessToken = await callerAccessToken()
-  if (!accessToken) throw new Error('share: session is unavailable')
-  const client = anonClient(accessToken)
-  const fields = input.resourceKind === 'image' ? { image_id: input.resourceId, report_id: null } : { image_id: null, report_id: input.resourceId }
-  const { data, error } = await client
-    .from('share_links')
-    .insert({ token_hash: tokenHash(token), patient_id: input.patientId, created_by: input.actorUserId, recipient_email: input.recipientEmail, expires_at: expiresAt, ...fields })
-    .select('id')
-    .single()
-  if (error || !data) throw new Error('share: link could not be created')
+    const token = mintToken()
+    const url = new URL(`/s/${token}`, config.appBaseUrl).toString()
+    const expiresAt = new Date(Date.now() + config.shareLinkTtlHours * 60 * 60 * 1000).toISOString()
+    const accessToken = await callerAccessToken()
+    if (!accessToken) throw new Error('share: session is unavailable')
+    const client = anonClient(accessToken)
+    const fields = input.resourceKind === 'image' ? { image_id: input.resourceId, report_id: null } : { image_id: null, report_id: input.resourceId }
+    const { data, error } = await client
+      .from('share_links')
+      .insert({ token_hash: tokenHash(token), patient_id: input.patientId, created_by: input.actorUserId, recipient_email: input.recipientEmail, expires_at: expiresAt, ...fields })
+      .select('id')
+      .single()
+    if (error || !data) throw new Error('share: link could not be created')
 
-  // PHI-free, queued only: this request never invokes an email transport.
-  let delivery: 'sent' | 'failed' = 'failed'
-  try {
-    const { error: outboxError } = await client.from('email_outbox').insert({
-      recipient: input.recipientEmail,
-      subject: 'Someone shared a secure medical file with you',
-      body: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
-    })
-    if (!outboxError) delivery = 'sent'
-  } catch {
-    // The link is already durable. A queue outage must not revoke it or turn
-    // its successful creation into an error response.
-  }
+    // PHI-free, queued only: this request never invokes an email transport.
+    let delivery: 'sent' | 'failed' = 'failed'
+    try {
+      const { error: outboxError } = await client.from('email_outbox').insert({
+        recipient: input.recipientEmail,
+        subject: 'Someone shared a secure medical file with you',
+        body: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
+      })
+      if (!outboxError) delivery = 'sent'
+    } catch {
+      // The link is already durable. A queue outage must not revoke it or turn
+      // its successful creation into an error response.
+    }
 
-  return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail, delivery }
+    return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail, delivery }
+  }, () => 'ok')
 }
 
 export async function resolveShareToken(token: string): Promise<
