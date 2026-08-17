@@ -76,6 +76,9 @@ run_api() {
 
 run_ui() {
   run_api
+  # JOR-253 requires the booking acceptance file to be named explicitly in
+  # the UI tier, before the broader product dependency runs.
+  step PLAYWRIGHT_BOOK npx playwright test e2e/book.spec.ts --project=product
   # e2-wiring depends on product, so this invocation runs the parallel product
   # suite first and the shared-state E2 proof after it.
   step PLAYWRIGHT npx playwright test --project=e2-wiring
