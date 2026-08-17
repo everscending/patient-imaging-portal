@@ -1953,7 +1953,11 @@ worktrees: Next's tracing and active bundler watchers must stay inside that
 checkout, never infer the parent repository's lockfile and watch sibling
 worktrees. Playwright still derives its server address from `PORT`, so
 concurrent lanes set distinct ports; stopping one fixture does not affect
-another lane's root or server.
+another lane's root or server. Development servers also default Watchpack to a
+one-second polling interval. This avoids exhausting shared native filesystem
+watchers when multiple worktrees run Next concurrently; an explicitly supplied
+`WATCHPACK_POLLING` value still takes precedence, and production start mode is
+unchanged.
 
 Both workflows normalize concurrency to the source branch and cancel obsolete
 runs. `scripts/gate.sh` emits a duration for each command, while the workflows

@@ -184,6 +184,7 @@ describe('anonymous health Playwright check — regression: uses its lane base U
 
 describe('Next worktree root — regression: a lane watches only its own checkout', () => {
   const source = readFileSync(path.join(REPO_ROOT, 'next.config.ts'), 'utf8')
+  const runnerSource = readFileSync(path.join(REPO_ROOT, 'scripts/run-next.mjs'), 'utf8')
 
   test('worktreeLocalRoot_preventsParentLockfileInference', () => {
     // `fileURLToPath(import.meta.url)` names this config file wherever the
@@ -210,6 +211,27 @@ describe('Next worktree root — regression: a lane watches only its own checkou
     // superproject and watches every linked checkout.
     expect(source).toMatch(/outputFileTracingRoot:\s*worktreeRoot/)
     expect(source).toMatch(/turbopack:\s*\{\s*root:\s*worktreeRoot,?\s*}/)
+  })
+
+  test('devServer_usesPollingToAvoidNativeWatcherExhaustionAcrossLanes', () => {
+    // Worktree-local roots prevent sibling traversal, but Watchpack can still
+    // exhaust native filesystem watchers when several Next dev lanes coexist.
+    // Polling contains that shared OS resource without changing production.
+    expect(runnerSource).toMatch(/const nextEnv = \{ \.\.\.process\.env }/)
+    expect(runnerSource).toMatch(
+      /mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined[\s\S]*nextEnv\.WATCHPACK_POLLING = '1000'/,
+    )
+    expect(runnerSource).toMatch(/spawn\([\s\S]*env:\s*nextEnv/)
+  })
+
+  test('adversarial_removingPollingFallback_recreatesNativeWatcherRisk', () => {
+    const mutant = runnerSource.replace(
+      /\nif \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n}/,
+      '',
+    )
+
+    expect(runnerSource).toContain("nextEnv.WATCHPACK_POLLING = '1000'")
+    expect(mutant).not.toContain("nextEnv.WATCHPACK_POLLING = '1000'")
   })
 
   test('twoDistinctPortServers_neverShareOrInspectSiblingWorktree', () => {
