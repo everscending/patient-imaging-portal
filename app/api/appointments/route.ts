@@ -26,9 +26,9 @@ function denied(status: 401 | 403 | 404): Response {
 export async function POST(request: Request): Promise<Response> {
   const parsed = await parseBody(CreateSchema, request)
   if (!parsed.ok) return parsed.response
-  const callerId = await resolveCallerId()
-  if (!callerId) return denied(401)
   try {
+    const callerId = await resolveCallerId()
+    if (!callerId) return denied(401)
     const result = await bookForActor({ ...parsed.value, actorUserId: callerId })
     if (!result.ok) {
       const mapping = BOOK_ERROR_RESPONSES[result.error]
@@ -42,12 +42,12 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function GET(): Promise<Response> {
-  const callerId = await resolveCallerId()
-  const actor = callerId ? await resolveScheduleActor(callerId) : { kind: 'patient' as const, userId: '' }
-  const access = await guardPhiAccess(actor, { kind: 'collection', of: 'appointment' }, 'appointment.view')
-  if (!access.ok) return denied(access.status)
-  if (!callerId) return denied(401)
   try {
+    const callerId = await resolveCallerId()
+    const actor = callerId ? await resolveScheduleActor(callerId) : { kind: 'patient' as const, userId: '' }
+    const access = await guardPhiAccess(actor, { kind: 'collection', of: 'appointment' }, 'appointment.view')
+    if (!access.ok) return denied(access.status)
+    if (!callerId) return denied(401)
     return Response.json({ appointments: await listAppointments(callerId) }, { status: 200 })
   } catch {
     return errorResponse(503, 'appointments_unavailable', 'Appointments are temporarily unavailable.')

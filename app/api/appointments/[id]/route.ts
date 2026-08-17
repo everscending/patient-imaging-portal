@@ -31,12 +31,12 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   if (!params.ok) return params.response
   const body = await parseBody(PatchSchema, request)
   if (!body.ok) return body.response
-  const callerId = await resolveCallerId()
-  const actor = callerId ? await resolveScheduleActor(callerId) : { kind: 'patient' as const, userId: '' }
-  const access = await guardPhiAccess(actor, { kind: 'appointment', id: params.value.id }, 'appointment.view')
-  if (!access.ok) return denied(access.status)
-  if (!callerId) return denied(401)
   try {
+    const callerId = await resolveCallerId()
+    const actor = callerId ? await resolveScheduleActor(callerId) : { kind: 'patient' as const, userId: '' }
+    const access = await guardPhiAccess(actor, { kind: 'appointment', id: params.value.id }, 'appointment.view')
+    if (!access.ok) return denied(access.status)
+    if (!callerId) return denied(401)
     const result = body.value.action === 'reschedule'
       ? await reschedule({ appointmentId: params.value.id, slotId: body.value.slotId, actorUserId: callerId })
       : body.value.action === 'cancel'

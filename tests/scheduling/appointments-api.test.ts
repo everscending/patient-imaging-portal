@@ -123,3 +123,57 @@ describe('PATCH /api/appointments/:id', () => {
     expect(await response.json()).toEqual({ ...dto, status: 'cancelled', allowedTransitions: [] })
   })
 })
+
+describe('identity and authorization dependency failures', () => {
+  const cases = [
+    {
+      name: 'POST identity',
+      fail: () => callerMock.mockRejectedValueOnce(new Error('identity unavailable')),
+      invoke: () => collection.POST(request({ slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID })),
+      envelope: { error: 'booking_unavailable', message: 'Booking is temporarily unavailable.' },
+    },
+    {
+      name: 'GET identity',
+      fail: () => callerMock.mockRejectedValueOnce(new Error('identity unavailable')),
+      invoke: () => collection.GET(),
+      envelope: { error: 'appointments_unavailable', message: 'Appointments are temporarily unavailable.' },
+    },
+    {
+      name: 'GET actor resolution',
+      fail: () => actorMock.mockRejectedValueOnce(new Error('membership unavailable')),
+      invoke: () => collection.GET(),
+      envelope: { error: 'appointments_unavailable', message: 'Appointments are temporarily unavailable.' },
+    },
+    {
+      name: 'GET PHI guard',
+      fail: () => guardMock.mockRejectedValueOnce(new Error('audit unavailable')),
+      invoke: () => collection.GET(),
+      envelope: { error: 'appointments_unavailable', message: 'Appointments are temporarily unavailable.' },
+    },
+    {
+      name: 'PATCH identity',
+      fail: () => callerMock.mockRejectedValueOnce(new Error('identity unavailable')),
+      invoke: () => item.PATCH(patch({ action: 'cancel' }), context),
+      envelope: { error: 'appointments_unavailable', message: 'Appointments are temporarily unavailable.' },
+    },
+    {
+      name: 'PATCH actor resolution',
+      fail: () => actorMock.mockRejectedValueOnce(new Error('membership unavailable')),
+      invoke: () => item.PATCH(patch({ action: 'cancel' }), context),
+      envelope: { error: 'appointments_unavailable', message: 'Appointments are temporarily unavailable.' },
+    },
+    {
+      name: 'PATCH PHI guard',
+      fail: () => guardMock.mockRejectedValueOnce(new Error('audit unavailable')),
+      invoke: () => item.PATCH(patch({ action: 'cancel' }), context),
+      envelope: { error: 'appointments_unavailable', message: 'Appointments are temporarily unavailable.' },
+    },
+  ]
+
+  test.each(cases)('$name returns the shared 503 envelope', async ({ fail, invoke, envelope }) => {
+    fail()
+    const response = await invoke()
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual(envelope)
+  })
+})
