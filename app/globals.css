@@ -337,3 +337,58 @@ input {
   border-radius: 0.5rem;
   background: var(--pip-color-base-200);
 }
+
+/* ShareDialog — one mounted panel becomes a centered dialog at desktop width
+   and a bottom sheet below the patient shell's 768px breakpoint. */
+.pip-share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--pip-color-secondary) 45%, transparent);
+}
+
+.pip-share-dialog,
+.pip-share-sheet {
+  width: min(100%, 30rem);
+  padding: 1rem;
+  border: 1px solid var(--pip-color-base-300);
+  border-radius: 0.75rem;
+  background: var(--pip-color-base-100);
+  box-shadow: 0 1rem 3rem color-mix(in srgb, var(--pip-color-secondary) 25%, transparent);
+}
+
+.pip-share-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pip-share-heading h2 {
+  margin: 0;
+}
+
+.pip-share-outcome {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pip-share-outcome--warning {
+  color: var(--pip-color-warning);
+}
+
+@media (max-width: 767px) {
+  .pip-share-backdrop--sheet {
+    place-items: end center;
+    padding: 0;
+  }
+
+  .pip-share-sheet {
+    width: 100%;
+    border-bottom: 0;
+    border-radius: 0.75rem 0.75rem 0 0;
+  }
+}
