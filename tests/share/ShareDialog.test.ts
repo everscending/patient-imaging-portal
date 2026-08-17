@@ -60,10 +60,17 @@ describe('ShareDialog', () => {
     expect(html).not.toMatch(/Cancel|Delete/)
   })
 
-  it('keeps the raw share token out of a delivered success state', () => {
+  it('keeps the raw share token out of a delivered success state', async () => {
     const rawUrl = 'https://portal.example/s/raw-share-token'
+    const request = vi.fn().mockResolvedValue({
+      json: async () => ({ url: rawUrl }),
+      ok: true,
+    })
+    const created = await createShare({ resourceKind: 'report', resourceId: 'report-123', recipientEmail: 'specialist@example.com' }, request)
     const html = renderPanel({ recipientEmail: 'specialist@example.com', state: { kind: 'success' } })
 
+    expect(created).toEqual({ kind: 'success' })
+    expect(JSON.stringify(created)).not.toContain(rawUrl)
     expect(html).toContain('Your secure link was sent to specialist@example.com.')
     expect(html).not.toContain(rawUrl)
     expect(html).not.toContain('raw-share-token')
