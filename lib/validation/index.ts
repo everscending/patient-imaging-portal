@@ -1,5 +1,7 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
+import type { AuditAction } from '../audit/events'
 import { config } from '../config'
 import { errorResponse } from './envelope'
 
@@ -98,3 +100,110 @@ export function parseParams<T>(
 // (ADR-0012): rejects a non-uuid before it can reach Postgres as a malformed
 // query parameter.
 export const uuidSchema: ZodType<string> = z.string().uuid()
+
+const auditActions = [
+  'identity.verify',
+  'identity.lockout',
+  'identity.link',
+  'study.view',
+  'image.view',
+  'clip.view',
+  'report.view',
+  'share.create',
+  'share.use',
+  'share.revoke',
+  'share.view',
+  'booking.create',
+  'booking.reschedule',
+  'booking.cancel',
+  'appointment.view',
+  'appointment.transition',
+  'schedule.view',
+  'availability.update',
+  'availability.collision',
+  'reminder.dispatch',
+  'audit.view',
+  'profile.deletion_request',
+] as const satisfies readonly AuditAction[]
+
+const auditLogQueryFields = z
+  .object({
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    actorRef: z.string().uuid().optional(),
+    action: z.enum(auditActions).optional(),
+    cursor: z.string().min(1).max(2048).optional(),
+  })
+  .strict()
+
+/** Shared query schema for the admin audit read; unknown keys are rejected. */
+export const auditLogQuerySchema = auditLogQueryFields.superRefine((query, context) => {
+  if (query.from && query.to && new Date(query.from) > new Date(query.to)) {
+    context.addIssue({ code: 'custom', message: 'from must not be after to' })
+  }
+})
+
+export type AuditLogQuery = z.infer<typeof auditLogQuerySchema>
+
+export type AuditLogCursor = {
+  id: string
+  occurredAt: string
+  filters: Omit<AuditLogQuery, 'cursor'>
+}
+
+const auditLogCursorSchema = z
+  .object({
+    id: z.string().regex(/^\d+$/),
+    occurredAt: z.string().datetime({ offset: true }),
+    filters: auditLogQueryFields.omit({ cursor: true }),
+  })
+  .strict()
+
+const AUDIT_LOG_CURSOR_PURPOSE = 'audit-log-cursor-v1'
+
+function authenticateAuditLogCursor(payload: string): Buffer {
+  return createHmac('sha256', config.sourceRefSalt)
+    .update(AUDIT_LOG_CURSOR_PURPOSE)
+    .update('\0')
+    .update(payload)
+    .digest()
+}
+
+/** Decodes only cursors issued for the same audit-log filter tuple. */
+export function parseAuditLogCursor(cursor: string | undefined, query: AuditLogQuery): AuditLogCursor | null {
+  if (!cursor) return { id: '', occurredAt: '', filters: withoutAuditLogCursor(query) }
+  try {
+    const [payload, signature, extra] = cursor.split('.')
+    if (!payload || !signature || extra !== undefined || !/^[A-Za-z0-9_-]{43}$/.test(signature)) return null
+
+    const decodedPayload = Buffer.from(payload, 'base64url')
+    if (decodedPayload.toString('base64url') !== payload) return null
+    const submittedSignature = Buffer.from(signature, 'base64url')
+    const expectedSignature = authenticateAuditLogCursor(payload)
+    if (submittedSignature.length !== expectedSignature.length || !timingSafeEqual(submittedSignature, expectedSignature)) {
+      return null
+    }
+
+    const decoded = decodedPayload.toString('utf8')
+    const parsed = auditLogCursorSchema.safeParse(JSON.parse(decoded))
+    if (!parsed.success || !sameAuditLogFilters(parsed.data.filters, withoutAuditLogCursor(query))) return null
+    return parsed.data
+  } catch {
+    return null
+  }
+}
+
+export function createAuditLogCursor(cursor: AuditLogCursor): string {
+  const payload = Buffer.from(JSON.stringify(cursor)).toString('base64url')
+  return `${payload}.${authenticateAuditLogCursor(payload).toString('base64url')}`
+}
+
+function withoutAuditLogCursor(query: AuditLogQuery): Omit<AuditLogQuery, 'cursor'> {
+  const { cursor: _cursor, ...filters } = query
+  void _cursor
+  return filters
+}
+
+function sameAuditLogFilters(left: Omit<AuditLogQuery, 'cursor'>, right: Omit<AuditLogQuery, 'cursor'>): boolean {
+  return left.from === right.from && left.to === right.to && left.actorRef === right.actorRef && left.action === right.action
+}

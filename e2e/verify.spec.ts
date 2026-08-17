@@ -2,43 +2,26 @@
 // real Next routes and the deterministic fake Supabase service.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 
 import { config } from '../lib/config'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
 const PINNED_ERROR = 'We could not match those details. Please check them and try again.'
-const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
-let ownsIdentityFixture = false
+let identityFixtureLockToken: string | undefined
 
 async function fakeServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
   return (JSON.parse(raw) as { url: string }).url
-}
-
-async function acquireIdentityFixture(): Promise<void> {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    try {
-      await mkdir(IDENTITY_FIXTURE_LOCK)
-      ownsIdentityFixture = true
-      return
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  throw new Error('identity fixture lock timed out')
-}
-
-async function releaseIdentityFixture(): Promise<void> {
-  if (!ownsIdentityFixture) return
-  ownsIdentityFixture = false
-  await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
 }
 
 async function resetIdentity(request: APIRequestContext): Promise<void> {
@@ -66,11 +49,14 @@ async function identityState(request: APIRequestContext): Promise<IdentityState>
 test.describe('JOR-263 /verify and /profile', () => {
   test.describe.configure({ mode: 'serial' })
 
+  test.beforeAll(async () => {
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    identityFixtureLockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
   test.beforeEach(async ({ request }) => {
-    await acquireIdentityFixture()
     await resetIdentity(request)
   })
-  test.afterEach(releaseIdentityFixture)
 
   test('live check: wrong reference, wrong date, and third failure render one identical alert then disable', async ({
     page,
