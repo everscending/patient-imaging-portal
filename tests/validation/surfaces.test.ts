@@ -2,19 +2,44 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 const DEFAULT_TEST_BODY_LIMIT = 1024
-const { testConfig, signInMock, signUpMock } = vi.hoisted(() => ({
+const {
+  applyAvailabilityMock,
+  getAvailabilityMock,
+  guardPhiAccessMock,
+  resolveCallerIdMock,
+  resolveScheduleActorMock,
+  testConfig,
+  signInMock,
+  signUpMock,
+} = vi.hoisted(() => ({
+  applyAvailabilityMock: vi.fn(),
+  getAvailabilityMock: vi.fn(),
+  guardPhiAccessMock: vi.fn(),
+  resolveCallerIdMock: vi.fn(),
+  resolveScheduleActorMock: vi.fn(),
   testConfig: { appBaseUrl: 'http://localhost:4310', maxRequestBodyBytes: 1024 },
   signInMock: vi.fn(),
   signUpMock: vi.fn(),
 }))
 
 vi.mock('../../lib/config', () => ({ config: testConfig }))
+vi.mock('../../lib/access/guard', () => ({
+  guardPhiAccess: guardPhiAccessMock,
+  resolveScheduleActor: resolveScheduleActorMock,
+}))
+vi.mock('../../lib/access/identity', () => ({ resolveCallerId: resolveCallerIdMock }))
 vi.mock('../../lib/db/client', () => ({
   authClient: () => ({ auth: { signInWithPassword: signInMock, signUp: signUpMock } }),
+}))
+vi.mock('../../lib/scheduling/availability', () => ({
+  applyAvailability: applyAvailabilityMock,
+  AvailabilityValidationError: class AvailabilityValidationError extends Error {},
+  getAvailability: getAvailabilityMock,
 }))
 
 import { POST as login } from '../../app/api/auth/login/route'
 import { POST as register } from '../../app/api/auth/register/route'
+import { GET as getAvailabilityRoute, PATCH as patchAvailabilityRoute } from '../../app/api/providers/[providerId]/availability/route'
 import { config } from '../../lib/config'
 import {
   appointmentCreateSchema,
@@ -66,6 +91,25 @@ function body(value: string): Request {
     headers: { 'content-type': 'application/json' },
     body: value,
   })
+}
+
+function observedParams(providerId: string): {
+  context: { params: Promise<{ providerId: string }> }
+  wasRead: () => boolean
+} {
+  let read = false
+  const params = {
+    then<TResult1 = { providerId: string }, TResult2 = never>(
+      onfulfilled?: ((value: { providerId: string }) => TResult1 | PromiseLike<TResult1>) | null,
+      _onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ): Promise<TResult1 | TResult2> {
+      void _onrejected
+      read = true
+      return Promise.resolve(onfulfilled ? onfulfilled({ providerId }) : ({ providerId } as TResult1))
+    },
+  } as Promise<{ providerId: string }>
+
+  return { context: { params }, wasRead: () => read }
 }
 
 async function expectValidationFailure(
@@ -277,6 +321,40 @@ describe('auth provider boundary', () => {
 })
 
 describe('shared module route guard', () => {
+  test('unauthenticatedMalformedAvailabilityGetReturns401WithoutReadingParamsOrCallingGuardOrData', async function unauthenticatedMalformedAvailabilityGetReturns401WithoutReadingParamsOrCallingGuardOrData() {
+    resolveCallerIdMock.mockResolvedValue(null)
+    guardPhiAccessMock.mockResolvedValue({ ok: false, status: 401 })
+    const params = observedParams('not-a-uuid')
+
+    const response = await getAvailabilityRoute(
+      new Request('http://localhost/api/providers/not-a-uuid/availability'),
+      params.context,
+    )
+
+    expect(response.status).toBe(401)
+    expect(params.wasRead()).toBe(false)
+    expect(resolveScheduleActorMock).not.toHaveBeenCalled()
+    expect(guardPhiAccessMock).not.toHaveBeenCalled()
+    expect(getAvailabilityMock).not.toHaveBeenCalled()
+  })
+
+  test('unauthenticatedMalformedAvailabilityPatchReturns401WithoutReadingParamsOrCallingGuardOrData', async function unauthenticatedMalformedAvailabilityPatchReturns401WithoutReadingParamsOrCallingGuardOrData() {
+    resolveCallerIdMock.mockResolvedValue(null)
+    guardPhiAccessMock.mockResolvedValue({ ok: false, status: 401 })
+    const params = observedParams('not-a-uuid')
+
+    const response = await patchAvailabilityRoute(
+      body(JSON.stringify(validAvailability)),
+      params.context,
+    )
+
+    expect(response.status).toBe(401)
+    expect(params.wasRead()).toBe(false)
+    expect(resolveScheduleActorMock).not.toHaveBeenCalled()
+    expect(guardPhiAccessMock).not.toHaveBeenCalled()
+    expect(applyAvailabilityMock).not.toHaveBeenCalled()
+  })
+
   test('everyQueryAndPathSurfaceCallsTheSharedParserAndDefinesNoHandlerSchema', function everyQueryAndPathSurfaceCallsTheSharedParserAndDefinesNoHandlerSchema() {
     const routes = [
       ['parseQuery', 'app/api/admin/audit/route.ts'],
