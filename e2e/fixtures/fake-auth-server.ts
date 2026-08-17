@@ -19,7 +19,7 @@
 //
 // Binds port 0 and reads the assigned port back (ARCHITECTURE.md §9: a test
 // fixture that listens never claims a fixed port).
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 
@@ -27,6 +27,21 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 )
+
+function seededFrameStorageKeys(count: number): string[] {
+  return Array.from({ length: count }, (_, streamIndex) => {
+    const bytes = createHash('sha256')
+      .update(`patient-imaging-portal\0e2-fixture-frame-storage\0${streamIndex}`)
+      .digest()
+      .subarray(0, 16)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = bytes.toString('hex')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  })
+}
+
+const E3_CINE_FRAME_STORAGE_KEYS = seededFrameStorageKeys(100)
 
 type FakeUser = {
   id: string
@@ -153,7 +168,7 @@ export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
 export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
 export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
 export const E3_MISSING_CINE_FRAME_INDEX = 42
-export const E3_MISSING_CINE_FRAME_STORAGE_KEY = 'cine-frame-042-missing.png'
+export const E3_MISSING_CINE_FRAME_STORAGE_KEY = E3_CINE_FRAME_STORAGE_KEYS[E3_MISSING_CINE_FRAME_INDEX]!
 export const E4_CANCELLED_VISIT_ID = '77667766-7766-4766-8766-776677667766'
 export const E4_CANCELLED_STUDY_ID = '99889988-9988-4988-8988-998899889988'
 export const E4_PRELIMINARY_REPORT_ID = 'bd88bd88-bd88-4d88-8d88-bd88bd88bd88'
@@ -268,7 +283,7 @@ const CINE_CLIPS = [
 const CINE_FRAMES: FakeCineFrame[] = Array.from({ length: 100 }, (_, frame_index) => ({
   clip_id: E2_SEEDED_CLIP_ID,
   frame_index,
-  storage_key: frame_index === E3_MISSING_CINE_FRAME_INDEX ? E3_MISSING_CINE_FRAME_STORAGE_KEY : `cine-frame-${String(frame_index).padStart(3, '0')}.png`,
+  storage_key: E3_CINE_FRAME_STORAGE_KEYS[frame_index]!,
 }))
 const REPORTS: FakeReport[] = [
   {
@@ -1029,6 +1044,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/sign/phi/')) {
+      const storageKey = decodeURIComponent(url.pathname.slice('/storage/v1/object/sign/phi/'.length))
+      if (storageKey === E3_MISSING_CINE_FRAME_STORAGE_KEY) {
+        res.writeHead(404)
+        res.end()
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'image/png' })
       res.end(ONE_PIXEL_PNG)
       return

@@ -19,6 +19,8 @@ import {
 
 type Row = Record<string, unknown>
 
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
 let server: FakeAuthServer | undefined
 
 afterEach(async () => {
@@ -128,9 +130,16 @@ describe('JOR-289 live E3/E4 imaging fixture', () => {
     expect(response.status).toBe(200)
     expect(signed).toHaveLength(100)
     expect(new Set(keys)).toHaveLength(100)
+    for (const key of keys) expect(key).toMatch(UUID_V4_RE)
+    expect('cine-frame-042-missing.png').not.toMatch(UUID_V4_RE)
     expect(keys[E3_MISSING_CINE_FRAME_INDEX]).toBe(E3_MISSING_CINE_FRAME_STORAGE_KEY)
     const missing = signed.filter((entry) => entry.error !== null)
     expect(missing).toEqual([{ path: E3_MISSING_CINE_FRAME_STORAGE_KEY, signedURL: null, error: 'Object not found' }])
+    const missingObject = await request(
+      `/storage/v1/object/sign/phi/${encodeURIComponent(E3_MISSING_CINE_FRAME_STORAGE_KEY)}?token=e2-fixture`,
+    )
+    expect(missingObject.status).toBe(404)
+    expect((await missingObject.arrayBuffer()).byteLength).toBe(0)
     const available = signed.filter((entry) => entry.error === null)
     expect(available).toHaveLength(99)
     await Promise.all(available.map(async (entry) => {
