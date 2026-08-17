@@ -1,16 +1,20 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const STUDY_ID = '99669966-9966-4966-8966-996699669966'
 const CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
 const PASSWORD = 'CorrectHorseBattery9'
 const SEEDED_DATE_OF_BIRTH = '1988-03-14'
-const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
 
 type SeededPatient = { patientRef: string; dateOfBirth: string }
 
@@ -29,29 +33,8 @@ function manifest(frames: Manifest['frames'], defaultFps = 17): Manifest {
   return { id: CLIP_ID, frameCount: frames.length, defaultFps, expiresAt: '2026-08-16T12:00:00.000Z', frames }
 }
 
-let ownsIdentityFixture = false
+let identityFixtureLockToken: string | undefined
 let seededPatient: SeededPatient
-
-async function acquireIdentityFixture(): Promise<void> {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    try {
-      await mkdir(IDENTITY_FIXTURE_LOCK)
-      ownsIdentityFixture = true
-      return
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  throw new Error('identity fixture lock timed out')
-}
-
-async function releaseIdentityFixture(): Promise<void> {
-  if (!ownsIdentityFixture) return
-  ownsIdentityFixture = false
-  await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
-}
 
 async function fakeServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -88,11 +71,14 @@ async function openClip(page: Page, payload: Manifest): Promise<void> {
 }
 
 test.describe.serial('cine viewer', () => {
+  test.beforeAll(async () => {
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    identityFixtureLockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
   test.beforeEach(async ({ request }) => {
-    await acquireIdentityFixture()
     seededPatient = await resetIdentity(request)
   })
-  test.afterEach(releaseIdentityFixture)
 
   test('setup regression: leasedIdentityFixture_resetAndRealVerifyRouteLinkCurrentSeed', async ({ request }) => {
     await signInLinkedPatient(request, seededPatient)

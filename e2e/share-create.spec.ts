@@ -3,11 +3,28 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
+import type { APIRequestContext } from '@playwright/test'
 
 import { E2_SEEDED_REPORT_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
+let identityFixtureLockToken: string | undefined
+
+async function fakeServerUrl(): Promise<string> {
+  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
+  return (JSON.parse(raw) as { url: string }).url
+}
+
+async function resetIdentity(request: APIRequestContext): Promise<void> {
+  const response = await request.post(`${await fakeServerUrl()}/__test__/reset-identity`)
+  expect(response.ok()).toBe(true)
+}
 
 async function registerAndLink(page: import('@playwright/test').Page): Promise<void> {
   const email = `jor-236-${randomUUID()}@example.com`
@@ -29,6 +46,13 @@ function share(id: string, state: 'active' | 'expired' | 'revoked') {
 }
 
 test.describe.serial('JOR-236 sharing', () => {
+  test.beforeAll(async () => {
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    identityFixtureLockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
+  test.beforeEach(async ({ request }) => resetIdentity(request))
+
   test('imageAndReportExposeOneShareCreateControl', async ({ page }) => {
     await registerAndLink(page)
     await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`)
