@@ -209,6 +209,19 @@ test.describe('JOR-257 appointments', () => {
     await expect(page.getByTestId('appointment-list')).toHaveCount(0)
   })
 
+  test('responsiveLayout_rendersOneDomItemPerAppointment', async ({ page }) => {
+    await signedIn(page)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await show(page, [
+      appointment(),
+      appointment({ id: '00000000-0000-4000-8000-000000000002' }),
+    ])
+    await expect(page.getByTestId('appointment-item')).toHaveCount(2)
+
+    await page.setViewportSize({ width: 1024, height: 768 })
+    await expect(page.getByTestId('appointment-item')).toHaveCount(2)
+  })
+
   test('missingAllowedTransitions_failsLoudlyWithoutLocalFallback', async ({ page }) => {
     await signedIn(page)
     await page.route('**/api/appointments', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ appointments: [appointment({ allowedTransitions: undefined })] }) }))

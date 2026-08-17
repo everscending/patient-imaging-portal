@@ -53,22 +53,12 @@ function AppointmentDetails({ appointment }: { appointment: Appointment }) {
   )
 }
 
-export function AppointmentTableRow({ appointment, onUpdated }: AppointmentCardProps) {
-  return (
-    <AppointmentItem appointment={appointment} onUpdated={onUpdated} asTableRow />
-  )
-}
-
 type AppointmentCardProps = {
   appointment: Appointment
   onUpdated: (appointment: Appointment) => void
 }
 
 export function AppointmentCard({ appointment, onUpdated }: AppointmentCardProps) {
-  return <AppointmentItem appointment={appointment} onUpdated={onUpdated} />
-}
-
-function AppointmentItem({ appointment, onUpdated, asTableRow = false }: AppointmentCardProps & { asTableRow?: boolean }) {
   const [rescheduleOpen, setRescheduleOpen] = useState(false)
   const [slotId, setSlotId] = useState('')
   const [message, setMessage] = useState<string | null>(null)
@@ -130,21 +120,11 @@ function AppointmentItem({ appointment, onUpdated, asTableRow = false }: Appoint
     <p data-testid="appointment-out-of-hours"><strong>Outside hours</strong>. Your appointment is unaffected.</p>
   ) : null
 
-  if (asTableRow) {
-    return (
-      <tr data-testid="appointment-item">
-        <td><AppointmentDetails appointment={appointment} /></td>
-        <td>{annotation}</td>
-        <td>{controls}</td>
-      </tr>
-    )
-  }
-
   return (
-    <article className="pip-appointment-card" data-testid="appointment-item">
-      <AppointmentDetails appointment={appointment} />
-      {annotation}
-      {controls}
-    </article>
+    <tr className="pip-appointment-card" data-testid="appointment-item">
+      <td><AppointmentDetails appointment={appointment} /></td>
+      <td>{annotation}</td>
+      <td>{controls}</td>
+    </tr>
   )
 }
