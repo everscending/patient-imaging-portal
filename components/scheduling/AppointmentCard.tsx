@@ -21,8 +21,11 @@ function viewerDateTime(value: string): string {
   const instant = new Date(value)
   if (Number.isNaN(instant.valueOf())) return value
   const parts = new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
     timeZoneName: 'short',
   }).formatToParts(instant)
   return parts.map((part) => part.value).join('')

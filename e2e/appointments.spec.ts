@@ -92,7 +92,7 @@ test.describe('JOR-257 appointments', () => {
     await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 422, contentType: 'application/json', body: '{"error":"minimum_notice","message":"Changes are not allowed within 24 hours of the appointment."}' }))
     await show(page, [appointment()])
     await page.locator('[data-testid="appointment-cancel"]:visible').click()
-    await expect(page.locator('[role="alert"]:visible')).toHaveText('Changes are not allowed within 24 hours of the appointment.')
+    await expect(page.locator('[data-testid="appointment-item"]:visible').getByRole('alert')).toHaveText('Changes are not allowed within 24 hours of the appointment.')
   })
 
   test('cancelReturningMinimumNotice_leavesItemUnchanged', async ({ page }) => {
@@ -100,7 +100,7 @@ test.describe('JOR-257 appointments', () => {
     await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 422, contentType: 'application/json', body: '{"error":"minimum_notice","message":"Changes are not allowed within 24 hours of the appointment."}' }))
     await show(page, [appointment()])
     await page.locator('[data-testid="appointment-cancel"]:visible').click()
-    await expect(page.locator('[role="alert"]:visible')).toHaveText('Changes are not allowed within 24 hours of the appointment.')
+    await expect(page.locator('[data-testid="appointment-item"]:visible').getByRole('alert')).toHaveText('Changes are not allowed within 24 hours of the appointment.')
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: Requested')
   })
 
@@ -111,7 +111,7 @@ test.describe('JOR-257 appointments', () => {
     await page.locator('[data-testid="appointment-reschedule"]:visible').click()
     await page.locator('input:visible').fill(SLOT_ID)
     await page.getByRole('button', { name: 'Confirm reschedule' }).click()
-    await expect(page.locator('[role="alert"]:visible')).toHaveText('That slot is no longer available.')
+    await expect(page.locator('[data-testid="appointment-item"]:visible').getByRole('alert')).toHaveText('That slot is no longer available.')
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: Requested')
   })
 
