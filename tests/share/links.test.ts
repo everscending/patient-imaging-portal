@@ -28,7 +28,13 @@ const {
 
 vi.mock('../../lib/db/client', () => ({ serviceClient: serviceMock, anonClient: anonMock }))
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: callerIdMock }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: callerIdMock,
+  resolveAuthenticatedSession: async () => {
+    const userId = await callerIdMock()
+    return userId ? { accessToken: 'caller-token', userId } : null
+  },
+}))
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))

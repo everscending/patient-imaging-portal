@@ -1,7 +1,6 @@
-import { cookies } from 'next/headers'
 import type {} from '../../../lib/access/guard'
+import { resolveAuthenticatedSession } from '../../../lib/access/identity'
 import { anonClient } from '../../../lib/db/client'
-import { SESSION_COOKIE_NAME } from '../../../lib/session-cookie'
 import { parseQuery, providersQuerySchema } from '../../../lib/validation'
 import { errorResponse } from '../../../lib/validation/envelope'
 
@@ -9,26 +8,15 @@ function sessionRequired(): Response {
   return errorResponse(401, 'session_required', 'Sign in to continue.')
 }
 
-async function sessionToken(): Promise<string | null> {
-  return (await cookies()).get(SESSION_COOKIE_NAME)?.value ?? null
-}
-
-async function authenticatedClient(token: string): Promise<ReturnType<typeof anonClient> | null> {
-  const client = anonClient(token)
-  const { data, error } = await client.auth.getUser(token)
-  return error || !data.user ? null : client
-}
-
 type Provider = { id: string; full_name: string; time_zone: string }
 type ProviderJoin = { providers: Provider | Provider[] | null }
 
 export async function GET(request: Request): Promise<Response> {
-  const token = await sessionToken()
-  if (!token) return sessionRequired()
+  const session = await resolveAuthenticatedSession()
+  if (!session) return sessionRequired()
   const parsed = parseQuery(providersQuerySchema, new URL(request.url))
   if (!parsed.ok) return parsed.response
-  const client = await authenticatedClient(token)
-  if (!client) return sessionRequired()
+  const client = anonClient(session.accessToken)
 
   const { data, error } = await client
     .from('provider_services')

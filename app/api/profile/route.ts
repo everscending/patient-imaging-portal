@@ -3,6 +3,7 @@
 // It reads patients solely to expose the caller's already-linked reference;
 // every write targets the caller's own Supabase Auth metadata.
 import { cookies } from 'next/headers'
+import { resolveAuthenticatedSession } from '../../../lib/access/identity'
 import { anonClient, updateOwnAccountMetadata } from '../../../lib/db/client'
 import { SESSION_COOKIE_NAME } from '../../../lib/session-cookie'
 import { parseBody, profilePatchSchema } from '../../../lib/validation'
@@ -68,27 +69,27 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PATCH(request: Request): Promise<Response> {
-  const token = await sessionToken()
-  if (!token) return sessionRequired()
+  const session = await resolveAuthenticatedSession()
+  if (!session) return sessionRequired()
   const parsed = await parseBody(profilePatchSchema, request)
   if (!parsed.ok) return parsed.response
 
   // Resolve the caller before the write. A syntactically valid but expired
   // token is a 401 and never reaches the Auth metadata endpoint.
-  const before = await readProfile(token)
+  const before = await readProfile(session.accessToken)
   if (!before.profile) {
     return before.failed
       ? errorResponse(500, 'profile_unavailable', 'The profile is temporarily unavailable.')
       : sessionRequired()
   }
 
-  const updated = await updateOwnAccountMetadata(token, {
+  const updated = await updateOwnAccountMetadata(session.accessToken, {
     full_name: parsed.value.fullName,
     phone: parsed.value.phone,
   })
   if (!updated) return errorResponse(500, 'profile_update_failed', 'The profile could not be saved.')
 
-  const after = await readProfile(token)
+  const after = await readProfile(session.accessToken)
   if (!after.profile) return errorResponse(500, 'profile_unavailable', 'The profile is temporarily unavailable.')
   return Response.json(after.profile, { status: 200 })
 }

@@ -135,7 +135,13 @@ const {
 
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardPhiAccessMock }))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonClientMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: async () => getSession().callerId }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: async () => getSession().callerId,
+  resolveAuthenticatedSession: async () => {
+    const { token, callerId } = getSession()
+    return token && callerId ? { accessToken: token, userId: callerId } : null
+  },
+}))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: FAKE_SESSION_COOKIE_NAME }))
 vi.mock('../../lib/validation', () => ({
   reportParamsSchema: {},
