@@ -211,6 +211,7 @@ const eslintConfig = [
     // @typescript-eslint/triple-slash-reference rule weakened project-wide.
     ignores: [
       '.next/**',
+      '.worktrees/**',
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',

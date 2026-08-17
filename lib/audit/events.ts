@@ -1,4 +1,6 @@
-// lib/audit/events.ts — the ONLY writer to audit_events (ARCHITECTURE.md §2, §3).
+// lib/audit/events.ts — the ONLY application writer to audit_events
+// (ARCHITECTURE.md §2, §3). ADR-0014 permits a narrow database-function
+// exception when a domain mutation and its audit rows must be one transaction.
 import 'server-only'
 
 import { cookies } from 'next/headers'

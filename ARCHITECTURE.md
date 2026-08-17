@@ -78,7 +78,7 @@ lib/
   scheduling/lifecycle.ts    FR-14 status transitions
   share/links.ts             mint, resolve, revoke
   notify/email.ts            the ONLY caller of Resend
-  audit/events.ts            the ONLY writer to audit_events
+  audit/events.ts            the ONLY application writer to audit_events (ADR-0014: transactional RPC exception)
   observability/timing.ts    PF-4 / PF-6 server timing — no PHI
   time/zones.ts              instant ↔ zone conversion
 
@@ -90,6 +90,8 @@ tests/                       Vitest — unit + integration
 e2e/                         Playwright
 k6/                          load scripts
 scripts/gate.sh              the repo's own definition of done
+scripts/validate-playwright-report.mjs
+                             verifies the UI artifact contains the E2 wiring suite
 ```
 
 ### Forbidden imports
@@ -101,7 +103,7 @@ Each line is mechanically checkable, and a lint rule enforces it.
 | `lib/**` must not import from `app/**` | Domain logic stays testable without a request. |
 | Only `lib/config.ts` reads `process.env` | One place validates the environment contract (§8). |
 | Only `lib/db/client.ts` imports `@supabase/supabase-js` | One place decides anon key vs service role. |
-| Only `lib/audit/events.ts` writes `audit_events` | SEC-4's append-only guarantee has one enforcement point. |
+| Only `lib/audit/events.ts` and ADR-0014 transactional RPCs write `audit_events` | SEC-4's append-only guarantee stays centralized; mutation-required audits share the mutation transaction. |
 | Only `lib/notify/email.ts` imports the Resend SDK | GAP-3's log-only fallback cannot be bypassed. |
 | No `app/api/**` handler touching PHI may skip `lib/access/guard.ts` | The guard *is* the authorization and the audit write (§5). |
 | Only `lib/imaging/signing.ts` mints signed Storage URLs | One TTL, one place. |
@@ -1933,7 +1935,23 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test` |
+| `ui` | `api` + `playwright test --project=e2-wiring` (the serial E2 project depends on the parallel product project) + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+
+The Playwright suite has three execution classes. The `product` project contains
+the ordinary browser checks. The `e2-wiring` project depends on `product`, so E2
+remains in the cumulative `ui` gate but runs after ordinary product tests stop
+using the fixture's shared audit state. The `certification` project contains the
+expensive E0/E1 fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
+`main`, nightly, or by manual dispatch. E0 invokes the cumulative `ui` gate once
+inside its clean checkout and confirms the emitted step list contains TypeScript,
+ESLint, unit, integration, product Playwright, and the E2 report validation; it
+never serially invokes the three cumulative tiers or includes itself recursively.
+
+Both workflows normalize concurrency to the source branch and cancel obsolete
+runs. `scripts/gate.sh` emits a duration for each command, while the workflows
+record dependency, browser, and certification setup durations in the GitHub job
+summary. The Playwright browser cache key contains both `package-lock.json` and
+the installed Playwright version.
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8

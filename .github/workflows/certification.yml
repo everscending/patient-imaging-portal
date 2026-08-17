@@ -1,0 +1,66 @@
+name: Certification
+
+# Fresh-clone certification is expensive by design. It is visible on main,
+# runs nightly, and can be launched manually without recursively slowing every
+# pull-request product gate.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  fresh-clone:
+    runs-on: ubuntu-latest
+    env:
+      PORT: "4310"
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SOURCE_REF_SALT: ${{ secrets.SOURCE_REF_SALT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Start phase timing record
+        run: |
+          echo '## Certification phase timings' >> "$GITHUB_STEP_SUMMARY"
+          echo '| Phase | Duration |' >> "$GITHUB_STEP_SUMMARY"
+          echo '| --- | ---: |' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup — npm dependencies
+        run: |
+          started=$SECONDS
+          npm ci
+          echo "| dependency setup | $((SECONDS - started))s |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}-${{ steps.playwright-version.outputs.version }}
+
+      - name: Setup — Playwright browser
+        run: |
+          started=$SECONDS
+          npx playwright install --with-deps chromium
+          echo "| Playwright setup | $((SECONDS - started))s |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fresh-clone E0/E1 certification
+        run: scripts/certify.sh

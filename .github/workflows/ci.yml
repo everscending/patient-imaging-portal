@@ -1,14 +1,16 @@
 name: CI
 
-# CQ-8: lint and unit tests on every push; this build elects Playwright, so
-# the end-to-end suite runs here too. ARCHITECTURE.md §15 — `ui` already is
-# `api` plus Playwright and `api` already is `logic` plus integration, so one
-# call to the gate runner covers lint, types, unit, integration and
-# end-to-end. No step here may call eslint/tsc/vitest/playwright directly —
-# scripts/gate.sh is the only place those names appear (§15, tests/gate/gate.test.ts).
+# CQ-8 per-change product validation: lint, types, unit, PostgreSQL integration,
+# and ordinary product Playwright tests run for every push and pull request.
+# Fresh-clone E0/E1 certification is kept independently visible in
+# certification.yml; it is intentionally not recursive inside this UI gate.
 on:
   push:
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   gate:
@@ -35,10 +37,38 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - run: npm ci
+      - name: Start phase timing record
+        run: |
+          echo '## CI phase timings' >> "$GITHUB_STEP_SUMMARY"
+          echo '| Phase | Duration |' >> "$GITHUB_STEP_SUMMARY"
+          echo '| --- | ---: |' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup — npm dependencies
+        run: |
+          started=$SECONDS
+          npm ci
+          echo "| dependency setup | $((SECONDS - started))s |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}-${{ steps.playwright-version.outputs.version }}
 
       # Resolves against the @playwright/test version npm ci just installed
-      # from package-lock.json — never a floating browser build.
-      - run: npx playwright install --with-deps
+      # from package-lock.json. The cache key binds both the lockfile and that
+      # resolved version, so a browser build never floats across upgrades.
+      - name: Setup — Playwright browser
+        run: |
+          started=$SECONDS
+          npx playwright install --with-deps chromium
+          echo "| Playwright setup | $((SECONDS - started))s |" >> "$GITHUB_STEP_SUMMARY"
 
-      - run: scripts/gate.sh ui
+      - name: Product UI gate
+        run: scripts/gate.sh ui
