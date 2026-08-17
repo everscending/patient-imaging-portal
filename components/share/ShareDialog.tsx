@@ -39,12 +39,6 @@ export type ShareDialogPanelProps = {
   onCopyLink: (url: string) => void
 }
 
-function isValidRecipientEmail(value: string): boolean {
-  // The server remains authoritative. This client check makes the one-field
-  // contract immediately understandable without sending a malformed request.
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-}
-
 /**
  * Keep the JOR-220 request shape at the component seam. A caller only needs
  * to decide where to mount the dialog and which resource it represents.
@@ -59,10 +53,10 @@ export async function createShare(
     body: JSON.stringify(input),
   })
   const body = (await response.json()) as Partial<CreatedShare> & { message?: string }
-  if (!response.ok || typeof body.url !== 'string') {
+  if (!response.ok) {
     throw new Error(body.message ?? 'The secure link could not be created. Try again.')
   }
-  return body.delivery === 'failed' ? { kind: 'delivery-failed', url: body.url } : { kind: 'success' }
+  return body.delivery === 'failed' && typeof body.url === 'string' ? { kind: 'delivery-failed', url: body.url } : { kind: 'success' }
 }
 
 export function ShareDialogPanel({
@@ -174,11 +168,6 @@ export function ShareDialog({ resourceKind, resourceId, shareLinkTtlHours, trigg
 
   async function submit(): Promise<void> {
     const trimmedEmail = recipientEmail.trim()
-    if (!isValidRecipientEmail(trimmedEmail)) {
-      setValidationError('Enter a valid recipient email address.')
-      return
-    }
-
     setValidationError(null)
     setSubmitting(true)
     try {
@@ -198,7 +187,7 @@ export function ShareDialog({ resourceKind, resourceId, shareLinkTtlHours, trigg
 
   return (
     <>
-      <button aria-haspopup="dialog" className="pip-button-secondary" onClick={() => setOpen(true)} type="button">
+      <button aria-haspopup="dialog" className="pip-button-secondary" data-testid="share-create" onClick={() => setOpen(true)} type="button">
         {triggerLabel}
       </button>
       {open ? (

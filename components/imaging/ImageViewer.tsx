@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useRouter } from 'next/navigation'
 import { Filmstrip } from './Filmstrip'
+import { ShareDialog } from '../share/ShareDialog'
 
 export type ImageViewerProps = {
   images: Array<{
@@ -10,6 +11,7 @@ export type ImageViewerProps = {
     url: string; thumbUrl: string | null; expiresAt: string
   }>
   initialImageId?: string
+  shareLinkTtlHours?: number
   /** 'shared' hides the filmstrip and every action except zoom and pan. */
   variant: 'portal' | 'shared'
 }
@@ -26,7 +28,7 @@ function boundedZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(value * 100) / 100))
 }
 
-export function ImageViewer({ images, initialImageId, variant }: ImageViewerProps): JSX.Element {
+export function ImageViewer({ images, initialImageId, shareLinkTtlHours, variant }: ImageViewerProps): JSX.Element {
   const router = useRouter()
   const [hydrated, setHydrated] = useState(false)
   const firstImageId = useMemo(
@@ -168,6 +170,11 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         <button aria-label="Zoom in" data-testid="zoom-in" onClick={() => changeZoom(ZOOM_STEP)} type="button">+</button>
         <output aria-atomic="true" aria-live="polite" data-testid="zoom-level">Zoom {Math.round(zoom * 100)}%</output>
       </div>
+      {variant === 'portal' && selected && shareLinkTtlHours !== undefined ? (
+        <div className="pip-viewer-share" aria-label="Image actions">
+          <ShareDialog resourceId={selected.id} resourceKind="image" shareLinkTtlHours={shareLinkTtlHours} />
+        </div>
+      ) : null}
       {variant === 'portal' && <Filmstrip images={images} onSelect={changeSelection} selectedImageId={selectedImageId} />}
       <time className="pip-visually-hidden" dateTime={selected?.expiresAt}>Image URL expires at {selected?.expiresAt}</time>
       <style jsx>{`
@@ -185,6 +192,7 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
         .pip-viewer-controls button { min-width: var(--pip-tap-target); min-height: var(--pip-tap-target); padding: 0.5rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.375rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); cursor: pointer; }
         .pip-viewer-controls button:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
         .pip-viewer-controls output { min-height: var(--pip-tap-target); display: flex; align-items: center; }
+        .pip-viewer-share { display: flex; }
         @media (max-width: 390px) { .pip-image-canvas { min-height: 18rem; } .pip-viewer-controls { justify-content: space-between; } }
       `}</style>
     </section>
