@@ -208,3 +208,187 @@ input {
     padding-bottom: 1rem;
   }
 }
+
+/* Desk-user shell: provider and admin keep a persistent left sidebar at all
+   viewport sizes. The patient tab-bar breakpoint does not apply here. */
+.pip-staff-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.pip-staff-sidebar {
+  width: clamp(8.5rem, 30vw, 16rem);
+  flex-shrink: 0;
+  padding: 1.25rem 0.75rem;
+  border-right: 1px solid var(--pip-color-base-300);
+  background: var(--pip-color-base-200);
+}
+
+.pip-staff-name {
+  margin: 0 0 1rem;
+  font-weight: 700;
+  color: var(--pip-color-secondary);
+}
+
+.pip-staff-sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pip-staff-sidebar a {
+  display: flex;
+  align-items: center;
+  min-height: var(--pip-tap-target);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  color: var(--pip-color-base-content);
+}
+
+.pip-staff-sidebar a[aria-current='page'] {
+  background: var(--pip-color-base-300);
+  color: var(--pip-color-primary);
+  font-weight: 600;
+}
+
+.pip-staff-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1rem;
+}
+
+.pip-availability-page {
+  max-width: 58rem;
+  margin: 0 auto;
+}
+
+.pip-time-zone {
+  color: var(--pip-color-secondary);
+}
+
+.pip-availability-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.pip-availability-section,
+.pip-weekday,
+.pip-block {
+  border: 1px solid var(--pip-color-base-300);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.pip-availability-section,
+.pip-weekday,
+.pip-block,
+.pip-window-row {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pip-window-row,
+.pip-block {
+  margin-top: 0.75rem;
+}
+
+.pip-window-row label,
+.pip-block label {
+  display: grid;
+  gap: 0.375rem;
+  font-weight: 600;
+}
+
+.pip-checkbox-label {
+  display: flex;
+  align-items: center;
+  min-height: var(--pip-tap-target);
+  gap: 0.5rem;
+}
+
+.pip-checkbox-label input {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.pip-button-secondary {
+  min-height: var(--pip-tap-target);
+  min-width: var(--pip-tap-target);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--pip-color-primary);
+  border-radius: 0.5rem;
+  color: var(--pip-color-primary);
+  background: var(--pip-color-base-100);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pip-button-secondary:focus-visible {
+  outline: 2px solid var(--pip-color-accent);
+  outline-offset: 2px;
+}
+
+.pip-save-summary {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--pip-color-success);
+  border-radius: 0.5rem;
+  background: var(--pip-color-base-200);
+}
+
+/* ShareDialog — one mounted panel becomes a centered dialog at desktop width
+   and a bottom sheet below the patient shell's 768px breakpoint. */
+.pip-share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--pip-color-secondary) 45%, transparent);
+}
+
+.pip-share-dialog,
+.pip-share-sheet {
+  width: min(100%, 30rem);
+  padding: 1rem;
+  border: 1px solid var(--pip-color-base-300);
+  border-radius: 0.75rem;
+  background: var(--pip-color-base-100);
+  box-shadow: 0 1rem 3rem color-mix(in srgb, var(--pip-color-secondary) 25%, transparent);
+}
+
+.pip-share-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pip-share-heading h2 {
+  margin: 0;
+}
+
+.pip-share-outcome {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pip-share-outcome--warning {
+  color: var(--pip-color-warning);
+}
+
+@media (max-width: 767px) {
+  .pip-share-backdrop--sheet {
+    place-items: end center;
+    padding: 0;
+  }
+
+  .pip-share-sheet {
+    width: 100%;
+    border-bottom: 0;
+    border-radius: 0.75rem 0.75rem 0 0;
+  }
+}

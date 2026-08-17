@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -10,15 +10,14 @@ function run(
   args: string[],
   env: Record<string, string> = {},
 ): { status: number; stdout: string; stderr: string } {
-  try {
-    const stdout = execFileSync(GATE, args, {
-      encoding: 'utf8',
-      env: { ...process.env, ...env },
-    })
-    return { status: 0, stdout, stderr: '' }
-  } catch (error) {
-    const e = error as { status: number | null; stdout: string; stderr: string }
-    return { status: e.status ?? 1, stdout: e.stdout, stderr: e.stderr }
+  const result = spawnSync(GATE, args, {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  })
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
   }
 }
 
@@ -66,6 +65,32 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
+    expect(ui.at(-2)).toBe('npx playwright test --project=e2-wiring')
+    expect(ui.at(-1)).toBe(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+    )
+  })
+})
+
+describe('timings — every executed command reports its duration', () => {
+  test('a passing command emits a machine-readable timing line', () => {
+    const result = run(['logic'], {
+      GATE_FAKE_EXIT_TSC: '0',
+      GATE_FAKE_EXIT_ESLINT: '0',
+      GATE_FAKE_EXIT_VITEST_UNIT: '0',
+    })
+    expect(result.status).toBe(0)
+    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT']) {
+      expect(result.stderr).toMatch(new RegExp(`\\[gate:logic\\] timing ${name}=\\d+s`))
+    }
+  })
+
+  test('a failing command reports timing before propagating its status', () => {
+    const result = run(['logic'], {
+      GATE_FAKE_EXIT_TSC: '7',
+    })
+    expect(result.status).toBe(7)
+    expect(result.stderr).toMatch(/\[gate:logic\] timing TSC=\d+s/)
   })
 })
 
@@ -122,6 +147,118 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
   test('adversarial: no hardcoded localhost port appears in baseURL', () => {
     expect(source).not.toMatch(/localhost:\d+/)
   })
+
+  test('ui gate validates the JSON report artifact emitted by Playwright', () => {
+    const ui = run(['ui', '--list']).stdout.trim().split('\n')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+    )
+    expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
+  })
+
+  test('E2 runs after the parallel product suite instead of sharing its fake-server state', () => {
+    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(source).toMatch(
+      /name:\s*'e2-wiring'[\s\S]*testMatch:\s*\/e2-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
+    )
+  })
+})
+
+describe('anonymous health Playwright check — regression: uses its lane base URL', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'e2e/degraded.spec.ts'), 'utf8')
+  const healthNoSessionTest = source.match(
+    /test\('acceptance: health_noSessionNoCookies_returns200',[\s\S]*?\n  }\)\n\n  test\('acceptance \(static\)/,
+  )?.[0]
+
+  test('healthNoSessionNoCookies_usesFreshCookieFreeContextAtPlaywrightBaseUrl', () => {
+    expect(healthNoSessionTest).toBeDefined()
+    expect(healthNoSessionTest).toMatch(/async \(\{ baseURL, playwright \}\)/)
+    expect(healthNoSessionTest).toMatch(/playwright\.request\.newContext\(\{ baseURL \}\)/)
+    expect(healthNoSessionTest).toMatch(/anonymous\.get\('\/api\/health'\)/)
+  })
+
+  test('adversarial: healthNoSessionNoCookies_rejectsFixedApplicationPort', () => {
+    expect(healthNoSessionTest).not.toMatch(/localhost:\d+/)
+  })
+})
+
+describe('Next worktree root — regression: a lane watches only its own checkout', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'next.config.ts'), 'utf8')
+  const runnerSource = readFileSync(path.join(REPO_ROOT, 'scripts/run-next.mjs'), 'utf8')
+
+  test('worktreeLocalRoot_preventsParentLockfileInference', () => {
+    // `fileURLToPath(import.meta.url)` names this config file wherever the
+    // checkout was cloned; its dirname therefore cannot resolve to the parent
+    // repository's lockfile.
+    expect(source).toMatch(/fileURLToPath\(import\.meta\.url\)/)
+    expect(source).toMatch(/path\.dirname\(fileURLToPath\(import\.meta\.url\)\)/)
+    expect(source).toMatch(/outputFileTracingRoot:\s*worktreeRoot/)
+    expect(source).toMatch(/turbopack:\s*\{\s*root:\s*worktreeRoot,?\s*}/)
+  })
+
+  test('adversarial_removingWorktreeLocalRoot_detectsParentInference', () => {
+    // Removing both explicit roots makes Next climb to the superproject's
+    // package-lock.json (Next's find-root behavior). Keep the exact config
+    // shape under test so deleting either required setting is a red regression.
+    expect(source).toContain('outputFileTracingRoot: worktreeRoot')
+    expect(source).toContain('root: worktreeRoot')
+    expect(source).not.toMatch(/root:\s*['"]/)
+  })
+
+  test('webpackTracingAndTurbopack_shareTheSameWorktreeLocalRoot', () => {
+    // `next dev` can exercise Watchpack even when Turbopack has a local root.
+    // Pin the tracing root separately so neither active bundler climbs to the
+    // superproject and watches every linked checkout.
+    expect(source).toMatch(/outputFileTracingRoot:\s*worktreeRoot/)
+    expect(source).toMatch(/turbopack:\s*\{\s*root:\s*worktreeRoot,?\s*}/)
+  })
+
+  test('devServer_usesPollingToAvoidNativeWatcherExhaustionAcrossLanes', () => {
+    // Worktree-local roots prevent sibling traversal, but Watchpack can still
+    // exhaust native filesystem watchers when several Next dev lanes coexist.
+    // Polling contains that shared OS resource without changing production.
+    expect(runnerSource).toMatch(/const nextEnv = \{ \.\.\.process\.env }/)
+    expect(runnerSource).toMatch(
+      /mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined[\s\S]*nextEnv\.WATCHPACK_POLLING = '1000'/,
+    )
+    expect(runnerSource).toMatch(/spawn\([\s\S]*env:\s*nextEnv/)
+  })
+
+  test('adversarial_removingPollingFallback_recreatesNativeWatcherRisk', () => {
+    const mutant = runnerSource.replace(
+      /\nif \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n}/,
+      '',
+    )
+
+    expect(runnerSource).toContain("nextEnv.WATCHPACK_POLLING = '1000'")
+    expect(mutant).not.toContain("nextEnv.WATCHPACK_POLLING = '1000'")
+  })
+
+  test('twoDistinctPortServers_neverShareOrInspectSiblingWorktree', () => {
+    // The root is derived from the config file, rather than PORT or a fixed
+    // checkout path. Each linked worktree consequently gets its own watcher
+    // root while Playwright derives each server URL from PORT.
+    const linkedWorktrees = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length))
+
+    expect(linkedWorktrees).toContain(REPO_ROOT)
+    expect(source).not.toMatch(/\.worktrees\/\d+|\/Users\/|PORT/)
+    expect(readFileSync(path.join(REPO_ROOT, 'playwright.config.ts'), 'utf8')).toMatch(/config\.port/)
+  })
+
+  test('cleanupOfEitherServerLeavesOtherWorktreeRootValid', () => {
+    // Process teardown lives in the fixture. A root is config-local state, so
+    // stopping one fixture cannot alter another worktree's root selection.
+    const fixture = readFileSync(path.join(REPO_ROOT, 'e2e/fixtures/start-test-server.mjs'), 'utf8')
+    expect(fixture).toMatch(/child\.kill\(\)/)
+    expect(fixture).toMatch(/fakeAuthServer\.close\(\)/)
+    expect(source).toContain('root: worktreeRoot')
+  })
 })
 
 describe('repo-wide guards', () => {
@@ -141,9 +278,12 @@ describe('repo-wide guards', () => {
     }
   })
 
-  test('no workflow or script under scripts/ other than gate.sh calls vitest, playwright, eslint, or tsc directly', () => {
+  test('gate.sh owns product tools; certify.sh can launch only the isolated certification project', () => {
     const gateShContent = readFileSync(path.join(REPO_ROOT, 'scripts', 'gate.sh'), 'utf8')
-    // gate.sh itself is the one place allowed to name these tools.
+    const certifyShContent = readFileSync(path.join(REPO_ROOT, 'scripts', 'certify.sh'), 'utf8')
     expect(gateShContent).toMatch(/npx (tsc|eslint|vitest|playwright)/)
+    expect(certifyShContent).toMatch(/npx playwright test --project=certification/)
+    expect(certifyShContent).not.toMatch(/npx (tsc|eslint|vitest)\b/)
+    expect(certifyShContent).not.toMatch(/--project=product/)
   })
 })

@@ -90,6 +90,8 @@ tests/                       Vitest — unit + integration
 e2e/                         Playwright
 k6/                          load scripts
 scripts/gate.sh              the repo's own definition of done
+scripts/validate-playwright-report.mjs
+                             verifies the UI artifact contains the E2 wiring suite
 ```
 
 ### Forbidden imports
@@ -1933,7 +1935,35 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test` |
+| `ui` | `api` + `playwright test --project=e2-wiring` (the serial E2 project depends on the parallel product project) + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+
+The Playwright suite has three execution classes. The `product` project contains
+the ordinary browser checks. The `e2-wiring` project depends on `product`, so E2
+remains in the cumulative `ui` gate but runs after ordinary product tests stop
+using the fixture's shared audit state. The `certification` project contains the
+expensive E0/E1 fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
+`main`, nightly, or by manual dispatch. E0 invokes the cumulative `ui` gate once
+inside its clean checkout and confirms the emitted step list contains TypeScript,
+ESLint, unit, integration, product Playwright, and the E2 report validation; it
+never serially invokes the three cumulative tiers or includes itself recursively.
+
+Each Next process pins both `outputFileTracingRoot` and `turbopack.root` to the
+directory containing `next.config.ts`. This is required for linked lane
+worktrees: Next's tracing and active bundler watchers must stay inside that
+checkout, never infer the parent repository's lockfile and watch sibling
+worktrees. Playwright still derives its server address from `PORT`, so
+concurrent lanes set distinct ports; stopping one fixture does not affect
+another lane's root or server. Development servers also default Watchpack to a
+one-second polling interval. This avoids exhausting shared native filesystem
+watchers when multiple worktrees run Next concurrently; an explicitly supplied
+`WATCHPACK_POLLING` value still takes precedence, and production start mode is
+unchanged.
+
+Both workflows normalize concurrency to the source branch and cancel obsolete
+runs. `scripts/gate.sh` emits a duration for each command, while the workflows
+record dependency, browser, and certification setup durations in the GitHub job
+summary. The Playwright browser cache key contains both `package-lock.json` and
+the installed Playwright version.
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8

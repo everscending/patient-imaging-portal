@@ -1,5 +1,5 @@
 // e2e/degraded.spec.ts — JOR-247's live check. Runs against the real app on
-// PORT (4310, playwright.config.ts's webServer). The database and Storage
+// PORT (playwright.config.ts's webServer). The database and Storage
 // probes in app/api/health/route.ts both resolve through the app's single
 // NEXT_PUBLIC_SUPABASE_URL, which start-test-server.mjs already points at
 // e2e/fixtures/fake-auth-server.ts for the whole suite — so that fixture's
@@ -64,13 +64,13 @@ test.describe('GET /api/health — acceptance: the pinned §6 shape, always 200'
     expect(body).toEqual({ app: 'ok', database: 'ok', storage: 'down' })
   })
 
-  test('acceptance: health_noSessionNoCookies_returns200', async ({ playwright }) => {
+  test('acceptance: health_noSessionNoCookies_returns200', async ({ baseURL, playwright }) => {
     // A fresh request context: no login has ever happened on it, so there is
     // no session cookie and no linked account (PF-9's uptime check carries
     // neither).
-    const anonymous = await playwright.request.newContext()
+    const anonymous = await playwright.request.newContext({ baseURL })
     try {
-      const response = await anonymous.get('http://localhost:4310/api/health')
+      const response = await anonymous.get('/api/health')
       expect(response.status()).toBe(200)
     } finally {
       await anonymous.dispose()
