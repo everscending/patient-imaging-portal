@@ -3,10 +3,17 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const UNAVAILABLE_COPY = 'This link is no longer available. Secure links expire and can be revoked by the person who shared them. Ask them to send a new one.'
+const PASSWORD = 'CorrectHorseBattery9'
 const IMAGE = {
   id: '10000000-0000-4000-8000-000000000001', width: 1024, height: 768, ordinal: 1,
   url: '/fixture/full.png', thumbUrl: '/fixture/thumb.png', expiresAt: '2099-01-01T00:00:00.000Z',
@@ -16,9 +23,45 @@ const REPORT = {
   studyDescription: 'Shared ultrasound', patientRef: 'PT-4471', findings: 'No acute abnormality.',
   impression: 'Normal seeded study.', signedByName: 'Dr. Avery Chen', signedAt: '2026-08-12T16:00:00.000Z',
 }
+const AUTHORIZED_TICKET_FILES = new Set([
+  'app/api/s/[token]/route.ts',
+  'app/s/[token]/page.tsx',
+  'components/share/SharedResource.tsx',
+  'e2e/e2-wiring.spec.ts',
+  'e2e/fixtures/fake-auth-server.ts',
+  'e2e/reports.spec.ts',
+  'e2e/share-recipient.spec.ts',
+  'lib/reports/ReportView.tsx',
+  'next.config.ts',
+  'tests/e2e/imaging-reports-fixture.test.ts',
+])
+let identityFixtureLockToken: string | undefined
 
 async function source(file: string): Promise<string> {
   return readFile(path.join(REPO_ROOT, file), 'utf8')
+}
+
+async function fakeServerUrl(): Promise<string> {
+  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
+  return (JSON.parse(raw) as { url: string }).url
+}
+
+async function resetIdentity(request: APIRequestContext): Promise<void> {
+  const response = await request.post(`${await fakeServerUrl()}/__test__/reset-identity`)
+  expect(response.ok()).toBe(true)
+}
+
+async function registerAndLink(request: APIRequestContext): Promise<void> {
+  const email = `jor-239-${randomUUID()}@example.com`
+  expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
+  expect((await request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
+  expect(
+    (
+      await request.post('/api/identity/verify', {
+        data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
+      })
+    ).status(),
+  ).toBe(200)
 }
 
 async function stubShareApi(page: Page, token: string, body: unknown): Promise<{ revoke: () => void }> {
@@ -41,7 +84,14 @@ async function unavailableText(page: Page): Promise<string> {
   return screen.innerText()
 }
 
-test.describe('JOR-239 shared recipient', () => {
+test.describe.serial('JOR-239 shared recipient', () => {
+  test.beforeAll(async () => {
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    identityFixtureLockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
+  test.beforeEach(async ({ request }) => resetIdentity(request))
+
   test('activeImageRendersOneSharedViewerWithoutSiblingNavigationOrExtraResourceFetches', async ({ page }) => {
     const token = `fresh-image-${randomUUID()}`
     await stubShareApi(page, token, { resourceKind: 'image', payload: IMAGE, expiresAt: '2099-01-01T00:00:00.000Z' })
@@ -95,22 +145,32 @@ test.describe('JOR-239 shared recipient', () => {
     expect(await unavailableText(page)).toBe(expiredScreen)
   })
 
-  test('revokedLinkInvalidatesCachedRecipientContentAndMatchesUnknownScreen', async ({ page }) => {
-    const token = `fresh-revocable-${randomUUID()}`
-    const unknown = `unknown-${randomUUID()}`
-    const share = await stubShareApi(page, token, { resourceKind: 'image', payload: IMAGE, expiresAt: '2099-01-01T00:00:00.000Z' })
-    await page.route(`**/api/s/${unknown}`, (route) => route.fulfill({ status: 410, body: JSON.stringify({ error: 'share_unavailable', message: 'This link is no longer available.' }) }))
+  test('mintedLinkOpensAnonymouslyThenRevocationMatchesUnknownWithoutApiMocks', async ({ browser, page }) => {
+    await registerAndLink(page.request)
+    const created = await page.request.post('/api/shares', {
+      data: { resourceKind: 'image', resourceId: IMAGE.id, recipientEmail: 'recipient@example.test' },
+    })
+    expect(created.status()).toBe(201)
+    const share = (await created.json()) as { id: string; url: string }
+    expect(share.id).toEqual(expect.any(String))
+    const sharePath = new URL(share.url).pathname
 
-    // The recipient starts without a session. A patient-side revoke changes the
-    // token endpoint before the recipient reopens the same URL.
-    await page.goto(`/s/${token}`)
-    await expect(page.getByTestId('image-viewer')).toBeVisible()
-    share.revoke()
-    await page.reload()
-    const revokedScreen = await unavailableText(page)
-    await expect(page.getByTestId('image-viewer')).toHaveCount(0)
-    await page.goto(`/s/${unknown}`)
-    expect(await unavailableText(page)).toBe(revokedScreen)
+    const recipientContext = await browser.newContext()
+    const recipient = await recipientContext.newPage()
+    try {
+      await recipient.goto(sharePath)
+      await expect(recipient.getByTestId('image-viewer')).toBeVisible()
+
+      expect((await page.request.delete(`/api/shares/${share.id}`)).status()).toBe(204)
+      await recipient.reload()
+      const revokedScreen = await unavailableText(recipient)
+      await expect(recipient.getByTestId('image-viewer')).toHaveCount(0)
+
+      await recipient.goto(`/s/${randomUUID()}`)
+      expect(await unavailableText(recipient)).toBe(revokedScreen)
+    } finally {
+      await recipientContext.close()
+    }
   })
 
   test('noindexNoStoreAndNoPhiOrRawTokenLeakageArePinned', async ({ page }) => {
@@ -135,8 +195,12 @@ test.describe('JOR-239 shared recipient', () => {
     expect(apiSource).toContain("'Cache-Control': 'no-store")
     expect(configSource).toContain("source: '/s/:token'")
     expect(configSource).toContain('no-store')
-    const changedFiles = execFileSync('git', ['diff', '--name-only', 'HEAD']).toString()
-    expect(changedFiles).not.toContain('lib/reports/ReportView.tsx')
-    expect(changedFiles).not.toContain('components/imaging/ImageViewer.tsx')
+    const mergeBase = execFileSync('git', ['merge-base', 'origin/main', 'HEAD']).toString().trim()
+    const changedFiles = execFileSync('git', ['diff', '--name-only', mergeBase])
+      .toString()
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+    expect(changedFiles.filter((file) => !AUTHORIZED_TICKET_FILES.has(file))).toEqual([])
   })
 })

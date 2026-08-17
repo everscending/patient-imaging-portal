@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   E2_SEEDED_CLIP_ID,
+  E2_SEEDED_IMAGE_ID,
   E2_SEEDED_STUDY_ID,
   E3_MISSING_CINE_FRAME_INDEX,
   E3_MISSING_CINE_FRAME_STORAGE_KEY,
@@ -180,5 +181,69 @@ describe('JOR-289 live E3/E4 imaging fixture', () => {
     ])
     expect(frames).toEqual(firstFrames)
     expect(preliminary).toEqual(firstPreliminary)
+  })
+})
+
+describe('JOR-239 live share fixture', () => {
+  const serviceHeaders = {
+    Accept: 'application/vnd.pgrst.object+json',
+    apikey: 'fixture-service-role',
+    Authorization: 'Bearer fixture-service-role',
+  }
+
+  test('patientMintServiceResolveRevokeAndResetRespectTheFixtureBoundary', async () => {
+    const patientToken = await linkedPatientToken('PT-4471')
+    const foreignToken = await linkedPatientToken('PT-5582')
+    const patientId = String((await patientObject('/rest/v1/patients?patient_ref=eq.PT-4471', patientToken))?.id)
+    const row = {
+      token_hash: 'fixture-token-hash',
+      patient_id: patientId,
+      created_by: randomUUID(),
+      recipient_email: 'recipient@example.test',
+      expires_at: '2099-01-01T00:00:00.000Z',
+      image_id: E2_SEEDED_IMAGE_ID,
+      report_id: null,
+    }
+
+    const denied = await request('/rest/v1/share_links', {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.pgrst.object+json', Authorization: `Bearer ${foreignToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(row),
+    })
+    expect(denied.status).toBe(403)
+
+    const inserted = await request('/rest/v1/share_links', {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.pgrst.object+json', Authorization: `Bearer ${patientToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(row),
+    })
+    expect(inserted.status).toBe(201)
+    const share = (await inserted.json()) as Row
+    expect(share).toEqual(expect.objectContaining({ id: expect.any(String), image_id: E2_SEEDED_IMAGE_ID, revoked_at: null }))
+
+    expect(await patientObject(`/rest/v1/share_links?id=eq.${share.id}`, patientToken)).toEqual(expect.objectContaining({ id: share.id }))
+    expect(await (await request(`/rest/v1/share_links?token_hash=eq.${row.token_hash}`, { headers: serviceHeaders })).json())
+      .toEqual(expect.objectContaining({ id: share.id }))
+    expect(await (await request(`/rest/v1/images?id=eq.${E2_SEEDED_IMAGE_ID}`, { headers: serviceHeaders })).json())
+      .toEqual(expect.objectContaining({ id: E2_SEEDED_IMAGE_ID }))
+
+    const outbox = await request('/rest/v1/email_outbox', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${patientToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: 'recipient@example.test', subject: 'Generic notice', body: 'No PHI' }),
+    })
+    expect(outbox.status).toBe(201)
+
+    const revokedAt = '2026-08-17T12:00:00.000Z'
+    expect((await request(`/rest/v1/share_links?id=eq.${share.id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${patientToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revoked_at: revokedAt }),
+    })).status).toBe(204)
+    expect(await (await request(`/rest/v1/share_links?id=eq.${share.id}`, { headers: serviceHeaders })).json())
+      .toEqual(expect.objectContaining({ id: share.id, revoked_at: revokedAt }))
+
+    expect((await request('/__test__/reset-identity', { method: 'POST' })).status).toBe(200)
+    expect(await (await request(`/rest/v1/share_links?id=eq.${share.id}`, { headers: serviceHeaders })).json()).toBeNull()
   })
 })

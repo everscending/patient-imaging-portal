@@ -91,7 +91,6 @@ test.describe.serial('cine viewer', () => {
   })
 
   test('mandatory adversarial: apiDrivenGaps_continuePlaybackWithCorrectDenominatorAndMarkers', async ({ page }) => {
-    test.setTimeout(60_000)
     await signInLinkedPatient(page.request, seededPatient)
     await openClip(page, manifest([
       { index: 0, available: true, url: '/missing-cine-frame.svg' },
