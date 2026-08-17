@@ -23,6 +23,13 @@ function uniqueEmail(label: string): string {
 const PASSWORD = 'CorrectHorseBattery9'
 
 type ErrorEnvelope = { error: string; message: string }
+type FakeAuthCalls = Record<'signup' | 'token' | 'user' | 'updateUser', number>
+
+async function fakeAuthCalls(requestContext: APIRequestContext, email?: string): Promise<FakeAuthCalls> {
+  const authUrl = await fakeAuthServerUrl()
+  const query = email === undefined ? '' : `?email=${encodeURIComponent(email)}`
+  return (await (await requestContext.get(`${authUrl}/__test__/calls${query}`)).json()) as FakeAuthCalls
+}
 
 async function register(
   requestContext: APIRequestContext,
@@ -85,11 +92,11 @@ test.describe('POST /api/auth/register — acceptance: the pinned §6 shapes', (
   })
 
   test('mandatory adversarial: register_validationRuns_beforeProviderIsEverCalled', async ({ request }) => {
-    const authUrl = await fakeAuthServerUrl()
-    const before = (await (await request.get(`${authUrl}/__test__/calls`)).json()) as Record<string, number>
+    const email = uniqueEmail('register-short-password')
+    const before = await fakeAuthCalls(request, email)
     // Fails lib/validation's min(8) password bound — never reaches Supabase.
-    await register(request, uniqueEmail('register-short-password'), 'x')
-    const after = (await (await request.get(`${authUrl}/__test__/calls`)).json()) as Record<string, number>
+    await register(request, email, 'x')
+    const after = await fakeAuthCalls(request, email)
     expect(after.signup).toBe(before.signup)
   })
 
@@ -135,13 +142,21 @@ test.describe('POST /api/auth/login — acceptance: the pinned §6 shapes', () =
   })
 
   test('mandatory adversarial: login_validationRuns_beforeProviderIsEverCalled', async ({ request }) => {
-    const authUrl = await fakeAuthServerUrl()
-    const before = (await (await request.get(`${authUrl}/__test__/calls`)).json()) as Record<string, number>
+    const invalidEmail = uniqueEmail('login-extra')
+    const unrelatedEmail = uniqueEmail('login-unrelated')
+    await register(request, unrelatedEmail)
+    const before = await fakeAuthCalls(request, invalidEmail)
+    const unrelatedBefore = await fakeAuthCalls(request, unrelatedEmail.toUpperCase())
+    // Another worker can authenticate while this validation assertion is in
+    // flight. Its provider call must not be attributed to the invalid login.
+    expect((await login(request, unrelatedEmail)).status).toBe(200)
     // .strict() rejects the extra field before Supabase is ever reached.
     await request.post('/api/auth/login', {
-      data: { email: uniqueEmail('login-extra'), password: PASSWORD, role: 'admin' },
+      data: { email: invalidEmail, password: PASSWORD, role: 'admin' },
     })
-    const after = (await (await request.get(`${authUrl}/__test__/calls`)).json()) as Record<string, number>
+    const after = await fakeAuthCalls(request, invalidEmail)
+    const unrelatedAfter = await fakeAuthCalls(request, unrelatedEmail)
+    expect(unrelatedAfter.token).toBe(unrelatedBefore.token + 1)
     expect(after.token).toBe(before.token)
   })
 })
