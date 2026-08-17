@@ -61,16 +61,18 @@ describe('per-change coverage stays cumulative', () => {
       'npx vitest run --project unit',
       'npx vitest run --project unit tests/observability/timing.test.ts',
       'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
-      'npx playwright test --project=e2-wiring',
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+      'npx playwright test --project=e3-wiring',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
     ])
   })
 
-  test('ordinary product Playwright excludes wiring specs; E2 depends on product while E0/E1 remain certification', () => {
+  test('ordinary product Playwright excludes wiring specs; E2/E3 depend on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[0123\]-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e3-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e3-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/dependencies:\s*\['product'\]/)
     expect(playwrightConfig).toMatch(/name:\s*'certification'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e\[01\]-wiring\\\.spec\\\.ts\//)

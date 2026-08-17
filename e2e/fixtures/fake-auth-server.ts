@@ -653,18 +653,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       sendJson(res, 405, { message: 'method not allowed' })
       return
     }
-    // Availability is provider-owned data.  Model the RLS boundary here,
-    // rather than relying on the route's prior authorization: the real route
-    // performs three separate PostgREST reads and the fake must not let a
-    // future caller recover another provider's rows by issuing one directly.
+    // Provider names are globally readable under production RLS so imaging
+    // can decorate a patient's study DTO. Availability rows remain scoped to
+    // the owning provider below, and this read handler never permits writes.
     const caller = authenticatedUser(req)
+    const callerPatient = caller ? patients.find((patient) => patient.user_id === caller.id) : undefined
     const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
 
     if (url.pathname === '/rest/v1/providers') {
       sendPostgrestRows(
         req,
         res,
-        callerProvider ? applyEqualityFilters([callerProvider], url) : [],
+        applyEqualityFilters(callerPatient ? providers : callerProvider ? [callerProvider] : [], url),
       )
       return
     }

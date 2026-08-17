@@ -65,9 +65,9 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
-    expect(ui.at(-2)).toBe('npx playwright test --project=e2-wiring')
+    expect(ui.at(-2)).toBe('npx playwright test --project=e3-wiring')
     expect(ui.at(-1)).toBe(
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
     )
   })
 })
@@ -158,15 +158,18 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
   test('ui gate validates the JSON report artifact emitted by Playwright', () => {
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui).toContain(
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
     )
     expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
   })
 
-  test('E2 runs after the parallel product suite instead of sharing its fake-server state', () => {
-    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+  test('E2 and E3 run after the parallel product suite instead of sharing its fake-server state', () => {
+    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[0123\]-wiring\\\.spec\\\.ts\//)
     expect(source).toMatch(
       /name:\s*'e2-wiring'[\s\S]*testMatch:\s*\/e2-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
+    )
+    expect(source).toMatch(
+      /name:\s*'e3-wiring'[\s\S]*testMatch:\s*\/e3-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
     )
   })
 })

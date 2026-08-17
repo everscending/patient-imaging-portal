@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  E2_PROVIDER_ID,
   E2_SEEDED_CLIP_ID,
   E2_SEEDED_STUDY_ID,
   E3_MISSING_CINE_FRAME_INDEX,
@@ -75,6 +76,30 @@ async function patientObject(path: string, token: string): Promise<Row | null> {
 }
 
 describe('JOR-289 live E3/E4 imaging fixture', () => {
+  test('patientReadsReferencedProviderButCannotMutateOrReadForeignImaging', async () => {
+    const seededToken = await linkedPatientToken('PT-4471')
+    const foreignToken = await linkedPatientToken('PT-5582')
+
+    const provider = await patientRows(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, seededToken)
+    expect(provider).toEqual([
+      expect.objectContaining({ id: E2_PROVIDER_ID, full_name: 'Dr. Avery Chen' }),
+    ])
+
+    const mutation = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${seededToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ full_name: 'Patient supplied' }),
+    })
+    expect(mutation.status).toBe(405)
+    expect(await patientRows(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, seededToken)).toEqual([
+      expect.objectContaining({ id: E2_PROVIDER_ID, full_name: 'Dr. Avery Chen' }),
+    ])
+    expect(await patientRows(`/rest/v1/studies?id=eq.${E2_SEEDED_STUDY_ID}`, foreignToken)).toEqual([])
+  })
+
   test('acceptance: seeded patient receives completed evidence while scheduled and cancelled successor studies remain identifiable', async () => {
     const token = await linkedPatientToken('PT-4471')
     const [studies, visits] = await Promise.all([
