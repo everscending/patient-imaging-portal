@@ -191,15 +191,25 @@ describe('Next worktree root — regression: a lane watches only its own checkou
     // repository's lockfile.
     expect(source).toMatch(/fileURLToPath\(import\.meta\.url\)/)
     expect(source).toMatch(/path\.dirname\(fileURLToPath\(import\.meta\.url\)\)/)
+    expect(source).toMatch(/outputFileTracingRoot:\s*worktreeRoot/)
     expect(source).toMatch(/turbopack:\s*\{\s*root:\s*worktreeRoot,?\s*}/)
   })
 
   test('adversarial_removingWorktreeLocalRoot_detectsParentInference', () => {
-    // Removing `turbopack.root` makes Next climb to the superproject's
+    // Removing both explicit roots makes Next climb to the superproject's
     // package-lock.json (Next's find-root behavior). Keep the exact config
-    // shape under test so deleting the explicit root is a red regression.
+    // shape under test so deleting either required setting is a red regression.
+    expect(source).toContain('outputFileTracingRoot: worktreeRoot')
     expect(source).toContain('root: worktreeRoot')
     expect(source).not.toMatch(/root:\s*['"]/)
+  })
+
+  test('webpackTracingAndTurbopack_shareTheSameWorktreeLocalRoot', () => {
+    // `next dev` can exercise Watchpack even when Turbopack has a local root.
+    // Pin the tracing root separately so neither active bundler climbs to the
+    // superproject and watches every linked checkout.
+    expect(source).toMatch(/outputFileTracingRoot:\s*worktreeRoot/)
+    expect(source).toMatch(/turbopack:\s*\{\s*root:\s*worktreeRoot,?\s*}/)
   })
 
   test('twoDistinctPortServers_neverShareOrInspectSiblingWorktree', () => {
