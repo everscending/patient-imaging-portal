@@ -133,6 +133,10 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
           update appointments set provider_id = '${first.providerId}' where id = '${appointment(second)}';`)
     const firstAppointment = appointment(first)
     const secondAppointment = psql(`select id from appointments where patient_id = '${second.patientId}';`)
+    const contenders = [
+      { appointmentId: firstAppointment, originalSlotId: first.slotIds[0]! },
+      { appointmentId: secondAppointment, originalSlotId: second.slotIds[0]! },
+    ]
 
     const results = await Promise.all([
       psqlAsync(rescheduleCall(first, firstAppointment, target)),
@@ -141,6 +145,11 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     const decoded = results.map((result) => JSON.parse(result) as { result_error: string | null })
     expect(decoded.filter((result) => result.result_error === null)).toHaveLength(1)
     expect(decoded.filter((result) => result.result_error === 'slot_unavailable')).toHaveLength(1)
+    const loser = contenders[decoded.findIndex((result) => result.result_error === 'slot_unavailable')]!
+    expect(psql(`select slot_id || '|' || status::text from appointments where id = '${loser.appointmentId}';`)).toBe(
+      `${loser.originalSlotId}|requested`,
+    )
+    expect(psql(`select status::text from slots where id = '${loser.originalSlotId}';`)).toBe('booked')
     expect(psql(`select count(*) from appointments where slot_id = '${target}' and status in ('requested', 'confirmed');`)).toBe('1')
     expect(psql(`select count(*) from appointment_transitions
       where appointment_id in ('${firstAppointment}', '${secondAppointment}');`)).toBe('0')
