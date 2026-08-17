@@ -20,6 +20,8 @@ const ALL_ENV_KEYS = [
   'RESEND_API_KEY',
   'RESEND_FROM',
   'EMAIL_TRANSPORT',
+  'EMAIL_OUTBOX_MAX_ATTEMPTS',
+  'EMAIL_SEND_TIMEOUT_MS',
   'CRON_SECRET',
   'SHARE_LINK_TTL_HOURS',
   'MIN_CHANGE_NOTICE_HOURS',
@@ -84,6 +86,8 @@ describe('defaults — acceptance: config reads every default with only the four
     expect(config.shareLinkTtlHours).toBe(48)
     expect(config.minChangeNoticeHours).toBe(24)
     expect(config.reminderLeadHours).toBe(24)
+    expect(config.emailOutboxMaxAttempts).toBe(5)
+    expect(config.emailSendTimeoutMs).toBe(10_000)
     expect(config.identityMaxAttempts).toBe(3)
     expect(config.identityLockoutMinutes).toBe(5)
     expect(config.signedUrlTtlSeconds).toBe(300)
@@ -162,6 +166,24 @@ describe('numeric validation — acceptance + adversarial: NaN, zero, negative, 
       /SIGNED_URL_TTL_SECONDS/,
     )
   })
+
+  test.each(['0', '-1', '1.5', 'not-a-number'])(
+    'adversarial: EMAIL_OUTBOX_MAX_ATTEMPTS=%s fails startup',
+    async (value) => {
+      await expect(loadConfig({ EMAIL_OUTBOX_MAX_ATTEMPTS: value })).rejects.toThrow(
+        /EMAIL_OUTBOX_MAX_ATTEMPTS/,
+      )
+    },
+  )
+
+  test.each(['0', '-1', '1.5', 'not-a-number'])(
+    'adversarial: EMAIL_SEND_TIMEOUT_MS=%s fails startup',
+    async (value) => {
+      await expect(loadConfig({ EMAIL_SEND_TIMEOUT_MS: value })).rejects.toThrow(
+        /EMAIL_SEND_TIMEOUT_MS/,
+      )
+    },
+  )
 })
 
 describe('reminder cadence — acceptance: refuses to start when cron cadence is not smaller than the window', () => {
@@ -214,9 +236,9 @@ describe('.env.example — acceptance + adversarial: complete, ordered, placehol
     .filter((line) => line.length > 0 && !line.startsWith('#'))
     .map((line) => line.split('=')[0])
 
-  test('lists all 22 §8 rows, in §8 order, and nothing else', () => {
+  test('lists all 24 §8 rows, in §8 order, and nothing else', () => {
     expect(envExampleKeys).toEqual(ALL_ENV_KEYS)
-    expect(envExampleKeys).toHaveLength(22)
+    expect(envExampleKeys).toHaveLength(24)
   })
 
   test('ADR-0011: IDENTITY_UNLOCK_TTL_MINUTES appears nowhere in the app/config surface this ticket owns', () => {

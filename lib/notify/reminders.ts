@@ -57,6 +57,7 @@ async function drainOutbox(client: ReturnType<typeof serviceClient>): Promise<vo
     .from('email_outbox')
     .select('id, recipient, subject, body, attempts, next_attempt_at')
     .is('sent_at', null)
+    .lt('attempts', config.emailOutboxMaxAttempts)
     .lte('next_attempt_at', new Date().toISOString())
     .order('created_at', { ascending: true })
   if (error || !data) return
