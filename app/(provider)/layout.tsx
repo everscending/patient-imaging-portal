@@ -1,6 +1,6 @@
-// Every provider page resolves the authenticated account to its provider row
-// before rendering the desk-user shell. A patient or another unrecognized
-// account receives the same 404 as a missing provider surface.
+// Every staff page resolves the authenticated account to its provider or
+// admin row before rendering the desk-user shell. A patient or another
+// unrecognized account receives the same 404 as a missing staff surface.
 import type { ReactNode } from 'react'
 import { notFound, redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
@@ -21,21 +21,29 @@ export default async function ProviderLayout({ children }: { children: ReactNode
   const { data: authentication, error: authenticationError } = await authClient().auth.getUser(token)
   if (authenticationError || !authentication.user) redirect('/login')
 
-  const { data, error } = await anonClient(token)
-    .from('providers')
-    .select('id, full_name, time_zone')
-    .eq('user_id', authentication.user.id)
-    .maybeSingle()
-  if (error || !data) notFound()
+  const client = anonClient(token)
+  const [{ data: admin, error: adminError }, { data: provider, error: providerError }] = await Promise.all([
+    client.from('staff_admins').select('id').eq('user_id', authentication.user.id).maybeSingle(),
+    client.from('providers').select('id, full_name, time_zone').eq('user_id', authentication.user.id).maybeSingle(),
+  ])
+  if (adminError || providerError || (!admin && !provider)) notFound()
 
-  const provider = data as ProviderRow
+  if (admin) {
+    return (
+      <ProviderShell identity={{ role: 'admin', actorName: 'Administrator' }}>
+        {children}
+      </ProviderShell>
+    )
+  }
+
+  const providerIdentity = provider as ProviderRow
   return (
     <ProviderShell
       identity={{
         role: 'provider',
-        actorName: provider.full_name,
-        providerId: provider.id,
-        timeZone: provider.time_zone,
+        actorName: providerIdentity.full_name,
+        providerId: providerIdentity.id,
+        timeZone: providerIdentity.time_zone,
       }}
     >
       {children}

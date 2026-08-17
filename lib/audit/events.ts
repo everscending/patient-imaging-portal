@@ -66,7 +66,7 @@ export type AuditLogReadFilters = {
   from?: string
   to?: string
   actorRef?: string
-  action?: string
+  action?: AuditAction
 }
 
 // SEC-6/SEC-7: detail is a closed schema, not a denylist. An exact key alone

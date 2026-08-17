@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ZodType } from 'zod'
+import type { AuditAction } from '../audit/events'
 import { config } from '../config'
 import { errorResponse } from './envelope'
 
@@ -122,7 +123,7 @@ const auditActions = [
   'reminder.dispatch',
   'audit.view',
   'profile.deletion_request',
-] as const
+] as const satisfies readonly AuditAction[]
 
 const auditLogQueryFields = z
   .object({

@@ -1,8 +1,6 @@
-import { cookies } from 'next/headers'
 import { guardPhiAccess } from '../../../../lib/access/guard'
+import { resolveCallerId } from '../../../../lib/access/identity'
 import { readAuditLog } from '../../../../lib/audit/events'
-import { authClient } from '../../../../lib/db/client'
-import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
 import {
   auditLogQuerySchema,
   createAuditLogCursor,
@@ -13,14 +11,6 @@ import { errorResponse } from '../../../../lib/validation/envelope'
 
 const PAGE_SIZE = 50
 
-async function callerId(): Promise<string> {
-  const cookieStore = await cookies()
-  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
-  if (!token) return 'unverified-admin'
-  const { data, error } = await authClient().auth.getUser(token)
-  return !error && data.user ? data.user.id : 'unverified-admin'
-}
-
 function accessFailure(status: 401 | 403 | 404): Response {
   if (status === 401) return errorResponse(401, 'session_required', 'Sign in to continue.')
   return errorResponse(404, 'not_found', 'Not found.')
@@ -28,7 +18,7 @@ function accessFailure(status: 401 | 403 | 404): Response {
 
 export async function GET(request: Request): Promise<Response> {
   const parsed = parseQuery(auditLogQuerySchema, request)
-  const actor = { kind: 'admin' as const, userId: await callerId() }
+  const actor = { kind: 'admin' as const, userId: (await resolveCallerId()) ?? '' }
   const access = await guardPhiAccess(actor, { kind: 'audit_log' }, 'audit.view')
   if (!access.ok) return accessFailure(access.status)
   if (!parsed.ok) return parsed.response
