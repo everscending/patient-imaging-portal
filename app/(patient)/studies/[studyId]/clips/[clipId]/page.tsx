@@ -13,7 +13,7 @@ function isFrame(value: unknown): value is Clip['frames'][number] {
   return (
     Number.isInteger(frame.index) &&
     typeof frame.available === 'boolean' &&
-    (typeof frame.url === 'string' || frame.url === null || frame.url === undefined)
+    (typeof frame.url === 'string' || frame.url === null)
   )
 }
 

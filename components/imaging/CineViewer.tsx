@@ -55,10 +55,14 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
               alt={`Cine frame ${currentFrame + 1}`}
               onLoad={() => setLoadedFrameIndex(currentFrame)}
             />
-            {imageLoading ? <p className="cine-viewer__loading" role="status">Loading frame…</p> : null}
+            {imageLoading ? (
+              <p className="cine-viewer__loading" role="status" aria-label="Loading frame…">
+                Loading frame…
+              </p>
+            ) : null}
           </>
         ) : (
-          <p role="status">Loading frame…</p>
+          <p role="status" aria-label="Loading frame…">Loading frame…</p>
         )}
       </div>
       <CineControls

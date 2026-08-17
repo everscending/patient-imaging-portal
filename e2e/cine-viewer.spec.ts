@@ -1,38 +1,62 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
-import type { Page } from '@playwright/test'
+import type { APIRequestContext, Page } from '@playwright/test'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const STUDY_ID = '99669966-9966-4966-8966-996699669966'
 const CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
 const PASSWORD = 'CorrectHorseBattery9'
+const SEEDED_PATIENT = { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' }
+const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
 
 type Manifest = {
   id: string
   frameCount: number
   defaultFps: number
   expiresAt: string
-  frames: Array<{ index: number; available: boolean; url?: string }>
+  frames: Array<{ index: number; url: string | null; available: boolean }>
 }
 
 function manifest(frames: Manifest['frames'], defaultFps = 17): Manifest {
   return { id: CLIP_ID, frameCount: frames.length, defaultFps, expiresAt: '2026-08-16T12:00:00.000Z', frames }
 }
 
-async function resetIdentity(page: Page): Promise<void> {
-  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
-  const url = (JSON.parse(raw) as { url: string }).url
-  expect((await page.request.post(`${url}/__test__/reset-identity`)).status()).toBe(200)
+async function acquireIdentityFixture(): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(IDENTITY_FIXTURE_LOCK)
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  throw new Error('identity fixture lock timed out')
 }
 
-async function signInLinkedPatient(page: Page): Promise<void> {
+async function fakeServerUrl(): Promise<string> {
+  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
+  return (JSON.parse(raw) as { url: string }).url
+}
+
+async function resetIdentity(request: APIRequestContext): Promise<void> {
+  const response = await request.post(`${await fakeServerUrl()}/__test__/reset-identity`)
+  expect(response.ok()).toBe(true)
+}
+
+async function signInLinkedPatient(request: APIRequestContext): Promise<void> {
   const email = `cine-${randomUUID()}@example.test`
-  expect((await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
-  expect((await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
-  expect((await page.request.post('/api/identity/verify', { data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' } })).status()).toBe(200)
+  expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
+  expect((await request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
+  const verification = await request.post('/api/identity/verify', {
+    data: SEEDED_PATIENT,
+    headers: { 'x-forwarded-for': '192.0.2.214' },
+  })
+  expect(verification.status(), await verification.text()).toBe(200)
 }
 
 async function openClip(page: Page, payload: Manifest): Promise<void> {
@@ -46,26 +70,46 @@ async function openClip(page: Page, payload: Manifest): Promise<void> {
 }
 
 test.describe.serial('cine viewer', () => {
-  test.beforeEach(async ({ page }) => {
-    await resetIdentity(page)
+  test.beforeAll(acquireIdentityFixture)
+  test.afterAll(async () => rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true }))
+
+  test.beforeEach(async ({ request }) => {
+    await resetIdentity(request)
+  })
+
+  test('setup regression: leasedIdentityFixture_resetAndRealVerifyRouteLinkCurrentSeed', async ({ request }) => {
+    await signInLinkedPatient(request)
+    const state = (await (await request.get(`${await fakeServerUrl()}/__test__/identity-state`)).json()) as {
+      patients: Array<{ patient_ref: string; user_id: string | null }>
+    }
+    expect(state.patients.find((patient) => patient.patient_ref === SEEDED_PATIENT.patientRef)?.user_id).toEqual(
+      expect.any(String),
+    )
   })
 
   test('mandatory adversarial: apiDrivenGaps_continuePlaybackWithCorrectDenominatorAndMarkers', async ({ page }) => {
-    await signInLinkedPatient(page)
+    await signInLinkedPatient(page.request)
     await openClip(page, manifest([
       { index: 0, available: true, url: '/missing-cine-frame.svg' },
-      { index: 1, available: false },
+      { index: 1, available: false, url: null },
     ], 1))
-    await expect(page.getByText('Loading frame…', { exact: true })).toBeVisible()
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+    await expect(page.locator('.cine-viewer__frame')).toHaveAttribute('aria-busy', 'true')
     await expect(page.locator('.cine-viewer__frame img')).toHaveCount(1)
     await expect(page.getByTestId('cine-frame-gap')).toHaveCount(0)
     await expect(page.getByText('1 of 2 frames unavailable — playback continues', { exact: true })).toBeVisible()
     await expect(page.locator('.cine-controls__gap-markers i')).toHaveCount(1)
+    await expect(page.getByTestId('cine-prev')).toBeEnabled()
+    await expect(page.getByTestId('cine-play')).toBeEnabled()
+    await expect(page.getByTestId('cine-next')).toBeEnabled()
+    await expect(page.getByTestId('cine-fps')).toBeEnabled()
+    await page.getByTestId('cine-next').click()
+    await expect(page.getByTestId('cine-frame-gap')).toHaveText('Frame 1 unavailable')
 
     await openClip(page, manifest([
-      { index: 0, available: false },
-      { index: 1, available: false },
-      { index: 2, available: false },
+      { index: 0, available: false, url: null },
+      { index: 1, available: false, url: null },
+      { index: 2, available: false, url: null },
     ], 1))
     await expect(page.getByTestId('cine-frame-gap')).toHaveText('Frame 0 unavailable')
     await expect(page.getByText('3 of 3 frames unavailable — playback continues', { exact: true })).toBeVisible()
@@ -75,7 +119,7 @@ test.describe.serial('cine viewer', () => {
   })
 
   test('mandatory adversarial: defaultFps_nonOverlayControls_noShareAndOrientationPreservesState', async ({ page }) => {
-    await signInLinkedPatient(page)
+    await signInLinkedPatient(page.request)
     await openClip(page, manifest([
       { index: 0, available: true, url: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E' },
       { index: 1, available: true, url: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E' },
@@ -97,9 +141,12 @@ test.describe.serial('cine viewer', () => {
   })
 
   test('mandatory adversarial: keyboardAccessibleTouchSizedAt390AndNoHardcodedHex', async ({ page }) => {
-    await signInLinkedPatient(page)
+    await signInLinkedPatient(page.request)
     await page.setViewportSize({ width: 390, height: 844 })
-    await openClip(page, manifest([{ index: 0, available: false }, { index: 1, available: false }]))
+    await openClip(page, manifest([
+      { index: 0, available: false, url: null },
+      { index: 1, available: false, url: null },
+    ]))
     await expect(page.locator('h1')).toHaveCount(1)
     await page.getByTestId('cine-next').focus()
     await page.keyboard.press('Enter')
