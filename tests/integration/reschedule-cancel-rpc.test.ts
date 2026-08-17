@@ -95,6 +95,13 @@ function cancelCall(f: Fixture, appointmentId: string, minimumNotice = MINIMUM_N
   ) result;`)
 }
 
+function makeActorClinician(f: Fixture, role: 'provider' | 'admin'): void {
+  psql(`update patients set user_id = null where id = '${f.patientId}';
+    ${role === 'provider'
+      ? `update providers set user_id = '${f.actorUserId}' where id = '${f.providerId}';`
+      : `insert into staff_admins (user_id) values ('${f.actorUserId}');`}`)
+}
+
 beforeAll(async () => {
   container = await ensureContainer()
   run = await startRun(container)
@@ -186,6 +193,20 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select slot_id || '|' || status::text from appointments where id = '${id}';`)).toBe(`${f.slotIds[0]}|requested`)
     expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
     expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
+  })
+
+  test.each(['provider', 'admin'] as const)('%sCancellation_insidePatientNoticeWindow_isAllowedAndAtomic', (role) => {
+    const f = fixture({ startsInHours: 1 })
+    const id = appointment(f)
+    makeActorClinician(f, role)
+
+    expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('cancelled')
+    expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('open')
+    expect(psql(`select from_status::text || '|' || to_status::text || '|' || actor_user_id
+      from appointment_transitions where appointment_id = '${id}';`)).toBe(`requested|cancelled|${f.actorUserId}`)
+    expect(psql(`select action || '|' || actor_ref || '|' || outcome
+      from audit_events where target_id = '${id}';`)).toBe(`booking.cancel|${f.actorUserId}|granted`)
   })
 
   test('reschedule_auditFailure_rollsBackAppointmentBothSlotsTransitionAndAudit', () => {
