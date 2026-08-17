@@ -41,7 +41,7 @@ async function apply(token: string, body: Record<string, unknown>): Promise<Resp
 const ownAvailability = {
   p_provider_id: E2_PROVIDER_ID,
   p_actor_user_id: E2_PROVIDER_ACCOUNT_ID,
-  p_slot_minutes: 30,
+  p_slot_minutes: 45,
   p_working_hours: [{ weekday: 1, startsLocal: '09:00', endsLocal: '15:00' }],
   p_blocks: [{ startsAt: '2026-08-18T13:00:00-05:00', endsAt: '2026-08-18T14:00:00-05:00', reason: 'Team meeting' }],
 }
@@ -61,6 +61,11 @@ describe('JOR-284 shared provider availability fixture', () => {
     const read = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, otherToken)
     expect(read.status).toBe(200)
     expect(await read.json()).toEqual([])
+
+    const hours = await request(`/rest/v1/working_hours?provider_id=eq.${E2_PROVIDER_ID}`, otherToken)
+    expect(await hours.json()).toEqual([])
+    const blocks = await request(`/rest/v1/availability_blocks?provider_id=eq.${E2_PROVIDER_ID}`, otherToken)
+    expect(await blocks.json()).toEqual([])
 
     const write = await apply(otherToken, ownAvailability)
     expect(write.status).toBe(403)
@@ -103,6 +108,11 @@ describe('JOR-284 shared provider availability fixture', () => {
         provider_id: E2_PROVIDER_ID,
         reason: 'Team meeting',
       }),
+    ])
+
+    const provider = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, token)
+    expect(await provider.json()).toEqual([
+      expect.objectContaining({ id: E2_PROVIDER_ID, slot_minutes: 45 }),
     ])
   })
 
