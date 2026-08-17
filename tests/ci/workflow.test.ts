@@ -61,10 +61,12 @@ describe('per-change coverage stays cumulative', () => {
       'npx vitest run --project unit',
       'npx vitest run --project unit tests/observability/timing.test.ts',
       'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
+      'npx vitest run --project e8',
       'npx playwright test --project=e2-wiring',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
       'npx playwright test --project=e4-wiring',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     ])
   })
 

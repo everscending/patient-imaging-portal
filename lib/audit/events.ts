@@ -100,7 +100,9 @@ async function callerAccessToken(): Promise<string | null> {
 }
 
 function serviceRoleAllowed(input: RecordAuditEventInput, fromPhiGuard: boolean): boolean {
-  return fromPhiGuard && input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied'
+  const guardDenial = fromPhiGuard && input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied'
+  const reminderJob = input.actorKind === 'system' && input.actorRef === null && input.action === 'reminder.dispatch'
+  return guardDenial || reminderJob
 }
 
 async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<WriteClient> {

@@ -14,6 +14,7 @@ const { clientMock, sendMock, auditMock, configMock, timingSafeEqualMock } = vi.
     reminderLeadHours: 24,
     reminderWindowMinutes: 30,
     reminderCronMinutes: 5,
+    emailOutboxMaxAttempts: 3,
   },
 }))
 
@@ -536,6 +537,46 @@ describe('persist-before-send idempotency and retry', () => {
 })
 
 describe('durable email outbox drain', () => {
+  test('alwaysFailingOutboxRowStopsAtConfiguredAttemptBoundAndRemainsDiagnosable', async () => {
+    const row = outboxRow('bounded-retry', -1)
+    const state = store({ outbox: [row] })
+    clientMock.mockReturnValue(clientFor(state))
+    sendMock.mockResolvedValue({ outcome: 'failed', transport: 'resend', error: 'unsafe provider text' })
+
+    for (let attempt = 1; attempt <= configMock.emailOutboxMaxAttempts; attempt += 1) {
+      await dispatchReminders()
+      expect(row.attempts).toBe(attempt)
+      vi.advanceTimersByTime(configMock.reminderCronMinutes * attempt * MINUTE_MS)
+    }
+
+    await dispatchReminders()
+
+    expect(sendMock).toHaveBeenCalledTimes(configMock.emailOutboxMaxAttempts)
+    expect(row).toMatchObject({
+      attempts: configMock.emailOutboxMaxAttempts,
+      last_error: 'email_delivery_failed',
+      sent_at: null,
+    })
+  })
+
+  test('outboxRowThatFailsThenSucceedsIsCompletedAndNeverSentAgain', async () => {
+    const row = outboxRow('eventual-success', -1)
+    const state = store({ outbox: [row] })
+    clientMock.mockReturnValue(clientFor(state))
+    sendMock
+      .mockResolvedValueOnce({ outcome: 'failed', transport: 'resend', error: 'provider unavailable' })
+      .mockResolvedValueOnce({ outcome: 'sent', transport: 'resend' })
+
+    await dispatchReminders()
+    vi.advanceTimersByTime(configMock.reminderCronMinutes * MINUTE_MS)
+    await dispatchReminders()
+    vi.advanceTimersByTime(configMock.reminderCronMinutes * 10 * MINUTE_MS)
+    await dispatchReminders()
+
+    expect(sendMock).toHaveBeenCalledTimes(2)
+    expect(row).toMatchObject({ attempts: 1, sent_at: '2026-08-17T12:05:00.000Z' })
+  })
+
   test('outboxDrainSendsOldestEligibleFirstSkipsFutureAndSentRowsAndPersistsSuccessAndBackoff', async () => {
     const oldest = outboxRow('oldest', -30)
     const newest = outboxRow('newest', -10)

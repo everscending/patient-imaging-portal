@@ -73,6 +73,7 @@ run_api() {
   run_logic
   step VITEST_TIMING npx vitest run --project unit tests/observability/timing.test.ts
   step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts
+  step VITEST_E8 npx vitest run --project e8
 }
 
 run_ui() {
@@ -83,6 +84,7 @@ run_ui() {
   step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
   step PLAYWRIGHT_E4 npx playwright test --project=e4-wiring
   step PLAYWRIGHT_E4_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts
+  step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
 }
 
 case "$TIER" in
