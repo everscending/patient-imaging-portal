@@ -91,10 +91,12 @@ test('acceptance: completedVisitCards_matchSeededData_andScheduledCancelledNever
 
 test('acceptance: zeroCompletedVisits_showsExactEmptyState', async ({ page }) => {
   await showStudies(page, { studies: [] })
-  await expect(
-    page.getByText('No images yet — images appear here once a completed visit has been processed by the clinic.', { exact: true }),
-  ).toBeVisible()
-  await expect(page.getByTestId('study-list')).toHaveCount(0)
+  const list = page.getByTestId('study-list')
+  await expect(list).toBeVisible()
+  await expect(list).toHaveText(
+    'No images yet — images appear here once a completed visit has been processed by the clinic.',
+  )
+  await expect(page.getByTestId('study-card')).toHaveCount(0)
 })
 
 test('acceptance: studyCard_keyboardActivationNavigates', async ({ page }) => {

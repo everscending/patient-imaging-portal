@@ -71,14 +71,13 @@ export default function StudiesPage() {
           Images are temporarily unavailable. Please try again.
         </p>
       ) : null}
-      {state.kind === 'ready' && state.studies.length === 0 ? (
-        <p>No images yet — images appear here once a completed visit has been processed by the clinic.</p>
-      ) : null}
-      {state.kind === 'ready' && state.studies.length > 0 ? (
+      {state.kind === 'ready' ? (
         <section aria-label="Imaging studies" className="pip-study-list" data-testid="study-list">
-          {state.studies.map((study) => (
-            <StudyCard key={study.id} study={study} />
-          ))}
+          {state.studies.length === 0 ? (
+            <p>No images yet — images appear here once a completed visit has been processed by the clinic.</p>
+          ) : (
+            state.studies.map((study) => <StudyCard key={study.id} study={study} />)
+          )}
         </section>
       ) : null}
       <style>{`
