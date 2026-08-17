@@ -15,14 +15,11 @@ type OutboxRow = {
   attempts: number
   next_attempt_at: string
 }
-type DatabaseError = { code?: string }
-
 export type ReminderRun = { due: number; sent: number; skipped: number; failed: number }
 
 const REMINDER_SUBJECT = 'Appointment reminder'
 const MINUTES_PER_HOUR = 60
 const MILLISECONDS_PER_MINUTE = 60_000
-const UNIQUE_VIOLATION = '23505'
 
 export function reminderMessage(recipient: string): EmailMessage {
   return {
@@ -120,30 +117,12 @@ export async function dispatchReminders(): Promise<ReminderRun> {
 
   const run: ReminderRun = { due: (data ?? []).length, sent: 0, skipped: 0, failed: 0 }
   for (const appointment of (data ?? []) as DueAppointment[]) {
-    // A previous failed pre-send record represents an ordinary retry. This is
-    // the only delete in the build; a sent record can never satisfy it.
-    const { error: retryClearError } = await client
-      .from('reminder_sends')
-      .delete()
-      .eq('appointment_id', appointment.id)
-      .eq('lead_hours', config.reminderLeadHours)
-      .eq('outcome', 'failed')
-    if (retryClearError) throw new Error('reminder retry unavailable')
-
-    const { data: inserted, error: insertError } = await client
-      .from('reminder_sends')
-      .insert({ appointment_id: appointment.id, lead_hours: config.reminderLeadHours, outcome: 'failed' })
-      .select('appointment_id')
-    if (insertError) {
-      // A conflicting primary key means another run owns the send; conflict is
-      // expected under overlapping cron invocations and is never surfaced.
-      if ((insertError as DatabaseError).code === UNIQUE_VIOLATION) {
-        run.skipped += 1
-        continue
-      }
-      throw new Error('reminder send claim unavailable')
-    }
-    if (!inserted?.length) {
+    const { data: claimed, error: claimError } = await client.rpc('claim_reminder_send', {
+      p_appointment_id: appointment.id,
+      p_lead_hours: config.reminderLeadHours,
+    })
+    if (claimError) throw new Error('reminder send claim unavailable')
+    if (!claimed) {
       run.skipped += 1
       continue
     }
@@ -158,6 +137,17 @@ export async function dispatchReminders(): Promise<ReminderRun> {
       if (updateError) throw new Error('reminder send update unavailable')
       run.sent += 1
     } else {
+      // Only an explicit provider rejection is safe to retry. An exception or
+      // process death leaves retryable_at null because the provider may have
+      // accepted the email before the response was lost.
+      const { error: retryError } = await client
+        .from('reminder_sends')
+        .update({ retryable_at: new Date().toISOString() })
+        .eq('appointment_id', appointment.id)
+        .eq('lead_hours', config.reminderLeadHours)
+        .eq('outcome', 'failed')
+        .is('retryable_at', null)
+      if (retryError) throw new Error('reminder retry unavailable')
       run.failed += 1
     }
   }

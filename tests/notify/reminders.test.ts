@@ -33,7 +33,13 @@ const NOW = '2026-08-17T12:00:00.000Z'
 const MINUTE_MS = 60_000
 
 type Appointment = { id: string; status: string; email: string; startsAt: string }
-type ReminderSend = { appointment_id: string; lead_hours: number; outcome: 'failed' | 'sent'; sent_at: string | null }
+type ReminderSend = {
+  appointment_id: string
+  lead_hours: number
+  outcome: 'failed' | 'sent'
+  sent_at: string | null
+  retryable_at?: string | null
+}
 type OutboxRow = {
   id: string
   recipient: string
@@ -235,7 +241,30 @@ class MemoryQuery implements PromiseLike<{ data: unknown; error: { code?: string
 }
 
 function clientFor(state: Store) {
-  return { from: vi.fn((table: string) => new MemoryQuery(state, table)) }
+  return {
+    from: vi.fn((table: string) => new MemoryQuery(state, table)),
+    rpc: vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name !== 'claim_reminder_send') return { data: null, error: { code: 'unknown_rpc' } }
+      state.operations.push('reminder.claim')
+      const key = `${input.p_appointment_id}:${input.p_lead_hours}`
+      const existing = state.reminderSends.find((row) => reminderKey(row) === key)
+      if (!existing) {
+        state.reminderSends.push({
+          appointment_id: String(input.p_appointment_id),
+          lead_hours: Number(input.p_lead_hours),
+          outcome: 'failed',
+          sent_at: null,
+          retryable_at: null,
+        })
+        return { data: true, error: null }
+      }
+      if (existing.outcome === 'failed' && existing.retryable_at) {
+        existing.retryable_at = null
+        return { data: true, error: null }
+      }
+      return { data: false, error: null }
+    }),
+  }
 }
 
 function appointment(id: string, status: string, offsetMinutes: number): Appointment {
@@ -354,7 +383,7 @@ describe('persist-before-send idempotency and retry', () => {
 
     await dispatchReminders()
 
-    expect(state.operations.indexOf('reminder.insert')).toBeLessThan(state.operations.indexOf('email.send'))
+    expect(state.operations.indexOf('reminder.claim')).toBeLessThan(state.operations.indexOf('email.send'))
     expect(state.operations.indexOf('email.send')).toBeLessThan(state.operations.indexOf('reminder.update'))
     expect(state.reminderSends).toEqual([
       expect.objectContaining({ appointment_id: 'appointment-id', outcome: 'sent', sent_at: NOW }),
@@ -375,7 +404,13 @@ describe('persist-before-send idempotency and retry', () => {
     clientMock.mockReturnValue(clientFor(state))
     sendMock.mockImplementation(async () => {
       expect(state.reminderSends).toEqual([
-        { appointment_id: 'pre-send', lead_hours: configMock.reminderLeadHours, outcome: 'failed', sent_at: null },
+        {
+          appointment_id: 'pre-send',
+          lead_hours: configMock.reminderLeadHours,
+          outcome: 'failed',
+          sent_at: null,
+          retryable_at: null,
+        },
       ])
       return { outcome: 'sent', transport: 'log' }
     })
@@ -427,19 +462,26 @@ describe('persist-before-send idempotency and retry', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  test('crashBetweenInsertAndUpdateLeavesOneFailedRowThatNextPassClearsAndRetries', async () => {
+  test('ambiguousCrashLeavesOneActiveClaimThatNextPassSkipsRatherThanDuplicating', async () => {
     const state = store({ appointments: [appointment('crash', 'confirmed', configMock.reminderLeadHours * 60)] })
     clientMock.mockReturnValue(clientFor(state))
     sendMock.mockRejectedValueOnce(new Error('simulated process crash')).mockResolvedValueOnce({ outcome: 'sent', transport: 'log' })
 
     await expect(dispatchReminders()).rejects.toThrow('simulated process crash')
     expect(state.reminderSends).toEqual([
-      { appointment_id: 'crash', lead_hours: configMock.reminderLeadHours, outcome: 'failed', sent_at: null },
+      {
+        appointment_id: 'crash',
+        lead_hours: configMock.reminderLeadHours,
+        outcome: 'failed',
+        sent_at: null,
+        retryable_at: null,
+      },
     ])
 
-    await expect(dispatchReminders()).resolves.toMatchObject({ sent: 1, failed: 0 })
+    await expect(dispatchReminders()).resolves.toMatchObject({ sent: 0, skipped: 1, failed: 0 })
     expect(state.reminderSends).toHaveLength(1)
-    expect(state.reminderSends[0]).toMatchObject({ outcome: 'sent', sent_at: NOW })
+    expect(state.reminderSends[0]).toMatchObject({ outcome: 'failed', sent_at: null, retryable_at: null })
+    expect(sendMock).toHaveBeenCalledTimes(1)
   })
 
   test('failedSendPersistsOneFailedRowWritesDeniedAuditAndNextPassRetriesWithoutDuplicateRow', async () => {
@@ -452,7 +494,13 @@ describe('persist-before-send idempotency and retry', () => {
     const failed = await dispatchReminders()
     expect(failed).toMatchObject({ sent: 0, failed: 1 })
     expect(state.reminderSends).toEqual([
-      { appointment_id: 'retry', lead_hours: configMock.reminderLeadHours, outcome: 'failed', sent_at: null },
+      {
+        appointment_id: 'retry',
+        lead_hours: configMock.reminderLeadHours,
+        outcome: 'failed',
+        sent_at: null,
+        retryable_at: NOW,
+      },
     ])
     expect(auditMock).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: 'denied', targetId: 'retry' }))
 
@@ -549,6 +597,8 @@ describe('safe reminder message and module boundaries', () => {
     expect(sql).not.toMatch(/coalesce\([\s\S]*app\.reminder_cron_minutes/)
     expect(sql).toContain("'/api/jobs/reminders'")
     expect(sql).toContain("'x-cron-secret'")
+    expect(sql).toMatch(/insert into reminder_sends[\s\S]+on conflict do nothing/i)
+    expect(sql).toMatch(/retryable_at is not null[\s\S]+return found/i)
   })
 })
 
