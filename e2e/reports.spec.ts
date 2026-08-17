@@ -1,14 +1,84 @@
 // JOR-218 — reports UI acceptance and adversarial checks.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { expect, test } from '@playwright/test'
+import { expect, test as base } from '@playwright/test'
+import type { APIRequestContext } from '@playwright/test'
 
 import { E2_SEEDED_REPORT_ID } from './fixtures/fake-auth-server'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
+const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
+
+type IdentityFixtureLease = {
+  release: () => Promise<void>
+}
+
+async function fakeServerUrl(): Promise<string> {
+  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
+  return (JSON.parse(raw) as { url: string }).url
+}
+
+async function acquireIdentityFixture(): Promise<IdentityFixtureLease> {
+  const owner = randomUUID()
+  const ownerFile = path.join(IDENTITY_FIXTURE_LOCK, 'owner')
+  const deadline = Date.now() + 30_000
+
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(IDENTITY_FIXTURE_LOCK)
+      try {
+        await writeFile(ownerFile, owner, { flag: 'wx' })
+      } catch (error) {
+        await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
+        throw error
+      }
+
+      return {
+        release: async () => {
+          let recordedOwner: string
+          try {
+            recordedOwner = await readFile(ownerFile, 'utf8')
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+            throw error
+          }
+          if (recordedOwner !== owner) return
+          await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
+        },
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+
+  throw new Error('identity fixture lock timed out')
+}
+
+async function resetIdentity(request: APIRequestContext): Promise<void> {
+  const response = await request.post(`${await fakeServerUrl()}/__test__/reset-identity`)
+  expect(response.ok()).toBe(true)
+}
+
+const test = base.extend<{ identityFixtureLease: void }>({
+  identityFixtureLease: [
+    async ({ request }, use) => {
+      // Acquire before entering the try/finally: a waiter that times out never
+      // receives a release capability and cannot remove the current owner's lock.
+      const lease = await acquireIdentityFixture()
+      try {
+        await resetIdentity(request)
+        await use()
+      } finally {
+        await lease.release()
+      }
+    },
+    { auto: true },
+  ],
+})
 
 async function registerAndLink(page: import('@playwright/test').Page): Promise<void> {
   const email = `jor-218-${randomUUID()}@example.com`
