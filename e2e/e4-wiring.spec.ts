@@ -56,17 +56,18 @@ test.describe('JOR-233 E4 signed-report wiring', () => {
   test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
   test.beforeEach(async ({ request }) => resetIdentity(request))
 
-  test('acceptance: verified patient sees their own signed reports and no others', async function verifiedPatientSeesOnlyOwnSignedReports({ page }) {
+  test('adversarial: foreign report listing is excluded', async function foreignReportListingIsExcluded({ page }) {
     await signInVerifiedSeededPatient(page)
     await page.goto('/reports')
 
     const signedReports = page.getByRole('list', { name: 'Signed reports' })
     await expect(signedReports).toContainText('Seeded abdominal ultrasound')
+    await expect(signedReports.getByRole('listitem')).toHaveCount(1)
     await expect(signedReports).not.toContainText('Other patient study')
     await expect(signedReports.locator(`a[href="/reports/${E2_FOREIGN_REPORT_ID}"]`)).toHaveCount(0)
   })
 
-  test('acceptance: preliminary report is omitted and its direct URL is not found', async function preliminaryReportUrlAnswersNotFound({ page }) {
+  test('adversarial: preliminary direct URL answers not found', async function preliminaryDirectUrlAnswersNotFound({ page }) {
     await signInVerifiedSeededPatient(page)
     await page.goto('/reports')
 
@@ -75,24 +76,28 @@ test.describe('JOR-233 E4 signed-report wiring', () => {
     await expect(signedReports.locator(`a[href="/reports/${E4_PRELIMINARY_REPORT_ID}"]`)).toHaveCount(0)
 
     const response = await page.goto(`/reports/${E4_PRELIMINARY_REPORT_ID}`)
-    expect(response?.status()).not.toBe(403)
+    expect(response?.status()).toBe(404)
     await expect(page.getByText('404', { exact: true })).toBeVisible()
     await expect(page.getByTestId('report-view')).toHaveCount(0)
   })
 
-  test('acceptance: signed report renders findings, impression, signing provider, and signing time', async function reportScreenIncludesFindingsAndImpression({ page }) {
+  test('adversarial: report-findings and report-impression are present', async function reportFindingsAndImpressionArePresent({ page }) {
     await signInVerifiedSeededPatient(page)
     await page.goto(`/reports/${E2_SEEDED_REPORT_ID}`)
 
-    await expect(page.getByTestId('report-findings')).toContainText('No acute abnormality.')
-    await expect(page.getByTestId('report-impression')).toContainText('Normal seeded study.')
+    const findings = page.getByTestId('report-findings')
+    await expect(findings.getByRole('heading', { name: 'Findings', exact: true })).toBeVisible()
+    await expect(findings.locator('p')).toHaveText('No acute abnormality.')
+    const impression = page.getByTestId('report-impression')
+    await expect(impression.getByRole('heading', { name: 'Impression', exact: true })).toBeVisible()
+    await expect(impression.locator('p')).toHaveText('Normal seeded study.')
     await expect(page.getByText('Signing provider', { exact: true })).toBeVisible()
     await expect(page.getByText('Dr. Avery Chen', { exact: true })).toBeVisible()
     await expect(page.getByText('Signed', { exact: true })).toBeVisible()
-    await expect(page.getByText(/Aug 12, 2026/)).toBeVisible()
+    await expect(page.getByText(/Aug 12, 2026, 11:00 AM/)).toBeVisible()
   })
 
-  test('acceptance: report reads cleanly at phone width', async function reportScreenAt390pxHasNoHorizontalPageBodyScroll({ page }) {
+  test('adversarial: mobile report has no horizontal page-body overflow', async function mobileReportHasNoHorizontalPageBodyOverflow({ page }) {
     await signInVerifiedSeededPatient(page)
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(`/reports/${E2_SEEDED_REPORT_ID}`)
