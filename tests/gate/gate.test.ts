@@ -65,10 +65,13 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
-    expect(ui.at(-2)).toBe('npx playwright test --project=e3-wiring')
-    expect(ui.at(-1)).toBe(
+    expect(ui.slice(-5)).toEqual([
+      'npx playwright test --project=e2-wiring',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
+      'npx playwright test --project=e3-wiring',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
-    )
+    ])
   })
 })
 
@@ -141,6 +144,7 @@ describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the 
     expect(api).toContain(
       'npx vitest run --project unit tests/observability/timing.test.ts',
     )
+    expect(api).toContain('npx vitest run --project e8')
   })
 })
 
@@ -159,6 +163,9 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
+    )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     )
     expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
   })

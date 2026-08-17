@@ -73,14 +73,18 @@ run_api() {
   run_logic
   step VITEST_TIMING npx vitest run --project unit tests/observability/timing.test.ts
   step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts
+  step VITEST_E8 npx vitest run --project e8
 }
 
 run_ui() {
   run_api
-  # e3-wiring depends on product, so this invocation runs the parallel product
-  # suite first and the shared-state E3 proof after it.
-  step PLAYWRIGHT npx playwright test --project=e3-wiring
-  step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts
+  # E2 and E3 each depend on product, so their shared-state proofs run after
+  # the parallel product suite and write independently validated reports.
+  step PLAYWRIGHT_E2 npx playwright test --project=e2-wiring
+  step PLAYWRIGHT_E2_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
+  step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
+  step PLAYWRIGHT_E3 npx playwright test --project=e3-wiring
+  step PLAYWRIGHT_E3_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts
 }
 
 case "$TIER" in
