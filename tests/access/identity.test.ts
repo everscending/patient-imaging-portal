@@ -271,7 +271,7 @@ vi.mock('../../lib/config', () => ({
   },
 }))
 
-import { computeSourceRef, getIdentityStatus, resolveCallerId, verifyIdentity } from '../../lib/access/identity'
+import { computeSourceRef, getIdentityStatus, resolveAuthenticatedSession, resolveCallerId, verifyIdentity } from '../../lib/access/identity'
 import { GET as statusRoute } from '../../app/api/identity/status/route'
 import { POST as verifyRoute } from '../../app/api/identity/verify/route'
 
@@ -736,6 +736,13 @@ describe('AC: verification reads/writes patients and identity_attempts through t
 })
 
 describe('resolveCallerId', () => {
+  test('resolvesTheAuthenticatedSessionOnceWithItsTokenAndCallerId', async function resolvesTheAuthenticatedSessionOnceWithItsTokenAndCallerId() {
+    setCallerHasSession(true)
+    setCallerUserId('caller-42')
+    const session = await resolveAuthenticatedSession()
+    expect(session).toEqual({ accessToken: FAKE_ACCESS_TOKEN, userId: 'caller-42' })
+  })
+
   test('resolvesTheAuthenticatedCallerId', async function resolvesTheAuthenticatedCallerId() {
     setCallerHasSession(true)
     setCallerUserId('caller-42')
