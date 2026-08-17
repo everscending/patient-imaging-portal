@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "ticket": "JOR-207",
+  "sourceHead": "1f6363c1a6f5462573ae4fa7cd6d430ae1b7c68d",
+  "measuredWindow": {
+    "startedAt": "2026-08-17T10:49:29.612Z",
+    "endedAt": "2026-08-17T10:49:30.549Z"
+  },
+  "requests": 10,
+  "uniqueDue": 10,
+  "responseTotals": {
+    "due": 100,
+    "sent": 10,
+    "skipped": 90,
+    "failed": 0
+  },
+  "durableRowCount": 10,
+  "dispatchCount": 10,
+  "duplicateCount": 0,
+  "deliveryRate": 1,
+  "phiScan": {
+    "passed": true,
+    "termCount": 44
+  }
+}
