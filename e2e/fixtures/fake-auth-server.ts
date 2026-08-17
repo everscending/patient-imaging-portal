@@ -23,6 +23,11 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+)
+
 type FakeUser = {
   id: string
   email: string
@@ -128,7 +133,11 @@ export const E2_PROVIDER_ID = '66336633-6633-4633-8633-663366336633'
 export const E2_OTHER_PROVIDER_ID = '66446644-6644-4644-8644-664466446644'
 export const E2_PROVIDER_EMAIL = 'avery.chen@example.test'
 export const E2_OTHER_PROVIDER_EMAIL = 'riley.patel@example.test'
+export const E2_NON_PROVIDER_EMAIL = 'taylor.morgan@example.test'
 export const E2_PROVIDER_PASSWORD = 'ProviderFixturePassword9'
+export const E2_PROVIDER_ACCOUNT_ID = '11331133-1133-4133-8133-113311331133'
+export const E2_OTHER_PROVIDER_ACCOUNT_ID = '11441144-1144-4144-8144-114411441144'
+export const E2_NON_PROVIDER_ACCOUNT_ID = '11551155-1155-4155-8155-115511551155'
 export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
 export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
@@ -136,19 +145,17 @@ export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
 
-const PROVIDER_ACCOUNT_ID = '11331133-1133-4133-8133-113311331133'
-const OTHER_PROVIDER_ACCOUNT_ID = '11441144-1144-4144-8144-114411441144'
 const PROVIDERS: FakeProvider[] = [
   {
     id: E2_PROVIDER_ID,
-    user_id: PROVIDER_ACCOUNT_ID,
+    user_id: E2_PROVIDER_ACCOUNT_ID,
     full_name: 'Dr. Avery Chen',
     time_zone: 'America/Chicago',
     slot_minutes: 30,
   },
   {
     id: E2_OTHER_PROVIDER_ID,
-    user_id: OTHER_PROVIDER_ACCOUNT_ID,
+    user_id: E2_OTHER_PROVIDER_ACCOUNT_ID,
     full_name: 'Dr. Riley Patel',
     time_zone: 'America/New_York',
     slot_minutes: 20,
@@ -181,13 +188,23 @@ const STUDIES: FakeStudy[] = [
 ]
 const IMAGES = [
   {
-    id: 'dd00dd00-dd00-4d00-8d00-dd00dd00dd00',
+    id: '10000000-0000-4000-8000-000000000001',
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     width: 1024,
     height: 768,
-    ordinal: 0,
-    storage_key: 'e2/seeded-image.png',
+    ordinal: 1,
+    storage_key: 'full-1.png',
+    thumb_key: 'thumb-1.png',
+  },
+  {
+    id: '10000000-0000-4000-8000-000000000002',
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E2_SEEDED_STUDY_ID,
+    width: 800,
+    height: 600,
+    ordinal: 2,
+    storage_key: 'full-2.png',
     thumb_key: null,
   },
 ]
@@ -289,7 +306,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     [
       E2_PROVIDER_EMAIL,
       {
-        id: PROVIDER_ACCOUNT_ID,
+        id: E2_PROVIDER_ACCOUNT_ID,
         email: E2_PROVIDER_EMAIL,
         password: E2_PROVIDER_PASSWORD,
         userMetadata: {},
@@ -299,8 +316,21 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     [
       E2_OTHER_PROVIDER_EMAIL,
       {
-        id: OTHER_PROVIDER_ACCOUNT_ID,
+        id: E2_OTHER_PROVIDER_ACCOUNT_ID,
         email: E2_OTHER_PROVIDER_EMAIL,
+        password: E2_PROVIDER_PASSWORD,
+        userMetadata: {},
+        appMetadata: { provider: 'email', providers: ['email'] },
+      },
+    ],
+    // Intentionally authenticated but absent from PROVIDERS. Availability
+    // isolation regressions use this account to prove that a valid session is
+    // not sufficient authority to claim provider-owned data.
+    [
+      E2_NON_PROVIDER_EMAIL,
+      {
+        id: E2_NON_PROVIDER_ACCOUNT_ID,
+        email: E2_NON_PROVIDER_EMAIL,
         password: E2_PROVIDER_PASSWORD,
         userMetadata: {},
         appMetadata: { provider: 'email', providers: ['email'] },
@@ -554,25 +584,43 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       sendJson(res, 405, { message: 'method not allowed' })
       return
     }
+    // Availability is provider-owned data.  Model the RLS boundary here,
+    // rather than relying on the route's prior authorization: the real route
+    // performs three separate PostgREST reads and the fake must not let a
+    // future caller recover another provider's rows by issuing one directly.
+    const caller = authenticatedUser(req)
+    const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
+
     if (url.pathname === '/rest/v1/providers') {
-      sendPostgrestRows(req, res, applyEqualityFilters(providers, url))
+      sendPostgrestRows(
+        req,
+        res,
+        callerProvider ? applyEqualityFilters([callerProvider], url) : [],
+      )
       return
     }
 
     if (url.pathname === '/rest/v1/staff_admins') {
-      const user = authenticatedUser(req)
-      const rows = user && staffAdminUserIds.has(user.id) ? [{ id: `admin-${user.id}`, user_id: user.id }] : []
+      const rows = caller && staffAdminUserIds.has(caller.id) ? [{ id: `admin-${caller.id}`, user_id: caller.id }] : []
       sendPostgrestRows(req, res, applyEqualityFilters(rows, url))
       return
     }
 
     if (url.pathname === '/rest/v1/working_hours') {
-      sendPostgrestRows(req, res, applyEqualityFilters(workingHours, url))
+      sendPostgrestRows(
+        req,
+        res,
+        callerProvider ? applyEqualityFilters(workingHours.filter((row) => row.provider_id === callerProvider.id), url) : [],
+      )
       return
     }
 
     if (url.pathname === '/rest/v1/availability_blocks') {
-      sendPostgrestRows(req, res, applyEqualityFilters(availabilityBlocks, url))
+      sendPostgrestRows(
+        req,
+        res,
+        callerProvider ? applyEqualityFilters(availabilityBlocks.filter((row) => row.provider_id === callerProvider.id), url) : [],
+      )
       return
     }
 
@@ -733,6 +781,19 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     const body = await readJsonBody(req)
     const providerId = String(body.p_provider_id)
+    const caller = authenticatedUser(req)
+    const callerProvider = caller ? providers.find((candidate) => candidate.user_id === caller.id) : undefined
+    // The production RPC receives both IDs, but neither is an authority on
+    // its own.  Bind both to the authenticated provider before exposing an
+    // existence check or changing any data.
+    if (!caller) {
+      sendJson(res, 401, { message: 'session required' })
+      return
+    }
+    if (!callerProvider || callerProvider.id !== providerId || body.p_actor_user_id !== caller.id) {
+      sendJson(res, 403, { message: 'provider availability is not accessible' })
+      return
+    }
     const provider = providers.find((candidate) => candidate.id === providerId)
     if (!provider) {
       sendJson(res, 404, { message: 'provider not found' })
@@ -749,17 +810,19 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       starts_local: withSeconds(window.startsLocal),
       ends_local: withSeconds(window.endsLocal),
     }))
-    const nextBlocks = ((body.p_blocks ?? []) as Array<Record<string, unknown>>).map((block) => ({
-      id: randomUUID(),
+    const nextBlocks = ((body.p_blocks ?? []) as Array<Record<string, unknown>>).map((block, index) => ({
+      // A retry of the same write produces the same fixture rows, which keeps
+      // successor E2 checks deterministic without pretending these are DB IDs.
+      id: `availability-block-${providerId}-${index}`,
       provider_id: providerId,
       starts_at: String(block.startsAt),
       ends_at: String(block.endsAt),
       reason: block.reason === null || block.reason === undefined ? null : String(block.reason),
     }))
     const nextSlotRanges = Array.isArray(body.p_slots) ? body.p_slots.map(String) : []
-    const previousSlotSet = new Set(generatedSlotRangesByProvider.get(providerId) ?? [])
-    const nextSlotSet = new Set(nextSlotRanges)
-    const removedOpenSlots = [...previousSlotSet].filter((range) => !nextSlotSet.has(range)).length
+    // The production regeneration RPC removes the previous free grid in the
+    // horizon before inserting the replacement, even when a range reappears.
+    const removedOpenSlots = (generatedSlotRangesByProvider.get(providerId) ?? []).length
 
     provider.slot_minutes = Number(body.p_slot_minutes)
     workingHours = [...workingHours.filter((row) => row.provider_id !== providerId), ...nextHours]
@@ -893,6 +956,22 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {
       answerAsDependency(req, res, healthState.storage)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/storage/v1/object/sign/phi') {
+      void readJsonBody(req).then((body) => {
+        const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : []
+        sendJson(res, 200, paths.map((path) => ({
+          error: null,
+          path,
+          signedURL: `/object/sign/phi/${encodeURIComponent(path)}?token=e2-fixture`,
+        })))
+      })
+      return
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/sign/phi/')) {
+      res.writeHead(200, { 'Content-Type': 'image/png' })
+      res.end(ONE_PIXEL_PNG)
       return
     }
     sendJson(res, 404, { error: 'not_found', message: 'no fake handler for this path' })
