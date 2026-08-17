@@ -48,4 +48,16 @@ describe('shared identity fixture lock ownership', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  test.each(['share-create.spec.ts', 'cine-viewer.spec.ts', 'reports.spec.ts'])(
+    '%s leases the canonical identity fixture for its serial live checks',
+    async (suite) => {
+      const source = await readFile(path.join(process.cwd(), 'e2e', suite), 'utf8')
+
+      expect(source).toContain('acquireIdentityFixtureLock()')
+      expect(source).toContain('releaseIdentityFixtureLock(identityFixtureLockToken)')
+      expect(source).toContain('IDENTITY_FIXTURE_HOOK_TIMEOUT_MS')
+      expect(source).not.toContain("path.join(REPO_ROOT, '.local', 'identity-fixture.lock')")
+    },
+  )
 })
