@@ -81,6 +81,8 @@ run_ui() {
   # suite first and the shared-state E2 proof after it.
   step PLAYWRIGHT npx playwright test --project=e2-wiring
   step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
+  step PLAYWRIGHT_E4 npx playwright test --project=e4-wiring
+  step PLAYWRIGHT_E4_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts
 }
 
 case "$TIER" in

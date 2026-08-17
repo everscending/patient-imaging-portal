@@ -9,7 +9,7 @@ export default defineConfig({
   projects: [
     {
       name: 'product',
-      testIgnore: /e[012]-wiring\.spec\.ts/,
+      testIgnore: /e[0124]-wiring\.spec\.ts/,
     },
     {
       // The E2 fixture exposes mutable identity and audit state. Running it
@@ -18,6 +18,13 @@ export default defineConfig({
       name: 'e2-wiring',
       testMatch: /e2-wiring\.spec\.ts/,
       dependencies: ['product'],
+    },
+    {
+      // E4's serial suite and fixture lock keep its real patient-session
+      // evidence isolated without making this focused confirmation rerun the
+      // unrelated product suite.
+      name: 'e4-wiring',
+      testMatch: /e4-wiring\.spec\.ts/,
     },
     {
       name: 'certification',
