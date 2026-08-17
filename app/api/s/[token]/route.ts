@@ -1,18 +1,16 @@
-import { z } from 'zod'
 
 import type { Actor } from '../../../../lib/access/guard'
 import { resolveShareToken, sharedPayload } from '../../../../lib/share/links'
-import { parseParams } from '../../../../lib/validation'
+import { parseParams, shareTokenParamsSchema } from '../../../../lib/validation'
 import { errorResponse } from '../../../../lib/validation/envelope'
 
-const ParamsSchema = z.object({ token: z.string().min(1).max(512) })
 const unavailable = (): Response => errorResponse(410, 'share_unavailable', 'This link is no longer available.')
 
 void (null as unknown as Actor)
 
 export async function GET(_request: Request, context: { params: Promise<{ token: string }> }): Promise<Response> {
-  const parsed = parseParams(ParamsSchema, await context.params)
-  if (!parsed.ok) return unavailable()
+  const parsed = parseParams(shareTokenParamsSchema, await context.params)
+  if (!parsed.ok) return parsed.response
   try {
     const resolved = await resolveShareToken(parsed.value.token)
     if (!resolved.ok) return unavailable()

@@ -105,12 +105,13 @@ describe('PATCH /api/providers/:providerId/availability', () => {
     expect(applyMock).not.toHaveBeenCalled()
   })
 
-  test('a no-session request is 401 and still traverses the PHI guard', async () => {
+  test('a no-session request is 401 before actor resolution or the PHI guard', async () => {
     callerMock.mockResolvedValue(null)
     guardMock.mockResolvedValue({ ok: false, status: 401 })
     const response = await route.PATCH(patchRequest(validBody), context)
     expect(response.status).toBe(401)
-    expect(guardMock).toHaveBeenCalledOnce()
+    expect(actorMock).not.toHaveBeenCalled()
+    expect(guardMock).not.toHaveBeenCalled()
     expect(applyMock).not.toHaveBeenCalled()
   })
 
@@ -119,6 +120,8 @@ describe('PATCH /api/providers/:providerId/availability', () => {
     guardMock.mockResolvedValue({ ok: false, status: 401 })
     const response = await route.PATCH(patchRequest({ out_of_hours: true }), context)
     expect(response.status).toBe(401)
+    expect(actorMock).not.toHaveBeenCalled()
+    expect(guardMock).not.toHaveBeenCalled()
     expect(applyMock).not.toHaveBeenCalled()
   })
 
