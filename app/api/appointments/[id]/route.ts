@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { guardPhiAccess, resolveScheduleActor } from '../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../lib/access/identity'
 import { cancel, reschedule, transition } from '../../../../lib/scheduling/booking'
+import { clinicianTransitionStatuses } from '../../../../lib/scheduling/lifecycle'
 import { parseBody, parseParams, uuidSchema } from '../../../../lib/validation'
 import { errorResponse } from '../../../../lib/validation/envelope'
 
@@ -9,7 +10,7 @@ const ParamsSchema = z.object({ id: uuidSchema }).strict()
 const PatchSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reschedule'), slotId: uuidSchema }).strict(),
   z.object({ action: z.literal('cancel') }).strict(),
-  z.object({ action: z.literal('transition'), status: z.enum(['confirmed', 'completed', 'no_show']) }).strict(),
+  z.object({ action: z.literal('transition'), status: z.enum(clinicianTransitionStatuses) }).strict(),
 ])
 type RouteContext = { params: Promise<{ id: string }> }
 

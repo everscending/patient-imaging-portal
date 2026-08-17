@@ -7,7 +7,7 @@ import { config } from '../config'
 import { anonClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 import { toRfc3339 } from '../time/zones'
-import { allowedTransitions, canChange, type AppointmentStatus, type SchedulingRole } from './lifecycle'
+import { allowedTransitions, canChange, type AppointmentStatus, type ClinicianTransitionStatus, type SchedulingRole } from './lifecycle'
 
 type Transition = 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -172,7 +172,7 @@ export async function listAppointments(actorUserId: string): Promise<Appointment
 /** Persists a lifecycle edge after consulting lifecycle.ts's sole matrix. */
 export async function transition(input: {
   appointmentId: string
-  status: Extract<AppointmentStatus, 'confirmed' | 'completed' | 'no_show'>
+  status: ClinicianTransitionStatus
   actorUserId: string
 }): Promise<TransitionResult> {
   const client = await callerClient()
