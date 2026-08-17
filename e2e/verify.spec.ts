@@ -13,6 +13,7 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 const PASSWORD = 'CorrectHorseBattery9'
 const PINNED_ERROR = 'We could not match those details. Please check them and try again.'
 const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
+let ownsIdentityFixture = false
 
 async function fakeServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -24,6 +25,7 @@ async function acquireIdentityFixture(): Promise<void> {
   while (Date.now() < deadline) {
     try {
       await mkdir(IDENTITY_FIXTURE_LOCK)
+      ownsIdentityFixture = true
       return
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -31,6 +33,12 @@ async function acquireIdentityFixture(): Promise<void> {
     }
   }
   throw new Error('identity fixture lock timed out')
+}
+
+async function releaseIdentityFixture(): Promise<void> {
+  if (!ownsIdentityFixture) return
+  ownsIdentityFixture = false
+  await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
 }
 
 async function resetIdentity(request: APIRequestContext): Promise<void> {
@@ -58,11 +66,11 @@ async function identityState(request: APIRequestContext): Promise<IdentityState>
 test.describe('JOR-263 /verify and /profile', () => {
   test.describe.configure({ mode: 'serial' })
 
-  test.beforeAll(acquireIdentityFixture)
-  test.afterAll(async () => rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true }))
   test.beforeEach(async ({ request }) => {
+    await acquireIdentityFixture()
     await resetIdentity(request)
   })
+  test.afterEach(releaseIdentityFixture)
 
   test('live check: wrong reference, wrong date, and third failure render one identical alert then disable', async ({
     page,
