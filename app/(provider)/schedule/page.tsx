@@ -22,6 +22,16 @@ type Schedule = {
   }>
 }
 
+type AppointmentPatch = {
+  id: string
+  startsAt: string
+  endsAt: string
+  status: string
+  serviceName: string
+  outOfHours: boolean
+  allowedTransitions: Transition[]
+}
+
 function todayIn(timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
@@ -40,7 +50,6 @@ export default function ProviderSchedulePage() {
   const [date, setDate] = useState(() => todayIn(shellTimeZone))
   const [schedule, setSchedule] = useState<Schedule | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [reload, setReload] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -54,7 +63,7 @@ export default function ProviderSchedulePage() {
       })
       .catch((reason: unknown) => !cancelled && setError(reason instanceof Error ? reason.message : 'Schedule could not be loaded.'))
     return () => { cancelled = true }
-  }, [date, reload])
+  }, [date])
 
   async function change(appointmentId: string, status: Transition): Promise<void> {
     setError(null)
@@ -63,8 +72,24 @@ export default function ProviderSchedulePage() {
       const response = await fetch(`/api/appointments/${appointmentId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      if (!response.ok) throw new Error((await response.json() as { message?: string }).message ?? 'Appointment could not be updated.')
-      setReload((current) => current + 1)
+      const payload = await response.json() as AppointmentPatch | { message?: string }
+      if (!response.ok) throw new Error(('message' in payload ? payload.message : undefined) ?? 'Appointment could not be updated.')
+      const appointment = payload as AppointmentPatch
+      setSchedule((current) => current && {
+        ...current,
+        slots: current.slots.map((slot) => slot.appointment?.id !== appointmentId ? slot : {
+          ...slot,
+          startsAt: appointment.startsAt,
+          endsAt: appointment.endsAt,
+          appointment: {
+            ...slot.appointment,
+            status: appointment.status,
+            serviceName: appointment.serviceName,
+            outOfHours: appointment.outOfHours,
+            allowedTransitions: appointment.allowedTransitions,
+          },
+        }),
+      })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Appointment could not be updated.')
     }

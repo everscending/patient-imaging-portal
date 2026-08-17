@@ -981,18 +981,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     const nextStatus = rpc === 'cancel' ? 'cancelled' : String(body.p_status)
-    const legal = (appointment.status === 'requested' && (nextStatus === 'confirmed' || nextStatus === 'cancelled')) ||
-      (appointment.status === 'confirmed' && (nextStatus === 'cancelled' || nextStatus === 'completed' || nextStatus === 'no_show'))
-    if (!legal) {
-      sendJson(res, 200, [{ result_error: rpc === 'cancel' ? 'not_reschedulable' : 'invalid_transition' }])
-      return
-    }
-    appointment.status = nextStatus as FakeScheduleAppointment['status']
     const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
     if (!slot) {
       sendJson(res, 200, [{ result_error: 'invalid_transition' }])
       return
     }
+    const legal = (appointment.status === 'requested' && (nextStatus === 'confirmed' || nextStatus === 'cancelled')) ||
+      (appointment.status === 'confirmed' && (nextStatus === 'cancelled' || ((nextStatus === 'completed' || nextStatus === 'no_show') && new Date(slot.starts_at) < new Date())))
+    if (!legal) {
+      sendJson(res, 200, [{ result_error: rpc === 'cancel' ? 'not_reschedulable' : 'invalid_transition' }])
+      return
+    }
+    appointment.status = nextStatus as FakeScheduleAppointment['status']
     if (nextStatus === 'cancelled') slot.status = 'open'
     sendJson(res, 200, [{
       result_error: null,
@@ -1027,10 +1027,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       { id: '26000000-0000-4000-8000-000000000001', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T14:00:00.000Z', ends_at: '2026-08-17T14:30:00.000Z', status: 'booked' },
       { id: '26000000-0000-4000-8000-000000000002', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T15:00:00.000Z', ends_at: '2026-08-17T15:30:00.000Z', status: 'open' },
       { id: '26000000-0000-4000-8000-000000000003', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T16:00:00.000Z', ends_at: '2026-08-17T16:30:00.000Z', status: 'booked' },
+      { id: '26000000-0000-4000-8000-000000000004', provider_id: E2_PROVIDER_ID, starts_at: '2099-08-17T16:00:00.000Z', ends_at: '2099-08-17T16:30:00.000Z', status: 'booked' },
     ]
     scheduleAppointments = [
       { id: '26000000-0000-4000-8000-000000000101', slot_id: scheduleSlots[0]!.id, provider_id: E2_PROVIDER_ID, patient_id: SEEDED_PATIENT.id, service_name: 'MRI', status: 'requested', out_of_hours: false },
       { id: '26000000-0000-4000-8000-000000000102', slot_id: scheduleSlots[2]!.id, provider_id: E2_PROVIDER_ID, patient_id: OTHER_PATIENT.id, service_name: 'Ultrasound', status: 'cancelled', out_of_hours: true },
+      { id: '26000000-0000-4000-8000-000000000103', slot_id: scheduleSlots[3]!.id, provider_id: E2_PROVIDER_ID, patient_id: SEEDED_PATIENT.id, service_name: 'MRI', status: 'confirmed', out_of_hours: false },
     ]
     sendJson(res, 200, { providerId: E2_PROVIDER_ID })
   }

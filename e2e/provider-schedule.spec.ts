@@ -16,8 +16,8 @@ import { acquireIdentityFixtureLock, IDENTITY_FIXTURE_HOOK_TIMEOUT_MS, releaseId
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const DAY = '2026-08-17'
-const REQUESTED_APPOINTMENT = '26000000-0000-4000-8000-000000000101'
 const CANCELLED_APPOINTMENT = '26000000-0000-4000-8000-000000000102'
+const FUTURE_CONFIRMED_APPOINTMENT = '26000000-0000-4000-8000-000000000103'
 let identityFixtureLockToken: string | undefined
 
 async function fakeServerUrl(): Promise<string> {
@@ -57,6 +57,7 @@ test.describe.serial('JOR-260 provider schedule', () => {
     await expect(page.getByText('PT-4471', { exact: false })).toBeVisible()
     await expect(page.getByText('Open', { exact: true })).toBeVisible()
     await expect(page.getByText('Outside hours — this appointment is unaffected.')).toBeVisible()
+    await expect(page.getByTestId('provider-schedule-row').filter({ hasText: 'Ultrasound' }).getByTestId('provider-transition-action')).toHaveCount(0)
     await page.getByTestId('provider-transition-action').filter({ hasText: 'Confirm' }).click()
     await expect(page.getByText('PT-4471 · MRI · confirmed')).toBeVisible()
     const text = await page.getByTestId('provider-schedule').innerText()
@@ -77,7 +78,7 @@ test.describe.serial('JOR-260 provider schedule', () => {
   test('malformedDateAndForbiddenForcedLifecyclePaths', async ({ page }) => {
     await signIn(page.request)
     expect((await page.request.get('/api/provider/schedule?date=2026-02-31')).status()).toBe(422)
-    const earlyNoShow = await page.request.patch(`/api/appointments/${REQUESTED_APPOINTMENT}`, {
+    const earlyNoShow = await page.request.patch(`/api/appointments/${FUTURE_CONFIRMED_APPOINTMENT}`, {
       data: { action: 'transition', status: 'no_show' },
     })
     expect(earlyNoShow.status()).toBe(422)
@@ -85,6 +86,30 @@ test.describe.serial('JOR-260 provider schedule', () => {
       data: { action: 'transition', status: 'completed' },
     })
     expect(cancelledCompleted.status()).toBe(422)
+  })
+
+  test('futureConfirmedAndEmptyAllowedTransitionsRenderNoActions', async ({ page }) => {
+    await page.route('**/api/provider/schedule?date=*', async (route) => route.fulfill({ json: {
+      timeZone: 'America/Chicago',
+      slots: [{
+        id: 'slot-empty-transitions',
+        startsAt: '2099-08-17T16:00:00.000Z',
+        endsAt: '2099-08-17T16:30:00.000Z',
+        status: 'booked',
+        appointment: {
+          id: FUTURE_CONFIRMED_APPOINTMENT,
+          patientRef: 'PT-4471',
+          serviceName: 'MRI',
+          status: 'confirmed',
+          outOfHours: false,
+          allowedTransitions: [],
+        },
+      }],
+    } }))
+    await signIn(page.request)
+    await page.goto('/provider/schedule')
+    await expect(page.getByTestId('provider-schedule-row')).toHaveCount(1)
+    await expect(page.getByTestId('provider-transition-action')).toHaveCount(0)
   })
 
   test('scheduleResponseHasNoPatientNameOrDobAndTerminalRowsHaveNoActions', async ({ page }) => {
@@ -107,6 +132,7 @@ test.describe.serial('JOR-260 provider schedule', () => {
     expect(route).toContain('allowedTransitions(')
     expect(page).toContain("{ action: 'cancel' }")
     expect(page).toContain("{ action: 'transition', status }")
+    expect(page).toContain('const appointment = await response.json()')
     expect(page).not.toMatch(/#[0-9a-f]{3,8}\b/i)
     expect(page).toContain('provider-schedule-row')
     expect(page).toContain('provider-transition-action')
