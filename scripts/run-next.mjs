@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { config } from '../lib/config.ts'
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const NEXT_CLI = path.join(REPO_ROOT, 'node_modules', 'next', 'dist', 'bin', 'next')
 
 const mode = process.argv[2]
 if (mode !== 'dev' && mode !== 'start') {
@@ -7,12 +12,16 @@ if (mode !== 'dev' && mode !== 'start') {
   process.exit(1)
 }
 
+// Invoke this worktree's installed CLI directly. `npx next` may select an
+// enclosing checkout when a lane is started from there, which makes Next
+// discover that checkout's app instead of this one.
 const nextEnv = { ...process.env }
 if (mode === 'dev' && nextEnv.WATCHPACK_POLLING === undefined) {
   nextEnv.WATCHPACK_POLLING = '1000'
 }
 
-const child = spawn('npx', ['next', mode, '-p', String(config.port)], {
+const child = spawn(process.execPath, [NEXT_CLI, mode, REPO_ROOT, '-p', String(config.port)], {
+  cwd: REPO_ROOT,
   env: nextEnv,
   stdio: 'inherit',
 })
