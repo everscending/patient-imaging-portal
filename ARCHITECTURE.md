@@ -1409,6 +1409,8 @@ letting a missing value surface as a runtime null. All of these appear in
 | `RESEND_API_KEY` | — | `lib/notify/email.ts` | absent ⇒ transport falls back to `log` (GAP-3) |
 | `RESEND_FROM` | — | `lib/notify/email.ts` | verified sender |
 | `EMAIL_TRANSPORT` | `resend` | `lib/notify/email.ts` | `resend` \| `log` |
+| `EMAIL_OUTBOX_MAX_ATTEMPTS` | `5` | reminder job | Unsent rows remain diagnosable but are not attempted again at this bound. |
+| `EMAIL_SEND_TIMEOUT_MS` | `10000` | `lib/notify/email.ts` | A provider that does not settle becomes a sanitized failed outcome. |
 | `CRON_SECRET` | — | `app/api/jobs/reminders` | required in deployed environments |
 | `SHARE_LINK_TTL_HOURS` | `48` | `lib/share/links.ts` | ADR-0008 |
 | `MIN_CHANGE_NOTICE_HOURS` | `24` | `lib/scheduling/booking.ts` | ADR-0008 |
@@ -1747,7 +1749,11 @@ The email body carries **no PHI** — a generic notice plus a link (SEC-9).
 **The same job drains `email_outbox`** (§3, ADR-0012). Share emails are enqueued
 rather than sent inline: the row is durable across function shutdowns, `attempts`
 and `next_attempt_at` carry the backoff, and `last_error` never holds PHI. A
-share link is never rolled back because its email failed.
+share link is never rolled back because its email failed. The job attempts an
+unsent row at most `EMAIL_OUTBOX_MAX_ATTEMPTS` times (5 by default). A row at
+that bound remains unsent and diagnosable, but later passes do not call the
+provider for it. Each provider call settles within `EMAIL_SEND_TIMEOUT_MS`
+(10000 by default), mapping a timeout to the same sanitized failed outcome.
 
 **A failed send is queued and retried, not merely reported** (CQ-3). Reminder
 retries happen on the next pass by clearing the `failed` row. Share-link emails
