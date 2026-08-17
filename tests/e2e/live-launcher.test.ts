@@ -25,7 +25,7 @@ async function nestedWorktreeFixture(): Promise<{ parentCheckout: string; worktr
     ),
   )
   await Promise.all(
-    ['.env.test', 'next-env.d.ts', 'next.config.ts', 'package-lock.json', 'package.json', 'tsconfig.json'].map((entry) =>
+    ['.env.test', 'next.config.ts', 'package-lock.json', 'package.json', 'tsconfig.json'].map((entry) =>
       cp(path.join(REPO_ROOT, entry), path.join(worktree, entry)),
     ),
   )
