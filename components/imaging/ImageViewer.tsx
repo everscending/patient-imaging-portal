@@ -28,6 +28,7 @@ function boundedZoom(value: number): number {
 
 export function ImageViewer({ images, initialImageId, variant }: ImageViewerProps): JSX.Element {
   const router = useRouter()
+  const [hydrated, setHydrated] = useState(false)
   const firstImageId = useMemo(
     () => images.find((image) => image.id === initialImageId)?.id ?? images[0]?.id,
     [images, initialImageId],
@@ -44,6 +45,8 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   const selectedAssetKey = selected ? `${selected.id}:${selected.url}` : undefined
   const selectedThumbnailKey = selected?.thumbUrl ? `${selected.id}:${selected.thumbUrl}` : undefined
   const fullImageState = fullImageLoad.key === selectedAssetKey ? fullImageLoad.state : 'loading'
+
+  useEffect(() => setHydrated(true), [])
 
   useEffect(() => {
     if (!images.some((image) => image.id === selectedImageId)) setSelectedImageId(firstImageId)
@@ -83,7 +86,12 @@ export function ImageViewer({ images, initialImageId, variant }: ImageViewerProp
   }
 
   return (
-    <section className={`pip-image-viewer pip-image-viewer--${variant}`} data-testid="image-viewer" aria-label="Image viewer">
+    <section
+      aria-label="Image viewer"
+      className={`pip-image-viewer pip-image-viewer--${variant}`}
+      data-hydrated={hydrated ? 'true' : 'false'}
+      data-testid="image-viewer"
+    >
       <div
         aria-label="Image canvas. Use arrow keys to pan, plus and minus to zoom."
         className="pip-image-canvas"

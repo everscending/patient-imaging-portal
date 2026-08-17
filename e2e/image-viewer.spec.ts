@@ -86,6 +86,7 @@ async function openViewer(page: Page): Promise<void> {
   await pointViewerToManifest(page)
   await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`, { waitUntil: 'domcontentloaded' })
   await expect(page.getByTestId('image-viewer')).toBeVisible()
+  await expect(page.getByTestId('image-viewer')).toHaveAttribute('data-hydrated', 'true')
 }
 
 test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverage', () => {
