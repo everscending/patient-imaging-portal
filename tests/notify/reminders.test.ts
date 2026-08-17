@@ -38,6 +38,7 @@ type ReminderSend = {
   lead_hours: number
   outcome: 'failed' | 'sent'
   sent_at: string | null
+  attempted_at?: string
   retryable_at?: string | null
 }
 type OutboxRow = {
@@ -254,11 +255,20 @@ function clientFor(state: Store) {
           lead_hours: Number(input.p_lead_hours),
           outcome: 'failed',
           sent_at: null,
+          attempted_at: new Date().toISOString(),
           retryable_at: null,
         })
         return { data: true, error: null }
       }
-      if (existing.outcome === 'failed' && existing.retryable_at) {
+      const retryIsDue = existing.retryable_at !== null
+        && existing.retryable_at !== undefined
+        && Date.parse(existing.retryable_at) <= Date.now()
+      const claimLeaseMinutes = Number(input.p_claim_lease_minutes)
+      const claimIsAbandoned = existing.retryable_at === null
+        && existing.attempted_at !== undefined
+        && Date.parse(existing.attempted_at) <= Date.now() - claimLeaseMinutes * MINUTE_MS
+      if (existing.outcome === 'failed' && (retryIsDue || claimIsAbandoned)) {
+        existing.attempted_at = new Date().toISOString()
         existing.retryable_at = null
         return { data: true, error: null }
       }
@@ -409,6 +419,7 @@ describe('persist-before-send idempotency and retry', () => {
           lead_hours: configMock.reminderLeadHours,
           outcome: 'failed',
           sent_at: null,
+          attempted_at: NOW,
           retryable_at: null,
         },
       ])
@@ -462,8 +473,16 @@ describe('persist-before-send idempotency and retry', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  test('ambiguousCrashLeavesOneActiveClaimThatNextPassSkipsRatherThanDuplicating', async () => {
-    const state = store({ appointments: [appointment('crash', 'confirmed', configMock.reminderLeadHours * 60)] })
+  test('crashedPreSendClaimIsNotStolenWhileActiveThenNextScheduledPassRetriesIt', async () => {
+    const state = store({
+      appointments: [
+        appointment(
+          'crash',
+          'confirmed',
+          configMock.reminderLeadHours * 60 + configMock.reminderCronMinutes,
+        ),
+      ],
+    })
     clientMock.mockReturnValue(clientFor(state))
     sendMock.mockRejectedValueOnce(new Error('simulated process crash')).mockResolvedValueOnce({ outcome: 'sent', transport: 'log' })
 
@@ -474,14 +493,17 @@ describe('persist-before-send idempotency and retry', () => {
         lead_hours: configMock.reminderLeadHours,
         outcome: 'failed',
         sent_at: null,
+        attempted_at: NOW,
         retryable_at: null,
       },
     ])
 
     await expect(dispatchReminders()).resolves.toMatchObject({ sent: 0, skipped: 1, failed: 0 })
+    vi.advanceTimersByTime(configMock.reminderCronMinutes * MINUTE_MS)
+    await expect(dispatchReminders()).resolves.toMatchObject({ sent: 1, skipped: 0, failed: 0 })
     expect(state.reminderSends).toHaveLength(1)
-    expect(state.reminderSends[0]).toMatchObject({ outcome: 'failed', sent_at: null, retryable_at: null })
-    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(state.reminderSends[0]).toMatchObject({ outcome: 'sent', retryable_at: null })
+    expect(sendMock).toHaveBeenCalledTimes(2)
   })
 
   test('failedSendPersistsOneFailedRowWritesDeniedAuditAndNextPassRetriesWithoutDuplicateRow', async () => {
@@ -499,6 +521,7 @@ describe('persist-before-send idempotency and retry', () => {
         lead_hours: configMock.reminderLeadHours,
         outcome: 'failed',
         sent_at: null,
+        attempted_at: NOW,
         retryable_at: NOW,
       },
     ])

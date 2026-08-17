@@ -120,6 +120,7 @@ export async function dispatchReminders(): Promise<ReminderRun> {
     const { data: claimed, error: claimError } = await client.rpc('claim_reminder_send', {
       p_appointment_id: appointment.id,
       p_lead_hours: config.reminderLeadHours,
+      p_claim_lease_minutes: config.reminderCronMinutes,
     })
     if (claimError) throw new Error('reminder send claim unavailable')
     if (!claimed) {

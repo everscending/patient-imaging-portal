@@ -1,18 +1,23 @@
 -- A pre-send row deliberately uses outcome = 'failed' (ADR-0012), so outcome
 -- alone cannot distinguish an active claim from a provider-confirmed failure.
--- Only the latter receives retryable_at; an ambiguous process crash remains
--- non-retryable because EC-9's zero-duplicates guarantee is stronger than the
--- delivery target's allowed loss budget.
+-- retryable_at makes an explicit provider failure immediately eligible;
+-- attempted_at leases an ambiguous pre-send claim for one scheduler cadence,
+-- after which a crashed worker is considered abandoned.
 alter table reminder_sends add column retryable_at timestamptz;
 
 create or replace function claim_reminder_send(
   p_appointment_id uuid,
-  p_lead_hours integer
+  p_lead_hours integer,
+  p_claim_lease_minutes integer
 ) returns boolean
 language plpgsql
 set search_path = public
 as $$
 begin
+  if p_claim_lease_minutes < 1 then
+    raise exception 'claim lease must be at least one minute';
+  end if;
+
   insert into reminder_sends (appointment_id, lead_hours, outcome, retryable_at)
   values (p_appointment_id, p_lead_hours, 'failed', null)
   on conflict do nothing;
@@ -22,15 +27,21 @@ begin
   end if;
 
   -- Concurrent UPDATEs serialize on the existing row and re-check this
-  -- predicate after the lock is released. Exactly one caller clears a
-  -- provider-confirmed retry marker and becomes the next send owner.
+  -- predicate after the lock is released. Exactly one caller can clear an
+  -- explicit retry marker or recover an abandoned claim. A live claim remains
+  -- protected for the full configured scheduler cadence.
   update reminder_sends
      set attempted_at = clock_timestamp(), retryable_at = null
    where appointment_id = p_appointment_id
      and lead_hours = p_lead_hours
      and outcome = 'failed'
-     and retryable_at is not null
-     and retryable_at <= statement_timestamp();
+     and (
+       (retryable_at is not null and retryable_at <= statement_timestamp())
+       or (
+         retryable_at is null
+         and attempted_at <= statement_timestamp() - make_interval(mins => p_claim_lease_minutes)
+       )
+     );
 
   return found;
 end
@@ -38,8 +49,8 @@ $$;
 
 -- The service-role reminder job is the only caller. Supabase grants its
 -- service_role explicitly; the stock harness calls as the migration owner.
-revoke all on function claim_reminder_send(uuid, integer) from public;
-revoke execute on function claim_reminder_send(uuid, integer) from app_user;
+revoke all on function claim_reminder_send(uuid, integer, integer) from public;
+revoke execute on function claim_reminder_send(uuid, integer, integer) from app_user;
 
 -- JOR-193: production scheduling is optional in the stock-Postgres test image.
 -- Hosted deployments install these extensions before this migration runs.

@@ -47,7 +47,7 @@ function appointmentFixture(): string {
 }
 
 function claimSql(appointmentId: string): string {
-  return `select claim_reminder_send('${appointmentId}'::uuid, 24);`
+  return `select claim_reminder_send('${appointmentId}'::uuid, 24, 5);`
 }
 
 beforeAll(async () => {
@@ -86,6 +86,42 @@ describe('reminder send claim — database concurrency boundary', () => {
     expect(retries.sort()).toEqual(['f', 't'])
     expect(psql(`select outcome || '|' || (retryable_at is null)::text
       from reminder_sends where appointment_id = '${appointmentId}';`)).toBe('failed|true')
+    expect(psql(claimSql(appointmentId))).toBe('f')
+  }, 120_000)
+
+  test('abandonedPreSendClaimWaitsForLeaseThenExactlyOneOverlappingWorkerRecoversIt', async () => {
+    const appointmentId = appointmentFixture()
+
+    expect(psql(claimSql(appointmentId))).toBe('t')
+    expect(psql(claimSql(appointmentId))).toBe('f')
+
+    psql(`update reminder_sends
+      set attempted_at = now() - interval '4 minutes'
+      where appointment_id = '${appointmentId}';`)
+    expect(psql(claimSql(appointmentId))).toBe('f')
+
+    psql(`
+      update reminder_sends
+        set attempted_at = now() - interval '6 minutes'
+        where appointment_id = '${appointmentId}';
+      create function slow_abandoned_reminder_claim() returns trigger language plpgsql as $$
+        begin
+          if old.attempted_at < statement_timestamp() - interval '5 minutes' then
+            perform pg_sleep(0.25);
+          end if;
+          return new;
+        end
+      $$;
+      create trigger slow_abandoned_reminder_claim before update on reminder_sends
+        for each row execute function slow_abandoned_reminder_claim();
+    `)
+
+    const recovered = await Promise.all([psqlAsync(claimSql(appointmentId)), psqlAsync(claimSql(appointmentId))])
+    expect(recovered.sort()).toEqual(['f', 't'])
+    expect(psql(`select count(*) || '|' || outcome || '|' || (retryable_at is null)::text
+      from reminder_sends where appointment_id = '${appointmentId}' group by outcome, retryable_at;`)).toBe(
+      '1|failed|true',
+    )
     expect(psql(claimSql(appointmentId))).toBe('f')
   }, 120_000)
 })
