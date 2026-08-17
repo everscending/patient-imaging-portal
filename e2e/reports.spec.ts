@@ -51,13 +51,32 @@ test.describe('JOR-218 reports', () => {
       .split('\n')
       .filter(Boolean)
     expect(matchingFiles).toEqual([rendererPath])
-    expect(source).toMatch(/export type ReportViewProps = \{[\s\S]*id: string[\s\S]*studyId: string[\s\S]*studyDescription: string[\s\S]*patientRef: string[\s\S]*findings: string[\s\S]*impression: string[\s\S]*signedByName: string \| null[\s\S]*signedAt: string \| null[\s\S]*variant: 'portal' \| 'shared'/)
+    expect(source).toMatch(/export type ReportViewProps = \{\s*report: \{\s*id: string\s*studyId: string\s*studyDescription: string\s*patientRef: string\s*findings: string\s*impression: string\s*signedByName: string\s*signedAt: string\s*\}\s*variant: 'portal' \| 'shared'\s*\}/)
   })
 
-  test('reportRendererHasNoHexColoursOrUnsafeHtml', async () => {
+  test('reportPathHasNoHexColourLiterals', async () => {
+    const sources = await Promise.all([
+      readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
+    ])
+    expect(sources.join('\n')).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  })
+
+  test('reportPathNeverUsesDangerouslySetInnerHTML', async () => {
+    const sources = await Promise.all([
+      readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
+    ])
+    expect(sources.join('\n')).not.toContain('dangerouslySetInnerHTML')
+  })
+
+  test('portalVariantRendersLandedShareDialog', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8')
-    expect(source).not.toMatch(/#[0-9a-f]{3,8}\b/i)
-    expect(source).not.toContain('dangerouslySetInnerHTML')
+    expect(source).toContain("import { ShareDialog } from '../../components/share/ShareDialog'")
+    expect(source).toMatch(/variant === 'portal'[\s\S]*<ShareDialog[\s\S]*resourceKind="report"[\s\S]*resourceId=\{report\.id\}/)
+    expect(source).not.toContain('/shares?reportId=')
   })
 
   test('emptyReportListRendersPinnedEmptyState', async ({ page }) => {
@@ -82,6 +101,12 @@ test.describe('JOR-218 reports', () => {
   })
 
   test('reportNeverLeaksPatientIdentity', async ({ page }) => {
+    const screenSources = await Promise.all([
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
+    ])
+    expect(screenSources.join('\n')).not.toMatch(/fullName|full_name|dateOfBirth|date_of_birth/)
+
     await registerAndLink(page)
     await page.goto(`/reports/${E2_SEEDED_REPORT_ID}`)
     await expect(page.getByTestId('report-view')).toBeVisible()
@@ -98,22 +123,22 @@ test.describe('JOR-218 reports', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Report' })).toHaveCount(1)
     await expect(page.getByRole('heading', { level: 2, name: 'Findings' })).toHaveCount(1)
     await expect(page.getByRole('heading', { level: 2, name: 'Impression' })).toHaveCount(1)
-    await page.getByRole('link', { name: 'Share' }).focus()
-    await expect(page.getByRole('link', { name: 'Share' })).toBeFocused()
+    await page.getByRole('button', { name: 'Share' }).focus()
+    await expect(page.getByRole('button', { name: 'Share' })).toBeFocused()
+    await page.getByRole('button', { name: 'Share' }).click()
+    await expect(page.getByRole('dialog', { name: 'Share secure link' })).toBeVisible()
     await page.getByRole('button', { name: 'Print' }).focus()
     await expect(page.getByRole('button', { name: 'Print' })).toBeFocused()
   })
 
   test('sharedVariantOmitsNavigationShareAndPrint', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8')
-    const portalActionStart = source.indexOf("{variant === 'portal' ? (")
-    const portalActionEnd = source.indexOf(') : null}', portalActionStart)
-    expect(portalActionStart).toBeGreaterThan(-1)
-    expect(portalActionEnd).toBeGreaterThan(portalActionStart)
-    const beforeActions = source.slice(0, portalActionStart)
-    const portalActions = source.slice(portalActionStart, portalActionEnd)
-    expect(beforeActions).not.toMatch(/PatientShell|patient-sidebar|patient-tabbar|Share|Print/)
-    expect(portalActions).toContain('Share')
-    expect(portalActions).toContain('Print')
+    const returnedJsx = source.slice(source.indexOf('  return ('))
+    const portalBranch = returnedJsx.match(/\{variant === 'portal' \? \([\s\S]*?\) : null\}/)?.[0]
+    expect(portalBranch).toBeDefined()
+    expect(portalBranch).toMatch(/<ShareDialog[\s\S]*data-testid="share-create"|data-testid="share-create"[\s\S]*<ShareDialog/)
+    expect(portalBranch).toContain('>\n            Print\n          </button>')
+    const sharedSurface = returnedJsx.replace(portalBranch ?? '', '')
+    expect(sharedSurface).not.toMatch(/<nav|PatientShell|patient-sidebar|patient-tabbar|<ShareDialog|share-create|>\s*Print\s*</)
   })
 })

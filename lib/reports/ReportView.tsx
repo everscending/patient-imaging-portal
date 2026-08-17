@@ -1,18 +1,23 @@
 'use client'
 
+import { ShareDialog } from '../../components/share/ShareDialog'
+import type { JSX } from 'react'
+
 export type ReportViewProps = {
-  id: string
-  studyId: string
-  studyDescription: string
-  patientRef: string
-  findings: string
-  impression: string
-  signedByName: string | null
-  signedAt: string | null
+  report: {
+    id: string
+    studyId: string
+    studyDescription: string
+    patientRef: string
+    findings: string
+    impression: string
+    signedByName: string
+    signedAt: string
+  }
   variant: 'portal' | 'shared'
 }
 
-function signingTimestamp(value: string | null): string {
+function signingTimestamp(value: string): string {
   if (!value) return 'Not recorded'
   const date = new Date(value)
   return Number.isNaN(date.valueOf())
@@ -22,16 +27,9 @@ function signingTimestamp(value: string | null): string {
 
 /** The sole structured-text renderer for portal and shared report views. */
 export function ReportView({
-  id,
-  studyId,
-  studyDescription,
-  patientRef,
-  findings,
-  impression,
-  signedByName,
-  signedAt,
+  report,
   variant,
-}: ReportViewProps) {
+}: ReportViewProps): JSX.Element {
   return (
     <article className="pip-report" data-testid="report-view">
       <style>{`
@@ -54,35 +52,37 @@ export function ReportView({
         <dl className="pip-report-header">
           <div className="pip-report-reference">
             <dt>Patient reference</dt>
-            <dd>{patientRef}</dd>
+            <dd>{report.patientRef}</dd>
           </div>
           <div className="pip-report-reference">
             <dt>Study reference</dt>
-            <dd>{studyDescription} ({studyId})</dd>
+            <dd>{report.studyDescription} ({report.studyId})</dd>
           </div>
           <div className="pip-report-reference">
             <dt>Signing provider</dt>
-            <dd>{signedByName ?? 'Not recorded'}</dd>
+            <dd>{report.signedByName ?? 'Not recorded'}</dd>
           </div>
           <div className="pip-report-reference">
             <dt>Signed</dt>
-            <dd>{signingTimestamp(signedAt)}</dd>
+            <dd>{signingTimestamp(report.signedAt)}</dd>
           </div>
         </dl>
       </header>
 
       <section className="pip-report-section" aria-labelledby="report-findings-heading" data-testid="report-findings">
         <h2 id="report-findings-heading">Findings</h2>
-        <p>{findings}</p>
+        <p>{report.findings}</p>
       </section>
       <section className="pip-report-section" aria-labelledby="report-impression-heading" data-testid="report-impression">
         <h2 id="report-impression-heading">Impression</h2>
-        <p>{impression}</p>
+        <p>{report.impression}</p>
       </section>
 
       {variant === 'portal' ? (
         <div className="pip-report-actions" aria-label="Report actions">
-          <a className="pip-report-action" href={`/shares?reportId=${encodeURIComponent(id)}`}>Share</a>
+          <span data-testid="share-create">
+            <ShareDialog resourceKind="report" resourceId={report.id} shareLinkTtlHours={48} />
+          </span>
           <button className="pip-report-action pip-report-print" type="button" onClick={() => window.print()}>
             Print
           </button>
