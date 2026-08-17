@@ -112,6 +112,15 @@ begin
          out_of_hours = false
    where id = v_appointment.id;
 
+  -- A reschedule does not change lifecycle status, but it is still a recorded
+  -- appointment mutation.  The equal endpoints distinguish that history row
+  -- from cancellation while keeping it in the existing transition ledger.
+  insert into appointment_transitions (
+    appointment_id, from_status, to_status, actor_user_id
+  ) values (
+    v_appointment.id, v_appointment.status, v_appointment.status, p_actor_user_id
+  );
+
   return query
   select null::text, a.id, a.slot_id, s.starts_at, s.ends_at, a.status,
          p.full_name, p.time_zone, sv.name, a.out_of_hours
