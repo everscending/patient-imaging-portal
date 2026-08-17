@@ -1,5 +1,7 @@
 export type AppointmentStatus = 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 export type SchedulingRole = 'patient' | 'provider' | 'admin'
+export const clinicianTransitionStatuses = ['confirmed', 'completed', 'no_show'] as const satisfies readonly AppointmentStatus[]
+export type ClinicianTransitionStatus = (typeof clinicianTransitionStatuses)[number]
 
 export type LifecycleInput = {
   status: AppointmentStatus

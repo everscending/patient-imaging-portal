@@ -156,11 +156,18 @@ as $$
 declare
   v_appointment appointments%rowtype;
   v_caller_user_id uuid;
+  v_actor_patient_id uuid;
+  v_actor_provider_id uuid;
+  v_actor_is_admin boolean;
 begin
   v_caller_user_id := nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
   if v_caller_user_id is null or p_actor_user_id is distinct from v_caller_user_id then
     raise insufficient_privilege using message = 'cancel actor does not match caller';
   end if;
+
+  v_actor_patient_id := current_patient_id();
+  v_actor_provider_id := current_provider_id();
+  v_actor_is_admin := is_admin();
 
   select a.* into v_appointment
     from appointments a
@@ -168,6 +175,14 @@ begin
    for update;
 
   if not found then
+    raise insufficient_privilege using message = 'appointment is not available to caller';
+  end if;
+
+  -- The application resolves provider before admin before patient. Do not let
+  -- the patient arm of the RLS policy turn an unrelated provider into a
+  -- different effective role when the RPC is called directly.
+  if v_actor_provider_id is not null
+     and v_actor_provider_id is distinct from v_appointment.provider_id then
     raise insufficient_privilege using message = 'appointment is not available to caller';
   end if;
 
@@ -180,8 +195,15 @@ begin
     return;
   end if;
 
-  -- app_user controls this argument; ADR-0008 is the non-weakenable floor.
-  if (select s.starts_at from slots s where s.id = v_appointment.slot_id)
+  -- A user can have both a patient row and a clinician role. Match the
+  -- clinician-first route without treating an unrelated provider row as a
+  -- notice-floor bypass: only an admin or this appointment's owning provider
+  -- acts as a clinician here. Every other owning patient keeps FR-13's
+  -- non-weakenable 24-hour floor.
+  if v_actor_provider_id is null
+     and not v_actor_is_admin
+     and v_actor_patient_id = v_appointment.patient_id
+     and (select s.starts_at from slots s where s.id = v_appointment.slot_id)
        <= now() + greatest(p_minimum_notice, interval '24 hours') then
     return query select 'minimum_notice'::text,
       null::uuid, null::uuid, null::timestamptz, null::timestamptz,
