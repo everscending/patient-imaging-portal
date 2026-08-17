@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import type { EmailMessage, SendOutcome } from '../../lib/notify/email'
@@ -145,5 +145,29 @@ describe('reminder retry authority', () => {
       ],
       { encoding: 'utf8', stdio: 'pipe' },
     )).toThrow(/42501|permission denied/i)
+  })
+})
+
+describe('retry module contract', () => {
+  test('durable retry uses the outbox table and no in-process queue', () => {
+    const reminders = readFileSync('lib/notify/reminders.ts', 'utf8')
+
+    expect(existsSync('lib/notify/queue.ts')).toBe(false)
+    expect(reminders).toContain(".from('email_outbox')")
+    expect(reminders).not.toMatch(/setInterval\s*\(|setImmediate\s*\(/)
+  })
+
+  test('sendEmail public signature and outcome fields remain pinned', () => {
+    const email = readFileSync('lib/notify/email.ts', 'utf8')
+
+    expect(email).toMatch(
+      /export type EmailMessage = \{ to: string; subject: string; text: string \}/,
+    )
+    expect(email).toMatch(
+      /export type SendOutcome = \{\s*outcome: 'sent' \| 'failed'\s*transport: 'resend' \| 'log'\s*error\?: string[^}]*\}/,
+    )
+    expect(email).toContain(
+      'export async function sendEmail(message: EmailMessage): Promise<SendOutcome>',
+    )
   })
 })
