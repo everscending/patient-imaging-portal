@@ -1,12 +1,17 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
-const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
+let identityFixtureLockToken: string | undefined
 
 const completedStudies = [
   {
@@ -30,20 +35,6 @@ const completedStudies = [
 async function fakeAuthServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
   return (JSON.parse(raw) as { url: string }).url
-}
-
-async function acquireIdentityFixture(): Promise<void> {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    try {
-      await mkdir(IDENTITY_FIXTURE_LOCK)
-      return
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  throw new Error('identity fixture lock timed out')
 }
 
 async function resetIdentity(request: APIRequestContext): Promise<void> {
@@ -74,8 +65,11 @@ async function showStudies(page: Page, body: unknown): Promise<void> {
   await page.goto('/studies')
 }
 
-test.beforeAll(acquireIdentityFixture)
-test.afterAll(async () => rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true }))
+test.beforeAll(async () => {
+  test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+  identityFixtureLockToken = await acquireIdentityFixtureLock()
+})
+test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
 test.beforeEach(async ({ request }) => resetIdentity(request))
 
 test('acceptance: completedVisitCards_matchSeededData_andScheduledCancelledNeverAppear', async ({ page }) => {
