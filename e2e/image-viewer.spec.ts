@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { createServer, type Server } from 'node:http'
 import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
@@ -10,15 +9,7 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 const PASSWORD = 'CorrectHorseBattery9'
 const SEEDED_PATIENT = { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' }
 const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
-const FIRST_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 const SECOND_IMAGE_ID = '10000000-0000-4000-8000-000000000002'
-const ONE_PIXEL_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  'base64',
-)
-
-let imageServer: Server
-let imageServerUrl: string
 
 async function source(file: string): Promise<string> {
   return readFile(path.join(REPO_ROOT, file), 'utf8')
@@ -59,22 +50,14 @@ async function linkSeededPatient(request: APIRequestContext): Promise<void> {
   expect(response.status()).toBe(200)
 }
 
-async function pointViewerToManifest(page: Page): Promise<void> {
-  const forwarded = new URL(imageServerUrl)
-  await page.setExtraHTTPHeaders({
-    'x-forwarded-host': forwarded.host,
-    'x-forwarded-proto': forwarded.protocol.slice(0, -1),
-  })
-}
-
 function holdImage(page: Page, filename: string): { requested: () => boolean; release: () => void } {
   let requested = false
   let releaseRequest = () => {}
   const released = new Promise<void>((resolve) => { releaseRequest = resolve })
-  void page.route(`**/${filename}`, async (route) => {
+  void page.route((url) => url.pathname.endsWith(`/${filename}`), async (route) => {
     requested = true
     await released
-    await route.fulfill({ body: ONE_PIXEL_PNG, contentType: 'image/png' })
+    await route.continue()
   })
   return { requested: () => requested, release: releaseRequest }
 }
@@ -83,7 +66,6 @@ async function openViewer(page: Page): Promise<void> {
   await resetIdentity(page.request)
   await registerAndSignIn(page.request)
   await linkSeededPatient(page.request)
-  await pointViewerToManifest(page)
   await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`, { waitUntil: 'domcontentloaded' })
   await expect(page.getByTestId('image-viewer')).toBeVisible()
   await expect(page.getByTestId('image-viewer')).toHaveAttribute('data-hydrated', 'true')
@@ -92,56 +74,9 @@ async function openViewer(page: Page): Promise<void> {
 test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverage', () => {
   test.beforeAll(async () => {
     await acquireIdentityFixture()
-    imageServer = createServer((request, response) => {
-      const url = new URL(request.url ?? '/', 'http://image-fixture.local')
-      if (url.pathname === `/api/studies/${E2_SEEDED_STUDY_ID}`) {
-        const expiresAt = new Date(Date.now() + 300_000).toISOString()
-        response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({
-          description: 'Progressive image viewer fixture',
-          images: [
-            {
-              id: FIRST_IMAGE_ID,
-              width: 1024,
-              height: 768,
-              ordinal: 1,
-              url: `${imageServerUrl}/full-1.png`,
-              thumbUrl: `${imageServerUrl}/thumb-1.png`,
-              expiresAt,
-            },
-            {
-              id: SECOND_IMAGE_ID,
-              width: 800,
-              height: 600,
-              ordinal: 2,
-              url: `${imageServerUrl}/full-2.png`,
-              thumbUrl: null,
-              expiresAt,
-            },
-          ],
-        }))
-        return
-      }
-      if (url.pathname === '/thumb-1.png' || url.pathname === '/full-1.png' || url.pathname === '/full-2.png') {
-        response.writeHead(200, { 'content-type': 'image/png' })
-        response.end(ONE_PIXEL_PNG)
-        return
-      }
-      response.writeHead(404).end()
-    })
-    await new Promise<void>((resolve, reject) => {
-      imageServer.once('error', reject)
-      imageServer.listen(0, '127.0.0.1', () => {
-        const address = imageServer.address()
-        if (address === null || typeof address === 'string') return reject(new Error('image fixture has no TCP port'))
-        imageServerUrl = `http://127.0.0.1:${address.port}`
-        resolve()
-      })
-    })
   })
 
   test.afterAll(async () => {
-    await new Promise<void>((resolve, reject) => imageServer.close((error) => error ? reject(error) : resolve()))
     await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
   })
 
@@ -281,7 +216,7 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
   test('page_hasExactlyOneHeadingAndEveryControlHasAName', async function page_hasExactlyOneHeadingAndEveryControlHasAName({ page }) {
     await openViewer(page)
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Progressive image viewer fixture')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Seeded abdominal ultrasound')
     for (const control of await page.locator('button, [role="application"]').all()) {
       await expect(control).toHaveAccessibleName(/.+/)
     }
@@ -313,5 +248,14 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
       const contents = await source(file)
       expect(contents).not.toMatch(/createSignedUrl|createSignedUrls|signStorage|storage\/v1|new URL\([^)]*image/i)
     }
+  })
+
+  test('viewerPage_neverForwardsSessionCookieToARequestControlledOrigin', async function viewerPage_neverForwardsSessionCookieToARequestControlledOrigin() {
+    const pageSource = await source('app/(patient)/studies/[studyId]/page.tsx')
+    expect(pageSource).not.toMatch(/x-forwarded-host|x-forwarded-proto/)
+    expect(pageSource).not.toMatch(/headers\s*:\s*\{\s*cookie\b/)
+    expect(pageSource).not.toMatch(/fetch\s*\(\s*`\$\{protocol\}:\/\/\$\{host\}/)
+    expect(pageSource).toContain('guardPhiAccess')
+    expect(pageSource).toContain('studyDetail')
   })
 })
