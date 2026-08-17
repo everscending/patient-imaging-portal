@@ -20,6 +20,8 @@ type ShareState =
   | { kind: 'success' }
   | { kind: 'delivery-failed'; url: string }
 
+type ShareCreateResult = Extract<ShareState, { kind: 'success' | 'delivery-failed' }>
+
 export function presentationForViewport(isMobile: boolean): Presentation {
   return isMobile ? 'sheet' : 'dialog'
 }
@@ -41,6 +43,26 @@ function isValidRecipientEmail(value: string): boolean {
   // The server remains authoritative. This client check makes the one-field
   // contract immediately understandable without sending a malformed request.
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+/**
+ * Keep the JOR-220 request shape at the component seam. A caller only needs
+ * to decide where to mount the dialog and which resource it represents.
+ */
+export async function createShare(
+  input: Pick<ShareDialogProps, 'resourceKind' | 'resourceId'> & { recipientEmail: string },
+  request: typeof fetch = fetch,
+): Promise<ShareCreateResult> {
+  const response = await request('/api/shares', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const body = (await response.json()) as Partial<CreatedShare> & { message?: string }
+  if (!response.ok || typeof body.url !== 'string') {
+    throw new Error(body.message ?? 'The secure link could not be created. Try again.')
+  }
+  return body.delivery === 'failed' ? { kind: 'delivery-failed', url: body.url } : { kind: 'success' }
 }
 
 export function ShareDialogPanel({
@@ -160,20 +182,11 @@ export function ShareDialog({ resourceKind, resourceId, shareLinkTtlHours, trigg
     setValidationError(null)
     setSubmitting(true)
     try {
-      const response = await fetch('/api/shares', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resourceKind, resourceId, recipientEmail: trimmedEmail }),
-      })
-      const body = (await response.json()) as Partial<CreatedShare> & { message?: string }
-      if (!response.ok || typeof body.url !== 'string') {
-        setValidationError(body.message ?? 'The secure link could not be created. Try again.')
-        return
-      }
+      const created = await createShare({ resourceKind, resourceId, recipientEmail: trimmedEmail })
       setRecipientEmail(trimmedEmail)
-      setState(body.delivery === 'failed' ? { kind: 'delivery-failed', url: body.url } : { kind: 'success' })
-    } catch {
-      setValidationError('The secure link could not be created. Try again.')
+      setState(created)
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : 'The secure link could not be created. Try again.')
     } finally {
       setSubmitting(false)
     }

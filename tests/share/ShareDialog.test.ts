@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import { presentationForViewport, ShareDialogPanel } from '../../components/share/ShareDialog'
+import { createShare, presentationForViewport, ShareDialogPanel } from '../../components/share/ShareDialog'
 
 const noop = vi.fn()
 
@@ -76,5 +76,29 @@ describe('ShareDialog', () => {
     expect(html).toContain('Delivery failed, but your secure link is active.')
     expect(html).toContain(`value="${rawUrl}"`)
     expect(html).toContain('aria-label="Copy active share link"')
+  })
+
+  it('posts only the pinned recipient-email create payload', async () => {
+    const request = vi.fn().mockResolvedValue({
+      json: async () => ({ url: 'https://portal.example/s/raw-share-token' }),
+      ok: true,
+    })
+
+    await expect(createShare({ resourceKind: 'report', resourceId: 'report-123', recipientEmail: 'specialist@example.com' }, request)).resolves.toEqual({ kind: 'success' })
+    expect(request).toHaveBeenCalledWith('/api/shares', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resourceKind: 'report', resourceId: 'report-123', recipientEmail: 'specialist@example.com' }),
+    })
+  })
+
+  it('returns the active-link fallback only for a delivery failure', async () => {
+    const rawUrl = 'https://portal.example/s/raw-share-token'
+    const request = vi.fn().mockResolvedValue({
+      json: async () => ({ delivery: 'failed', url: rawUrl }),
+      ok: true,
+    })
+
+    await expect(createShare({ resourceKind: 'image', resourceId: 'image-123', recipientEmail: 'specialist@example.com' }, request)).resolves.toEqual({ kind: 'delivery-failed', url: rawUrl })
   })
 })
