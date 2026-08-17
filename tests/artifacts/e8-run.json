@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "ticket": "JOR-207",
-  "sourceHead": "1f6363c1a6f5462573ae4fa7cd6d430ae1b7c68d",
+  "sourceHead": "b07039ce40c53ecf64a532a89d0e2173a28499d2",
   "measuredWindow": {
-    "startedAt": "2026-08-17T10:49:29.612Z",
-    "endedAt": "2026-08-17T10:49:30.549Z"
+    "startedAt": "2026-08-17T11:23:19.781Z",
+    "endedAt": "2026-08-17T11:23:20.646Z"
   },
   "requests": 10,
   "uniqueDue": 10,

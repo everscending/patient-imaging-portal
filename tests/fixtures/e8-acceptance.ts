@@ -36,6 +36,12 @@ export type JobResponse = {
 
 export type MailMessage = { to: string; subject: string; text: string }
 export type DispatchLog = { event: 'email.sent'; id: string; domain: string; transport: 'log' }
+export type DispatchAudit = {
+  appointmentId: string
+  outcome: 'granted' | 'denied'
+  transport: 'log' | 'resend'
+  leadHours: number
+}
 
 export type E8AcceptanceFixture = {
   runJob(secret?: string): Promise<JobResponse>
@@ -46,6 +52,8 @@ export type E8AcceptanceFixture = {
   reminderRows(): Promise<ReminderRow[]>
   mailMessages(): Promise<MailMessage[]>
   dispatchLogs(): DispatchLog[]
+  dispatchAudits(): Promise<DispatchAudit[]>
+  appBaseUrl(): string
   phiTerms(): string[]
   close(): Promise<void>
 }
@@ -524,6 +532,25 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
           .split('\n')
           .filter((line) => line.includes('{"event":"email.sent"'))
           .map((line) => JSON.parse(line.slice(line.indexOf('{'))) as DispatchLog)
+      },
+      async dispatchAudits() {
+        if (scenarioAppointmentIds.length === 0) return []
+        const raw = await dockerPsql(
+          run,
+          `select coalesce(json_agg(json_build_object(
+             'appointmentId', target_id,
+             'outcome', outcome,
+             'transport', detail ->> 'transport',
+             'leadHours', (detail ->> 'leadHours')::integer
+           ) order by id), '[]'::json)::text
+             from audit_events
+            where action = 'reminder.dispatch'
+              and target_id = any(array[${scenarioAppointmentIds.map((id) => `${sqlLiteral(id)}::uuid`).join(',')}]);`,
+        )
+        return JSON.parse(raw) as DispatchAudit[]
+      },
+      appBaseUrl() {
+        return baseUrl
       },
       phiTerms() {
         const patients = rowSet.patients.slice(0, scenarioAppointmentIds.length)

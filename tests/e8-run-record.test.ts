@@ -25,7 +25,7 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
   })
 
   test('two sequential HTTP runs send one reminder and preserve one durable send row', async () => {
-    await fixture.prepareDueAppointments(1)
+    const [appointmentId] = await fixture.prepareDueAppointments(1)
 
     const first = await fixture.runAuthorizedJob()
     const second = await fixture.runAuthorizedJob()
@@ -34,8 +34,18 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect(second).toEqual({ status: 200, body: { due: 1, sent: 0, skipped: 1, failed: 0 } })
     expect(await fixture.reminderRows()).toHaveLength(1)
     expect((await fixture.reminderRows())[0]).toMatchObject({ leadHours: 24, outcome: 'sent' })
-    expect(await fixture.mailMessages()).toHaveLength(1)
+    expect(await fixture.mailMessages()).toEqual([{
+      to: expect.any(String),
+      subject: 'Appointment reminder',
+      text: `You have an appointment in 24 hours.\n\n${fixture.appBaseUrl()}/appointments\n\nSign in to see the details, or to change or cancel it.`,
+    }])
     expect(fixture.dispatchLogs()).toHaveLength(1)
+    expect(await fixture.dispatchAudits()).toEqual([{
+      appointmentId,
+      outcome: 'granted',
+      transport: 'log',
+      leadHours: 24,
+    }])
   })
 
   test('a pre-existing durable send row suppresses dispatch', async () => {
@@ -58,6 +68,15 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect((await fixture.reminderRows())[0]).toMatchObject({ outcome: 'failed' })
     expect((await fixture.reminderRows())[0].retryableAt).not.toBeNull()
     expect(await fixture.mailMessages()).toEqual([])
+    const failedAudits = await fixture.dispatchAudits()
+    expect(failedAudits).toEqual([{
+      appointmentId,
+      outcome: 'denied',
+      transport: 'log',
+      leadHours: 24,
+    }])
+    const failedAuditDetails = failedAudits.map(({ outcome, transport, leadHours }) => ({ outcome, transport, leadHours }))
+    expect(fixture.phiTerms().filter((term) => JSON.stringify(failedAuditDetails).includes(term))).toEqual([])
 
     await fixture.setAppointmentRecipient(appointmentId, 'recovered@example.test')
     const retried = await fixture.runAuthorizedJob()
@@ -67,6 +86,10 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect((await fixture.reminderRows())[0]).toMatchObject({ outcome: 'sent' })
     expect(await fixture.mailMessages()).toHaveLength(1)
     expect(fixture.dispatchLogs()).toHaveLength(1)
+    expect(await fixture.dispatchAudits()).toEqual([
+      { appointmentId, outcome: 'denied', transport: 'log', leadHours: 24 },
+      { appointmentId, outcome: 'granted', transport: 'log', leadHours: 24 },
+    ])
   })
 
   test('ten barrier-released HTTP runs deliver the measured due set at least 99 percent with zero duplicates or PHI', async () => {
@@ -93,8 +116,14 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     const rows = await fixture.reminderRows()
     const messages = await fixture.mailMessages()
     const logs = fixture.dispatchLogs()
+    const audits = await fixture.dispatchAudits()
     const duplicateRecipients = messages.length - new Set(messages.map((message) => message.to)).size
-    const scannedText = [...messages.map((message) => message.text), ...logs.map((log) => JSON.stringify(log))].join('\n')
+    const expectedBody = `You have an appointment in 24 hours.\n\n${fixture.appBaseUrl()}/appointments\n\nSign in to see the details, or to change or cancel it.`
+    const scannedText = [
+      ...messages.map((message) => JSON.stringify(message)),
+      ...logs.map((log) => JSON.stringify(log)),
+      ...audits.map(({ outcome, transport, leadHours }) => JSON.stringify({ outcome, transport, leadHours })),
+    ].join('\n')
     const leakedTerms = fixture.phiTerms().filter((term) => scannedText.includes(term))
     const deliveryRate = messages.length / appointmentIds.length
 
@@ -102,7 +131,10 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect(rows).toHaveLength(10)
     expect(rows.every((row) => row.outcome === 'sent')).toBe(true)
     expect(messages).toHaveLength(10)
+    expect(messages.every((message) => message.subject === 'Appointment reminder' && message.text === expectedBody)).toBe(true)
     expect(logs).toHaveLength(10)
+    expect(audits).toHaveLength(10)
+    expect(audits.every((audit) => audit.outcome === 'granted')).toBe(true)
     expect(duplicateRecipients).toBe(0)
     expect(leakedTerms).toEqual([])
     expect(deliveryRate).toBeGreaterThanOrEqual(0.99)
