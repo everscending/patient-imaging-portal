@@ -17,10 +17,10 @@ function accessFailure(status: 401 | 403 | 404): Response {
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const parsed = parseQuery(auditLogQuerySchema, request)
   const actor = { kind: 'admin' as const, userId: (await resolveCallerId()) ?? '' }
   const access = await guardPhiAccess(actor, { kind: 'audit_log' }, 'audit.view')
   if (!access.ok) return accessFailure(access.status)
+  const parsed = parseQuery(auditLogQuerySchema, new URL(request.url))
   if (!parsed.ok) return parsed.response
 
   const cursor = parseAuditLogCursor(parsed.value.cursor, parsed.value)
