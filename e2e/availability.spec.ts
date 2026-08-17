@@ -3,7 +3,7 @@
 // provider-scoped PostgREST tables and transactional RPC needed by that API.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
@@ -13,23 +13,14 @@ import {
   E2_PROVIDER_ID,
   E2_PROVIDER_PASSWORD,
 } from './fixtures/fake-auth-server'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
-const AVAILABILITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'availability-fixture.lock')
-
-async function acquireAvailabilityFixture(): Promise<void> {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    try {
-      await mkdir(AVAILABILITY_FIXTURE_LOCK)
-      return
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  throw new Error('availability fixture lock timed out')
-}
+let identityFixtureLockToken: string | undefined
 
 async function fakeAuthServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -78,8 +69,14 @@ async function saveAndReadResponse(page: Page): Promise<{
 }
 
 test.describe.serial('provider availability', () => {
-  test.beforeAll(acquireAvailabilityFixture)
-  test.afterAll(async () => rm(AVAILABILITY_FIXTURE_LOCK, { recursive: true, force: true }))
+  // Availability reads are PHI decisions and append schedule.view rows to the
+  // same fake-server auditEvents array reset by the identity/audit suites.
+  // One ownership-safe lease therefore protects both forms of shared state.
+  test.beforeAll(async () => {
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    identityFixtureLockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
 
   test.beforeEach(async ({ request }) => {
     await resetAvailability(request)

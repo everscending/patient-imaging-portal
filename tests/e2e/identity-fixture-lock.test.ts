@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -8,6 +8,17 @@ import {
 } from '../../e2e/fixtures/identity-fixture-lock'
 
 describe('shared identity fixture lock ownership', () => {
+  test('the availability suite leases the shared audit-event fixture', async () => {
+    const availabilitySuite = await readFile(
+      path.join(process.cwd(), 'e2e/availability.spec.ts'),
+      'utf8',
+    )
+
+    expect(availabilitySuite).toContain('acquireIdentityFixtureLock()')
+    expect(availabilitySuite).toContain('releaseIdentityFixtureLock(identityFixtureLockToken)')
+    expect(availabilitySuite).not.toContain('availability-fixture.lock')
+  })
+
   test('a timed-out suite cannot release the active suite lease', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'pip-identity-lock-'))
     const lockPath = path.join(root, 'lock')
