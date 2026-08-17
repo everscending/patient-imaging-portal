@@ -373,6 +373,7 @@ describe('AC: recordAuditEvent is callable by a domain module directly, targetId
   })
 
   test('systemActorKindIsAcceptedForCallsWithNoAccountSession', async function systemActorKindIsAcceptedForCallsWithNoAccountSession() {
+    setCallerHasSession(false)
     await recordAuditEvent({
       actorKind: 'system',
       actorRef: null,
@@ -381,6 +382,8 @@ describe('AC: recordAuditEvent is callable by a domain module directly, targetId
       targetId: null,
       outcome: 'granted',
     })
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).toHaveBeenCalledTimes(1)
     expect(auditRows[0]).toMatchObject({ actor_kind: 'system', actor_ref: null })
   })
 })
@@ -457,10 +460,24 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
     expect(auditRows).toHaveLength(0)
   })
 
-  test('missingSessionSystemEventCannotUseServiceRole', async function missingSessionSystemEventCannotUseServiceRole() {
+  test('missingSessionNonReminderSystemEventCannotUseServiceRole', async function missingSessionNonReminderSystemEventCannotUseServiceRole() {
     setCallerHasSession(false)
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(recordAuditEvent(baseInput({ actorKind: 'system', actorRef: null }))).resolves.toBeUndefined()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    expect(anonClientMock).not.toHaveBeenCalled()
+    expect(serviceClientMock).not.toHaveBeenCalled()
+    expect(auditRows).toHaveLength(0)
+  })
+
+  test('reminderDispatchWithAnActorReferenceCannotUseServiceRole', async function reminderDispatchWithAnActorReferenceCannotUseServiceRole() {
+    setCallerHasSession(false)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(recordAuditEvent(baseInput({
+      actorKind: 'system',
+      actorRef: 'forged-system-actor',
+      action: 'reminder.dispatch',
+    }))).resolves.toBeUndefined()
     expect(errorSpy).toHaveBeenCalledTimes(1)
     expect(anonClientMock).not.toHaveBeenCalled()
     expect(serviceClientMock).not.toHaveBeenCalled()

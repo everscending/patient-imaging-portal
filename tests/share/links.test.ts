@@ -265,7 +265,8 @@ describe('share minting', () => {
 
   test('outboxFailureKeepsActiveLinkAndNeverSendsInline', async () => {
     const source = readFileSync('lib/share/links.ts', 'utf8')
-    expect(source).not.toMatch(/notify\/email|sendEmail\s*\(/)
+    expect(source).toMatch(/import\s*\{\s*enqueueEmail\s*\}\s*from\s*['"]\.\.\/notify\/email['"]/)
+    expect(source).not.toMatch(/sendEmail\s*\(|from\s*['"]resend['"]|\.emails\.send\s*\(/)
 
     const returnedErrorOutbox = query({ data: null, error: new Error('queue unavailable') })
     const thrownOutbox = query({ data: null, error: null }, new Error('outbox offline'))

@@ -148,6 +148,19 @@ type FakeIdentityAttempt = {
   attempted_at: string
 }
 
+type FakeShareLink = {
+  id: string
+  token_hash: string
+  patient_id: string
+  created_by: string
+  recipient_email: string
+  expires_at: string
+  revoked_at: string | null
+  image_id: string | null
+  report_id: string | null
+  created_at: string
+}
+
 const SEEDED_PATIENT: FakePatient = {
   id: '44714471-4471-4471-8471-447144714471',
   user_id: null,
@@ -180,6 +193,7 @@ export const E2_NON_PROVIDER_ACCOUNT_ID = '11551155-1155-4155-8155-115511551155'
 export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
 export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
+export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
@@ -260,7 +274,7 @@ const STUDIES: FakeStudy[] = [
 ]
 const IMAGES = [
   {
-    id: '10000000-0000-4000-8000-000000000001',
+    id: E2_SEEDED_IMAGE_ID,
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     width: 1024,
@@ -428,6 +442,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const staffAdminUserIds = new Set<string>()
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
+  let shareLinks: FakeShareLink[] = []
+  let emailOutbox: Record<string, unknown>[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
     { provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' },
@@ -579,6 +595,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     return [...usersByEmail.values()].find((candidate) => candidate.id === session.userId) ?? null
   }
 
+  function serviceRoleRequest(req: IncomingMessage): boolean {
+    const authorization = req.headers.authorization
+    const apiKey = req.headers.apikey
+    return typeof authorization === 'string' && typeof apiKey === 'string' && authorization === `Bearer ${apiKey}`
+  }
+
   async function handleUpdateUser(req: IncomingMessage, res: ServerResponse): Promise<void> {
     count('updateUser')
     const user = authenticatedUser(req)
@@ -659,6 +681,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     url: URL,
     rows: T[],
   ): T[] {
+    if (serviceRoleRequest(req)) return applyEqualityFilters(rows, url)
     const user = authenticatedUser(req)
     const patientId = user ? patients.find((patient) => patient.user_id === user.id)?.id : undefined
     if (!patientId) return []
@@ -666,6 +689,82 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       rows.filter((row) => row.patient_id === patientId),
       url,
     )
+  }
+
+  async function handleShareLinks(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const caller = authenticatedUser(req)
+    const callerPatientId = caller ? patients.find((patient) => patient.user_id === caller.id)?.id : undefined
+    const visibleRows = serviceRoleRequest(req)
+      ? applyEqualityFilters(shareLinks, url)
+      : callerPatientId
+        ? applyEqualityFilters(shareLinks.filter((link) => link.patient_id === callerPatientId), url)
+        : []
+
+    if (req.method === 'GET') {
+      const rows = url.searchParams.get('order') === 'created_at.desc'
+        ? visibleRows.toSorted((left, right) => right.created_at.localeCompare(left.created_at))
+        : visibleRows
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+
+    if (req.method === 'POST') {
+      const body = await readJsonBody(req)
+      if (!callerPatientId || body.patient_id !== callerPatientId) {
+        sendJson(res, 403, { message: 'share link is not accessible' })
+        return
+      }
+      const row: FakeShareLink = {
+        id: randomUUID(),
+        token_hash: String(body.token_hash),
+        patient_id: callerPatientId,
+        created_by: String(body.created_by),
+        recipient_email: String(body.recipient_email),
+        expires_at: String(body.expires_at),
+        revoked_at: null,
+        image_id: typeof body.image_id === 'string' ? body.image_id : null,
+        report_id: typeof body.report_id === 'string' ? body.report_id : null,
+        created_at: new Date().toISOString(),
+      }
+      shareLinks.push(row)
+      const returnsRepresentation = String(req.headers.prefer ?? '').includes('return=representation')
+      if (returnsRepresentation || String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json')) {
+        sendJson(res, 201, String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json') ? row : [row])
+      } else {
+        res.writeHead(201)
+        res.end()
+      }
+      return
+    }
+
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req)
+      if (!callerPatientId || visibleRows.length === 0) {
+        sendJson(res, 403, { message: 'share link is not accessible' })
+        return
+      }
+      const visibleIds = new Set(visibleRows.map((row) => row.id))
+      shareLinks = shareLinks.map((row) =>
+        visibleIds.has(row.id)
+          ? { ...row, revoked_at: typeof body.revoked_at === 'string' ? body.revoked_at : row.revoked_at }
+          : row,
+      )
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST' || !authenticatedUser(req)) {
+      sendJson(res, req.method === 'POST' ? 403 : 405, { message: 'email outbox is not accessible' })
+      return
+    }
+    emailOutbox.push(await readJsonBody(req))
+    res.writeHead(201)
+    res.end()
   }
 
   function handleSeededRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -1010,6 +1109,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   function resetIdentityState(res: ServerResponse): void {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
     identityAttempts = []
+    shareLinks = []
+    emailOutbox = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
   }
@@ -1090,6 +1191,14 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/patients') {
       void handlePatients(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/share_links') {
+      void handleShareLinks(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/email_outbox') {
+      void handleEmailOutbox(req, res)
       return
     }
     if (
