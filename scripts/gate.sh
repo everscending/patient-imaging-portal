@@ -76,6 +76,7 @@ run_api() {
 
 run_ui() {
   run_api
+  step PLAYWRIGHT_APPOINTMENTS npx playwright test --project=product e2e/appointments.spec.ts
   # e2-wiring depends on product, so this invocation runs the parallel product
   # suite first and the shared-state E2 proof after it.
   step PLAYWRIGHT npx playwright test --project=e2-wiring
