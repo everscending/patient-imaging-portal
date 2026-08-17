@@ -4,6 +4,7 @@ import { ImageViewer, type ImageViewerProps } from '../../../../components/imagi
 import { guardPhiAccess } from '../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../lib/access/identity'
 import { anonClient } from '../../../../lib/db/client'
+import { config } from '../../../../lib/config'
 import { studyDetail } from '../../../../lib/imaging/studies'
 import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
 
@@ -35,7 +36,7 @@ export default async function StudyPage({ params }: { params: Promise<{ studyId:
   return (
     <main>
       <h1>{study.description}</h1>
-      <ImageViewer images={study.images} variant="portal" />
+      <ImageViewer images={study.images} shareLinkTtlHours={config.shareLinkTtlHours} variant="portal" />
     </main>
   )
 }
