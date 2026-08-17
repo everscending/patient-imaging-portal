@@ -126,6 +126,37 @@ describe('mandatory adversarial: incomplete visits and malformed ids reveal neit
 })
 
 describe('mandatory adversarial: frames preserve their declared indexing and keep private keys out of the wire', () => {
+  test('unavailableFramesCrossTheApiPageSeamWithoutInventingAUrl', async function unavailableFramesCrossTheApiPageSeamWithoutInventingAUrl() {
+    const { clipManifest } = await import('../../lib/imaging/studies')
+    const { normalizeClipPayload } = await import('../../app/(patient)/studies/[studyId]/clips/[clipId]/clip-payload')
+    const manifest = await clipManifest(
+      client({
+        cine_clips: [{ id: clipId, study_id: studyId, frame_count: 2, default_fps: 17, poster_key: null }],
+        studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
+        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-a' }],
+      }),
+      studyId,
+      clipId,
+    )
+    const wirePayload: unknown = await Response.json(manifest).json()
+
+    expect((wirePayload as { frames: unknown[] }).frames).toEqual([
+      { index: 0, url: 'https://signed.example/frame-a', available: true },
+      { index: 1, available: false },
+    ])
+    expect(normalizeClipPayload(wirePayload)).toMatchObject({
+      frames: [
+        { index: 0, url: 'https://signed.example/frame-a', available: true },
+        { index: 1, url: null, available: false },
+      ],
+    })
+    expect(normalizeClipPayload({
+      ...(wirePayload as Record<string, unknown>),
+      frames: [{ index: 0, available: true }],
+    })).toBeNull()
+  })
+
   test('framesRemainIndexedWhenRowsOrObjectsAreMissing', async function framesRemainIndexedWhenRowsOrObjectsAreMissing() {
     const { clipManifest } = await import('../../lib/imaging/studies')
     const result = await clipManifest(

@@ -19,7 +19,10 @@ type Manifest = {
   frameCount: number
   defaultFps: number
   expiresAt: string
-  frames: Array<{ index: number; url: string | null; available: boolean }>
+  frames: Array<
+    | { index: number; url: string; available: true }
+    | { index: number; url?: null; available: false }
+  >
 }
 
 function manifest(frames: Manifest['frames'], defaultFps = 17): Manifest {
@@ -105,7 +108,7 @@ test.describe.serial('cine viewer', () => {
     await signInLinkedPatient(page.request, seededPatient)
     await openClip(page, manifest([
       { index: 0, available: true, url: '/missing-cine-frame.svg' },
-      { index: 1, available: false, url: null },
+      { index: 1, available: false },
     ], 1))
     await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
     await expect(page.locator('.cine-viewer__frame')).toHaveAttribute('aria-busy', 'true')
@@ -121,9 +124,9 @@ test.describe.serial('cine viewer', () => {
     await expect(page.getByTestId('cine-frame-gap')).toHaveText('Frame 1 unavailable')
 
     await openClip(page, manifest([
-      { index: 0, available: false, url: null },
-      { index: 1, available: false, url: null },
-      { index: 2, available: false, url: null },
+      { index: 0, available: false },
+      { index: 1, available: false },
+      { index: 2, available: false },
     ], 1))
     await expect(page.getByTestId('cine-frame-gap')).toHaveText('Frame 0 unavailable')
     await expect(page.getByText('3 of 3 frames unavailable — playback continues', { exact: true })).toBeVisible()
@@ -158,8 +161,8 @@ test.describe.serial('cine viewer', () => {
     await signInLinkedPatient(page.request, seededPatient)
     await page.setViewportSize({ width: 390, height: 844 })
     await openClip(page, manifest([
-      { index: 0, available: false, url: null },
-      { index: 1, available: false, url: null },
+      { index: 0, available: false },
+      { index: 1, available: false },
     ]))
     await expect(page.locator('h1')).toHaveCount(1)
     await page.getByTestId('cine-next').focus()

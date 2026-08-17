@@ -4,31 +4,9 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { CineViewer } from '@/components/imaging/CineViewer'
 import type { CineViewerProps } from '@/components/imaging/CineViewer'
+import { normalizeClipPayload } from './clip-payload'
 
 type Clip = CineViewerProps['clip']
-
-function isFrame(value: unknown): value is Clip['frames'][number] {
-  if (!value || typeof value !== 'object') return false
-  const frame = value as Partial<Clip['frames'][number]>
-  return (
-    Number.isInteger(frame.index) &&
-    typeof frame.available === 'boolean' &&
-    (typeof frame.url === 'string' || frame.url === null)
-  )
-}
-
-function isClip(value: unknown): value is Clip {
-  if (!value || typeof value !== 'object') return false
-  const clip = value as Partial<Clip>
-  return (
-    typeof clip.id === 'string' &&
-    typeof clip.frameCount === 'number' &&
-    typeof clip.defaultFps === 'number' &&
-    typeof clip.expiresAt === 'string' &&
-    Array.isArray(clip.frames) &&
-    clip.frames.every(isFrame)
-  )
-}
 
 export default function CineClipPage() {
   const params = useParams<{ studyId: string; clipId: string }>()
@@ -55,18 +33,12 @@ export default function CineClipPage() {
         }
         const payload: unknown = await response.json()
         if (!active) return
-        if (!isClip(payload)) {
+        const normalized = normalizeClipPayload(payload)
+        if (!normalized) {
           setError('This cine clip is unavailable.')
           return
         }
-        setClip({
-          ...payload,
-          frames: payload.frames.map((frame) => ({
-            index: frame.index,
-            url: typeof frame.url === 'string' ? frame.url : null,
-            available: frame.available,
-          })),
-        })
+        setClip(normalized)
       } catch {
         if (active) setError('This cine clip is unavailable.')
       }
