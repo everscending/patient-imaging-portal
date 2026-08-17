@@ -12,11 +12,17 @@ import { errorResponse } from '../../../../../lib/validation/envelope'
 type RouteContext = { params: Promise<{ providerId: string }> }
 const UNKNOWN_ACCOUNT_ID = '00000000-0000-0000-0000-000000000000'
 
-async function authorize(providerId: string): Promise<{ ok: true; callerId: string } | { ok: false; response: Response }> {
-  let callerId: string | null
+async function authenticate(): Promise<{ ok: true; callerId: string | null } | { ok: false; response: Response }> {
+  try {
+    return { ok: true, callerId: await resolveCallerId() }
+  } catch {
+    return { ok: false, response: errorResponse(503, 'availability_unavailable', 'Availability is temporarily unavailable.') }
+  }
+}
+
+async function authorize(providerId: string, callerId: string | null): Promise<{ ok: true; callerId: string } | { ok: false; response: Response }> {
   let actor: Awaited<ReturnType<typeof resolveScheduleActor>>
   try {
-    callerId = await resolveCallerId()
     actor = callerId
       ? await resolveScheduleActor(callerId)
       : { kind: 'provider', userId: UNKNOWN_ACCOUNT_ID }
@@ -43,9 +49,15 @@ async function authorize(providerId: string): Promise<{ ok: true; callerId: stri
 }
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
+  const authentication = await authenticate()
+  if (!authentication.ok) return authentication.response
+  if (!authentication.callerId) {
+    const authorization = await authorize((await context.params).providerId, null)
+    return authorization.ok ? errorResponse(401, 'session_required', 'Sign in to continue.') : authorization.response
+  }
   const parsedParams = parseParams(availabilityParamsSchema, await context.params)
   if (!parsedParams.ok) return parsedParams.response
-  const authorization = await authorize(parsedParams.value.providerId)
+  const authorization = await authorize(parsedParams.value.providerId, authentication.callerId)
   if (!authorization.ok) return authorization.response
 
   try {
@@ -56,12 +68,18 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+  const authentication = await authenticate()
+  if (!authentication.ok) return authentication.response
+  if (!authentication.callerId) {
+    const authorization = await authorize((await context.params).providerId, null)
+    return authorization.ok ? errorResponse(401, 'session_required', 'Sign in to continue.') : authorization.response
+  }
   const parsedParams = parseParams(availabilityParamsSchema, await context.params)
   if (!parsedParams.ok) return parsedParams.response
-  const authorization = await authorize(parsedParams.value.providerId)
-  if (!authorization.ok) return authorization.response
   const parsedBody = await parseBody(availabilityPatchSchema, request)
   if (!parsedBody.ok) return parsedBody.response
+  const authorization = await authorize(parsedParams.value.providerId, authentication.callerId)
+  if (!authorization.ok) return authorization.response
 
   try {
     const result = await applyAvailability({

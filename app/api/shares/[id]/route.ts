@@ -11,11 +11,12 @@ import { errorResponse, noContentResponse } from '../../../../lib/validation/env
 void (null as unknown as Actor)
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
+  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
+  if (!token) return errorResponse(401, 'session_required', 'Sign in to continue.')
   const parsed = parseParams(shareParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
-  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
   const userId = await resolveCallerId()
-  if (!token || !userId) return errorResponse(401, 'session_required', 'Sign in to continue.')
+  if (!userId) return errorResponse(401, 'session_required', 'Sign in to continue.')
   const { data, error } = await anonClient(token).from('patients').select('id').eq('user_id', userId).maybeSingle()
   if (error || !data) return errorResponse(404, 'not_found', 'The requested resource was not found.')
   try {

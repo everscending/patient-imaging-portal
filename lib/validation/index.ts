@@ -16,6 +16,15 @@ function validationFailed<T>(): ParseResult<T> {
   return { ok: false, response: errorResponse(422, 'validation_failed', VALIDATION_FAILED_MESSAGE) }
 }
 
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel()
+  } catch {
+    // A broken request stream is still malformed input. Its transport error is
+    // never allowed to replace the shared, no-PHI validation envelope.
+  }
+}
+
 /**
  * Rejects a malformed, oversized or out-of-range body with 422 validation_failed.
  * "Oversized" is larger than `config.maxRequestBodyBytes` (ADR-0012).
@@ -41,15 +50,20 @@ export async function parseBody<T>(schema: ZodType<T>, request: Request): Promis
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let totalBytes = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    totalBytes += value.byteLength
-    if (totalBytes > config.maxRequestBodyBytes) {
-      await reader.cancel()
-      return validationFailed()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      if (totalBytes > config.maxRequestBodyBytes) {
+        await cancelReader(reader)
+        return validationFailed()
+      }
+      chunks.push(value)
     }
-    chunks.push(value)
+  } catch {
+    await cancelReader(reader)
+    return validationFailed()
   }
 
   const bytes = new Uint8Array(totalBytes)
@@ -67,9 +81,13 @@ export async function parseBody<T>(schema: ZodType<T>, request: Request): Promis
     return validationFailed()
   }
 
-  const result = schema.safeParse(json)
-  if (!result.success) return validationFailed()
-  return { ok: true, value: result.data }
+  try {
+    const result = schema.safeParse(json)
+    if (!result.success) return validationFailed()
+    return { ok: true, value: result.data }
+  } catch {
+    return validationFailed()
+  }
 }
 
 /** Validates the request's query string. Unknown parameters are rejected. */

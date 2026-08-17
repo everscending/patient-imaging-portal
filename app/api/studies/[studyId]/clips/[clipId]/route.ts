@@ -13,13 +13,13 @@ function denied(status: 401 | 403 | 404): Response {
   return errorResponse(404, 'not_found', 'The requested resource was not found.')
 }
 export async function GET(_: Request, context: { params: Promise<Record<string, string>> }): Promise<Response> {
+  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
+  if (!token) return denied(401)
   const parsed = parseParams(studyClipParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
   const callerId = await resolveCallerId()
   const access = await guardPhiAccess({ kind: 'patient', userId: callerId ?? '' }, { kind: 'clip', id: parsed.value.clipId }, 'clip.view')
   if (!access.ok) return denied(access.status)
-  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
-  if (!token) return denied(401)
   const manifest = await clipManifest(anonClient(token), parsed.value.studyId, parsed.value.clipId)
   return manifest ? Response.json(manifest) : denied(404)
 }

@@ -26,6 +26,8 @@ async function caller(): Promise<{ userId: string; patientId: string | null } | 
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
+  if (!token) return accessError(401)
   const parsed = await parseBody(createShareSchema, request)
   if (!parsed.ok) return parsed.response
   const actor = await caller()

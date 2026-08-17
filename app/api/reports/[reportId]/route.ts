@@ -27,15 +27,17 @@ async function resolveActor(accessToken: string, userId: string): Promise<Actor>
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ reportId: string }> }): Promise<Response> {
+  const cookieStore = await cookies()
+  const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (!accessToken) return accessError(401)
+
   const parsed = parseParams(reportParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
 
-  const cookieStore = await cookies()
-  const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
   const callerId = await resolveCallerId()
 
-  const actor = accessToken && callerId ? await resolveActor(accessToken, callerId) : { kind: 'patient' as const, userId: '' }
-  const result = await getReport(actor, accessToken ?? '', parsed.value.reportId)
+  const actor = callerId ? await resolveActor(accessToken, callerId) : { kind: 'patient' as const, userId: '' }
+  const result = await getReport(actor, accessToken, parsed.value.reportId)
   if (!result.ok) return accessError(result.status)
   return Response.json(result.value, { status: 200 })
 }
