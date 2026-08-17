@@ -7,7 +7,7 @@ import { config } from '../config'
 import { anonClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 import { toRfc3339 } from '../time/zones'
-import { allowedTransitions, canChange, type AppointmentStatus, type SchedulingRole } from './lifecycle'
+import { allowedTransitions, canChange, type AppointmentStatus, type ClinicianTransitionStatus, type SchedulingRole } from './lifecycle'
 
 type Transition = 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -36,6 +36,10 @@ export type ChangeResult =
 
 type ChangeError = Extract<ChangeResult, { ok: false }>['error']
 
+export type TransitionResult =
+  | { ok: true; appointment: AppointmentDto }
+  | { ok: false; error: 'invalid_transition' }
+
 type AppointmentRpcRow = {
   appointment_id: string | null
   starts_at: string | null
@@ -59,6 +63,15 @@ type ChangeRpcRow = AppointmentRpcRow & {
 
 type CallerClient = ReturnType<typeof anonClient>
 
+type AppointmentSelectRow = {
+  id: string
+  status: AppointmentStatus
+  out_of_hours: boolean
+  slots: { starts_at: string; ends_at: string } | Array<{ starts_at: string; ends_at: string }> | null
+  providers: { full_name: string; time_zone: string } | Array<{ full_name: string; time_zone: string }> | null
+  services: { name: string } | Array<{ name: string }> | null
+}
+
 const CHANGE_ERRORS = new Set<ChangeError>(['slot_unavailable', 'minimum_notice', 'not_reschedulable'])
 
 async function callerClient() {
@@ -80,9 +93,11 @@ async function resolveActorRole(client: CallerClient, actorUserId: string): Prom
     client.from('staff_admins').select('id').eq('user_id', actorUserId).maybeSingle(),
   ])
   if (patient.error || provider.error || admin.error) throw new Error('booking: actor role could not be resolved')
-  if (patient.data) return 'patient'
+  // Keep persisted transition authority aligned with the route guard: a dual-role
+  // clinician acts as a provider/admin without widening patient-only transitions.
   if (provider.data) return 'provider'
   if (admin.data) return 'admin'
+  if (patient.data) return 'patient'
   throw new Error('booking: actor has no scheduling role')
 }
 
@@ -113,6 +128,79 @@ function appointmentDto(row: AppointmentRpcRow, role: SchedulingRole): Appointme
     changeDeadline: toRfc3339(providerTimeZone, changeDeadline),
     allowedTransitions: transitions,
   }
+}
+
+function selectedAppointmentDto(row: AppointmentSelectRow, role: SchedulingRole): AppointmentDto {
+  const slot = Array.isArray(row.slots) ? row.slots[0] : row.slots
+  const provider = Array.isArray(row.providers) ? row.providers[0] : row.providers
+  const service = Array.isArray(row.services) ? row.services[0] : row.services
+  return appointmentDto({
+    appointment_id: row.id,
+    starts_at: slot?.starts_at ?? null,
+    ends_at: slot?.ends_at ?? null,
+    appointment_status: row.status,
+    provider_name: provider?.full_name ?? null,
+    provider_time_zone: provider?.time_zone ?? null,
+    service_name: service?.name ?? null,
+    out_of_hours: row.out_of_hours,
+  }, role)
+}
+
+const APPOINTMENT_SELECT = 'id,status,out_of_hours,slots!inner(starts_at,ends_at),providers!inner(full_name,time_zone),services!inner(name)'
+
+export async function bookForActor(input: {
+  slotId: string
+  serviceId: string
+  idempotencyKey: string
+  actorUserId: string
+}): Promise<BookResult> {
+  const client = await callerClient()
+  const { data, error } = await client.from('patients').select('id').eq('user_id', input.actorUserId).maybeSingle()
+  if (error) throw new Error('booking: caller patient could not be resolved')
+  const patient = data as { id: string } | null
+  if (!patient) throw new Error('booking: caller is not a patient')
+  return book({ ...input, patientId: patient.id })
+}
+
+/** RLS scopes the collection; this module only shapes it into the public DTO. */
+export async function listAppointments(actorUserId: string): Promise<AppointmentDto[]> {
+  const client = await callerClient()
+  const role = await resolveActorRole(client, actorUserId)
+  const { data, error } = await client.from('appointments').select(APPOINTMENT_SELECT).order('created_at', { ascending: false })
+  if (error) throw new Error('booking: appointment list failed')
+  return ((data ?? []) as unknown as AppointmentSelectRow[]).map((row) => selectedAppointmentDto(row, role))
+}
+
+/** Persists a lifecycle edge after consulting lifecycle.ts's sole matrix. */
+export async function transition(input: {
+  appointmentId: string
+  status: ClinicianTransitionStatus
+  actorUserId: string
+}): Promise<TransitionResult> {
+  const client = await callerClient()
+  const role = await resolveActorRole(client, input.actorUserId)
+  const { data: currentData, error: currentError } = await client
+    .from('appointments')
+    .select(APPOINTMENT_SELECT)
+    .eq('id', input.appointmentId)
+    .maybeSingle()
+  if (currentError) throw new Error('booking: appointment transition read failed')
+  const current = currentData as AppointmentSelectRow | null
+  if (!current) return { ok: false, error: 'invalid_transition' }
+  const currentDto = selectedAppointmentDto(current, role)
+  if (!currentDto.allowedTransitions.includes(input.status)) return { ok: false, error: 'invalid_transition' }
+
+  const { data, error } = await client.rpc('transition_appointment', {
+    p_appointment_id: input.appointmentId,
+    p_status: input.status,
+    p_actor_user_id: input.actorUserId,
+  })
+  if (error) throw new Error('booking: appointment transition write failed')
+  const row = (Array.isArray(data) ? data[0] : data) as ChangeRpcRow | null
+  if (!row) throw new Error('booking: appointment transition returned no result')
+  if (row.result_error === 'invalid_transition') return { ok: false, error: 'invalid_transition' }
+  if (row.result_error !== null) throw new Error('booking: appointment transition returned an invalid result')
+  return { ok: true, appointment: appointmentDto(row, role) }
 }
 
 function isChangeError(error: string): error is ChangeError {
