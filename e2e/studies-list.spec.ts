@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
-import type { Page } from '@playwright/test'
+import type { APIRequestContext, Page } from '@playwright/test'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
+const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
 
 const completedStudies = [
   {
@@ -31,16 +32,38 @@ async function fakeAuthServerUrl(): Promise<string> {
   return (JSON.parse(raw) as { url: string }).url
 }
 
-async function linkedSession(page: Page): Promise<void> {
+async function acquireIdentityFixture(): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(IDENTITY_FIXTURE_LOCK)
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  throw new Error('identity fixture lock timed out')
+}
+
+async function resetIdentity(request: APIRequestContext): Promise<void> {
+  const response = await request.post(`${await fakeAuthServerUrl()}/__test__/reset-identity`)
+  expect(response.status()).toBe(200)
+}
+
+async function signedInSession(page: Page): Promise<void> {
   const email = `studies-${Date.now()}-${Math.random()}@example.test`
-  await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })
-  await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })
-  const token = (await page.context().cookies()).find((cookie) => cookie.name === 'pip_session')?.value
-  expect(token).toBeTruthy()
-  await page.request.put(`${await fakeAuthServerUrl()}/auth/v1/user`, {
-    headers: { Authorization: `Bearer ${token}` },
-    data: { data: { patient_id: '44714471-4471-4471-8471-447144714471' } },
+  expect((await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
+  expect((await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
+}
+
+async function linkedSession(page: Page): Promise<void> {
+  await signedInSession(page)
+  const response = await page.request.post('/api/identity/verify', {
+    data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
+    headers: { 'x-forwarded-for': `192.0.2.${Math.floor(Math.random() * 200) + 1}` },
   })
+  expect(response.status()).toBe(200)
 }
 
 async function showStudies(page: Page, body: unknown): Promise<void> {
@@ -50,6 +73,10 @@ async function showStudies(page: Page, body: unknown): Promise<void> {
   })
   await page.goto('/studies')
 }
+
+test.beforeAll(acquireIdentityFixture)
+test.afterAll(async () => rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true }))
+test.beforeEach(async ({ request }) => resetIdentity(request))
 
 test('acceptance: completedVisitCards_matchSeededData_andScheduledCancelledNeverAppear', async ({ page }) => {
   await showStudies(page, { studies: completedStudies })
@@ -120,6 +147,7 @@ test('mandatory adversarial: studies_pageDoesNotClientFilterVisitStatus', async 
 })
 
 test('mandatory adversarial: studies_unlinkedStateDoesNotRenderStudyPhi', async ({ page }) => {
+  await signedInSession(page)
   await page.goto('/studies')
   await expect(page).toHaveURL(/\/verify\?next=%2Fstudies$/)
   const body = await page.locator('body').innerText()
