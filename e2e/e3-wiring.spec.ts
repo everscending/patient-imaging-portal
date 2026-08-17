@@ -22,7 +22,14 @@ import {
 
 const PASSWORD = 'CorrectHorseBattery9'
 const SEEDED_PATIENT = { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' }
+const FIRST_FRAME_DEADLINE_MS = 4_000
 let identityFixtureLockToken: string | undefined
+
+type PlaybackSample = {
+  frame: number
+  presentedAs: string | null
+  at: number
+}
 
 async function resetIdentity(request: APIRequestContext): Promise<void> {
   // The test-only hook lives on the committed fake Supabase service, not the
@@ -100,11 +107,85 @@ test.describe.serial('JOR-231 E3 imaging wiring', () => {
     await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 2 of 100')
     await page.getByTestId('cine-prev').click()
     await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 1 of 100')
+
+    await page.evaluate(() => {
+      const slider = document.querySelector<HTMLInputElement>('input[aria-label="Frame scrubber"]')
+      const frameContainer = document.querySelector<HTMLElement>('.cine-viewer__frame')
+      if (!slider || !frameContainer) throw new Error('cine playback observer could not find the viewer')
+
+      const samples: PlaybackSample[] = []
+      const presentedFrames = new Set<number>()
+      const playbackWindow = window as typeof window & {
+        __e3Playback?: { observer: MutationObserver; samples: PlaybackSample[]; presentedFrames: Set<number> }
+      }
+
+      const currentFrame = (): number => Number(slider.getAttribute('aria-valuetext')?.match(/Frame (\d+) of/)?.[1])
+      const observePresentation = (frame: number): string | null => {
+        const gap = frameContainer.querySelector<HTMLElement>('[data-testid="cine-frame-gap"]')
+        if (gap) {
+          presentedFrames.add(frame)
+          return gap.textContent?.trim() ?? null
+        }
+        const image = frameContainer.querySelector<HTMLImageElement>('img')
+        if (!image) return null
+        const presentedAs = image.alt
+        const markLoaded = (): void => {
+          if (image.isConnected && currentFrame() === frame && image.naturalWidth > 0) presentedFrames.add(frame)
+        }
+        if (image.complete) markLoaded()
+        else image.addEventListener('load', markLoaded, { once: true })
+        return presentedAs
+      }
+      const record = (): void => {
+        const frame = currentFrame()
+        samples.push({ frame, presentedAs: observePresentation(frame), at: performance.now() })
+      }
+
+      record()
+      const observer = new MutationObserver(record)
+      observer.observe(slider, { attributes: true, attributeFilter: ['aria-valuetext'] })
+      playbackWindow.__e3Playback = { observer, samples, presentedFrames }
+    })
+
     await page.getByTestId('cine-play').click()
     await expect(page.getByTestId('cine-play')).toHaveText('Pause')
-    await expect(page.getByRole('slider', { name: 'Frame scrubber' })).not.toHaveAttribute('aria-valuetext', 'Frame 1 of 100')
+    await expect.poll(
+      () => page.evaluate(() => {
+        const playbackWindow = window as typeof window & { __e3Playback?: { samples: PlaybackSample[] } }
+        return (playbackWindow.__e3Playback?.samples.length ?? 0) >= 101
+      }),
+      { timeout: 8_000 },
+    ).toBe(true)
     await page.getByTestId('cine-play').click()
     await expect(page.getByTestId('cine-play')).toHaveText('Play')
+
+    const playback = await page.evaluate(() => {
+      const playbackWindow = window as typeof window & {
+        __e3Playback?: { observer: MutationObserver; samples: PlaybackSample[]; presentedFrames: Set<number> }
+      }
+      const observed = playbackWindow.__e3Playback
+      if (!observed) throw new Error('cine playback observer was not installed')
+      observed.observer.disconnect()
+      return { samples: observed.samples, presentedFrames: [...observed.presentedFrames] }
+    })
+    const firstCycle = playback.samples.slice(0, 101)
+    expect(firstCycle.map(({ frame }) => frame)).toEqual(
+      Array.from({ length: 101 }, (_, index) => (index % 100) + 1),
+    )
+    for (const sample of firstCycle.slice(0, 100)) {
+      expect(sample.presentedAs).toBe(
+        sample.frame === E3_MISSING_CINE_FRAME_INDEX + 1
+          ? `Frame ${E3_MISSING_CINE_FRAME_INDEX} unavailable`
+          : `Cine frame ${sample.frame}`,
+      )
+    }
+    expect(playback.presentedFrames.sort((left, right) => left - right)).toEqual(
+      Array.from({ length: 100 }, (_, index) => index + 1),
+    )
+    const cycleDurationMs = firstCycle[100]!.at - firstCycle[0]!.at
+    expect(cycleDurationMs).toBeGreaterThan(3_500)
+    expect(cycleDurationMs).toBeLessThan(5_000)
+
     await page.getByTestId('cine-fps').selectOption('30')
     await expect(page.getByTestId('cine-fps')).toHaveValue('30')
   })
@@ -151,9 +232,24 @@ test.describe.serial('JOR-231 E3 imaging wiring', () => {
       await expect(page.getByText('Loading cine clip…', { exact: true })).toBeVisible()
       await expect(page.getByTestId('cine-viewer')).toBeVisible()
       await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+      const firstFrame = page.locator('img[alt="Cine frame 1"]')
+      await expect.poll(
+        () => firstFrame.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
+        { timeout: FIRST_FRAME_DEADLINE_MS },
+      ).toBe(true)
+      await expect(firstFrame).toBeVisible()
+      await expect(page.locator('.cine-viewer__frame')).toHaveAttribute('aria-busy', 'false')
       await expect(page.getByTestId('cine-next')).toBeEnabled()
       await page.getByTestId('cine-next').click()
       await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 2 of 100')
+      await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+      await page.getByTestId('cine-prev').click()
+      await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 1 of 100')
+      await page.getByTestId('cine-next').click()
+      await expect.poll(
+        () => page.locator('img[alt="Cine frame 2"]').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
+        { timeout: FIRST_FRAME_DEADLINE_MS },
+      ).toBe(true)
     } finally {
       await session.send('Network.emulateNetworkConditionsByRule', {
         offline: false,
