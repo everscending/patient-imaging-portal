@@ -197,7 +197,7 @@ test.describe.serial('JOR-239 shared recipient', () => {
     expect(configSource).toContain("source: '/s/:token'")
     expect(configSource).toContain('no-store')
     const mergeBase = execFileSync('git', ['merge-base', 'origin/main', 'HEAD']).toString().trim()
-    const changedFiles = execFileSync('git', ['diff', '--name-only', mergeBase])
+    const changedFiles = execFileSync('git', ['diff', '--name-only', mergeBase, 'HEAD'])
       .toString()
       .trim()
       .split('\n')
