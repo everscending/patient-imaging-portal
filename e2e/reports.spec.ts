@@ -87,7 +87,7 @@ test.describe.serial('JOR-218 reports', () => {
       .flat()
       .sort()
     expect(matchingFiles).toEqual([rendererPath])
-    expect(source).toMatch(/export type ReportViewProps = \{\s*report: \{\s*id: string\s*studyId: string\s*studyDescription: string\s*patientRef: string\s*findings: string\s*impression: string\s*signedByName: string\s*signedAt: string\s*\}\s*variant: 'portal' \| 'shared'\s*\}/)
+    expect(source).toMatch(/export type ReportViewProps = \{\s*report: \{\s*id: string\s*studyId: string\s*studyDescription: string\s*patientRef: string\s*findings: string\s*impression: string\s*signedByName: string\s*signedAt: string\s*\}\s*shareLinkTtlHours: number\s*variant: 'portal' \| 'shared'\s*\}/)
   })
 
   test('reportPathHasNoHexColourLiterals', async () => {
@@ -95,6 +95,7 @@ test.describe.serial('JOR-218 reports', () => {
       readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/ReportDetailClient.tsx'), 'utf8'),
     ])
     expect(sources.join('\n')).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
@@ -104,6 +105,7 @@ test.describe.serial('JOR-218 reports', () => {
       readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/ReportDetailClient.tsx'), 'utf8'),
     ])
     expect(sources.join('\n')).not.toContain('dangerouslySetInnerHTML')
   })
@@ -112,6 +114,7 @@ test.describe.serial('JOR-218 reports', () => {
     const source = await readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8')
     expect(source).toContain("import { ShareDialog } from '../../components/share/ShareDialog'")
     expect(source).toMatch(/variant === 'portal'[\s\S]*<ShareDialog[\s\S]*resourceKind="report"[\s\S]*resourceId=\{report\.id\}/)
+    expect(source).toContain('shareLinkTtlHours={shareLinkTtlHours}')
     expect(source).not.toContain('/shares?reportId=')
   })
 

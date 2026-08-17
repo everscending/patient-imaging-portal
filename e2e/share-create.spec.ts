@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 
+import { config } from '../lib/config'
 import { E2_SEEDED_REPORT_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
 import {
   acquireIdentityFixtureLock,
@@ -59,6 +60,15 @@ test.describe.serial('JOR-236 sharing', () => {
     await expect(page.getByTestId('share-create')).toHaveCount(1)
     await page.goto(`/reports/${E2_SEEDED_REPORT_ID}`)
     await expect(page.getByTestId('share-create')).toHaveCount(1)
+  })
+
+  test('reportDialogRendersConfiguredTtl', async ({ page }) => {
+    await registerAndLink(page)
+    await page.goto(`/reports/${E2_SEEDED_REPORT_ID}`)
+    await page.getByTestId('share-create').click()
+    await expect(page.getByRole('dialog', { name: 'Share secure link' })).toContainText(
+      `expires after ${config.shareLinkTtlHours} hours`,
+    )
   })
 
   test('malformedEmailSurfaces422WithoutLink', async ({ page }) => {
@@ -129,9 +139,13 @@ test.describe.serial('JOR-236 sharing', () => {
   })
 
   test('configuredTtlNeverLiteralizes48', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'components/share/ShareDialog.tsx'), 'utf8')
-    expect(source).toContain('shareLinkTtlHours')
-    expect(source).not.toContain('48')
+    const sources = await Promise.all([
+      'components/share/ShareDialog.tsx',
+      'lib/reports/ReportView.tsx',
+      'app/(patient)/reports/[reportId]/ReportDetailClient.tsx',
+    ].map((file) => readFile(path.join(REPO_ROOT, file), 'utf8')))
+    expect(sources.every((source) => source.includes('shareLinkTtlHours'))).toBe(true)
+    expect(sources.join('\n')).not.toContain('48')
   })
 
   test('shareSurfacesContainNoHexColorLiterals', async () => {
