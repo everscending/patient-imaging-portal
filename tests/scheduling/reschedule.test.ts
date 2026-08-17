@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const {
@@ -86,6 +88,11 @@ function expectOnlyRoleReadsAndRpc(expectedRpcCalls = 1): void {
     Array.from({ length: expectedRpcCalls }, () => ['patients', 'providers', 'staff_admins']).flat(),
   )
   expect(rpcMock).toHaveBeenCalledTimes(expectedRpcCalls)
+}
+
+function oppositeMovesDeadlock(firstLockOrder: string[], secondLockOrder: string[]): boolean {
+  if (firstLockOrder[0] === secondLockOrder[0]) return false
+  return firstLockOrder[1] === secondLockOrder[0] && secondLockOrder[1] === firstLockOrder[0]
 }
 
 beforeEach(() => {
@@ -224,6 +231,15 @@ describe('reschedule/cancel — single-RPC orchestration and ChangeResult mappin
   })
 
   test('reschedule_concurrentOppositeSwaps_issueExactlyOneOrderedDatabaseRpcEachAndNoMultiCallSubstitute', async () => {
+    const migration = readFileSync('db/migrations/007_reschedule_cancel_appointments.sql', 'utf8')
+    expect(migration).toMatch(
+      /where s\.id in \(v_appointment\.slot_id, p_slot_id\)\s+order by s\.id\s+for update/,
+    )
+    const leftSlot = '11111111-1111-4111-8111-111111111111'
+    const rightSlot = '99999999-9999-4999-8999-999999999999'
+    expect(oppositeMovesDeadlock([leftSlot, rightSlot], [rightSlot, leftSlot])).toBe(true)
+    expect(oppositeMovesDeadlock([leftSlot, rightSlot], [leftSlot, rightSlot])).toBe(false)
+
     rpcMock
       .mockResolvedValueOnce({ data: successRow({ appointment_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }), error: null })
       .mockResolvedValueOnce({ data: successRow({ appointment_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }), error: null })
