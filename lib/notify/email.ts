@@ -38,7 +38,13 @@ export async function sendEmail(message: EmailMessage): Promise<SendOutcome> {
   if (validationError) {
     return { outcome: 'failed', transport: config.emailTransport, error: validationError }
   }
-  if (config.emailTransport === 'log') return sendViaLog(message)
+  if (config.emailTransport === 'log') {
+    try {
+      return await sendViaLog(message)
+    } catch {
+      return { outcome: 'failed', transport: 'log', error: safeTransportError() }
+    }
+  }
   return sendViaResend(message)
 }
 

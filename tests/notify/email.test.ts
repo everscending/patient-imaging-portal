@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { EmailMessage } from '../../lib/notify/email'
@@ -135,6 +136,25 @@ describe('log transport — acceptance: GAP-3 keyless fallback', () => {
     expect(written.text).toBe(
       "You have an appointment in 24 hours.\n\nhttps://app.example.com/appointments\n\nSign in to see the details, or to change or cancel it.",
     )
+  })
+
+  test('a log transport filesystem failure resolves with a fixed safe outcome', async () => {
+    const blockedCwd = await mkdtemp(path.join(tmpdir(), 'email-log-write-failure-'))
+    await writeFile(path.join(blockedCwd, '.local'), 'not a directory')
+    const originalCwd = process.cwd()
+
+    try {
+      process.chdir(blockedCwd)
+      const { sendEmail } = await loadEmail()
+      await expect(sendEmail({
+        to: 'recipient@example.com',
+        subject: APPOINTMENT_REMINDER_SUBJECT,
+        text: appointmentReminderText('https://app.example.com'),
+      })).resolves.toEqual({ outcome: 'failed', transport: 'log', error: 'email delivery failed' })
+    } finally {
+      process.chdir(originalCwd)
+      await rm(blockedCwd, { recursive: true, force: true })
+    }
   })
 })
 
