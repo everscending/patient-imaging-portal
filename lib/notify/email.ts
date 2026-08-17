@@ -40,7 +40,7 @@ export async function sendEmail(message: EmailMessage): Promise<SendOutcome> {
   }
   if (config.emailTransport === 'log') {
     try {
-      return await sendViaLog(message)
+      return await withinTimeout(sendViaLog(message))
     } catch {
       return { outcome: 'failed', transport: 'log', error: safeTransportError() }
     }
