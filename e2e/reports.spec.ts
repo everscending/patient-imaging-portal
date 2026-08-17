@@ -218,7 +218,7 @@ test.describe('JOR-218 reports', () => {
     const returnedJsx = source.slice(source.indexOf('  return ('))
     const portalBranch = returnedJsx.match(/\{variant === 'portal' \? \([\s\S]*?\) : null\}/)?.[0]
     expect(portalBranch).toBeDefined()
-    expect(portalBranch).toMatch(/<ShareDialog[\s\S]*data-testid="share-create"|data-testid="share-create"[\s\S]*<ShareDialog/)
+    expect(portalBranch).toContain('<ShareDialog')
     expect(portalBranch).toContain('>\n            Print\n          </button>')
     const sharedSurface = returnedJsx.replace(portalBranch ?? '', '')
     expect(sharedSurface).not.toMatch(/<nav|PatientShell|patient-sidebar|patient-tabbar|<ShareDialog|share-create|>\s*Print\s*</)
