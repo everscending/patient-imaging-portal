@@ -1,7 +1,7 @@
 // JOR-218 — reports UI acceptance and adversarial checks.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test as base } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
@@ -11,6 +11,7 @@ import { E2_SEEDED_REPORT_ID } from './fixtures/fake-auth-server'
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
 const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
+const REPORT_VIEW_DECLARATION = /function\s+\w*ReportView|const\s+\w*ReportView/
 
 type IdentityFixtureLease = {
   release: () => Promise<void>
@@ -63,6 +64,23 @@ async function resetIdentity(request: APIRequestContext): Promise<void> {
   expect(response.ok()).toBe(true)
 }
 
+async function filesWithReportViewDeclaration(directory: string): Promise<string[]> {
+  const matches: string[] = []
+  const entries = await readdir(directory, { withFileTypes: true })
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
+    const entryPath = path.join(directory, entry.name)
+    if (entry.isDirectory()) {
+      matches.push(...(await filesWithReportViewDeclaration(entryPath)))
+    } else if (entry.isFile() && /\.tsx?$/.test(entry.name)) {
+      if (REPORT_VIEW_DECLARATION.test(await readFile(entryPath, 'utf8'))) matches.push(entryPath)
+    }
+  }
+
+  return matches
+}
+
 const test = base.extend<{ identityFixtureLease: void }>({
   identityFixtureLease: [
     async ({ request }, use) => {
@@ -107,19 +125,13 @@ test.describe('JOR-218 reports', () => {
   test('oneRendererEnforcementIsPinned', async () => {
     const rendererPath = path.join(REPO_ROOT, 'lib/reports/ReportView.tsx')
     const source = await readFile(rendererPath, 'utf8')
-    const matchingFiles = execFileSync('rg', [
-      '--files-with-matches',
-      '--glob',
-      '*.{ts,tsx}',
-      'function\\s+\\w*ReportView|const\\s+\\w*ReportView',
-      path.join(REPO_ROOT, 'lib'),
-      path.join(REPO_ROOT, 'app'),
-      path.join(REPO_ROOT, 'components'),
-    ])
-      .toString()
-      .trim()
-      .split('\n')
-      .filter(Boolean)
+    const matchingFiles = (
+      await Promise.all(
+        ['lib', 'app', 'components'].map((root) => filesWithReportViewDeclaration(path.join(REPO_ROOT, root))),
+      )
+    )
+      .flat()
+      .sort()
     expect(matchingFiles).toEqual([rendererPath])
     expect(source).toMatch(/export type ReportViewProps = \{\s*report: \{\s*id: string\s*studyId: string\s*studyDescription: string\s*patientRef: string\s*findings: string\s*impression: string\s*signedByName: string\s*signedAt: string\s*\}\s*variant: 'portal' \| 'shared'\s*\}/)
   })
