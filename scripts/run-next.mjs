@@ -15,8 +15,14 @@ if (mode !== 'dev' && mode !== 'start') {
 // Invoke this worktree's installed CLI directly. `npx next` may select an
 // enclosing checkout when a lane is started from there, which makes Next
 // discover that checkout's app instead of this one.
+const nextEnv = { ...process.env }
+if (mode === 'dev' && nextEnv.WATCHPACK_POLLING === undefined) {
+  nextEnv.WATCHPACK_POLLING = '1000'
+}
+
 const child = spawn(process.execPath, [NEXT_CLI, mode, REPO_ROOT, '-p', String(config.port)], {
   cwd: REPO_ROOT,
+  env: nextEnv,
   stdio: 'inherit',
 })
 
