@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { EmailMessage } from '../../lib/notify/email'
@@ -9,12 +10,18 @@ import type { EmailMessage } from '../../lib/notify/email'
 // through an injected/stubbed SDK client"). lib/notify/email.ts is the only
 // production module that imports 'resend', so this is the only test file
 // that needs to reach past that boundary.
-const { sendMock, ResendMock } = vi.hoisted(() => {
+const { sendMock, ResendMock, mkdirMock, writeFileMock } = vi.hoisted(() => {
   const sendMock = vi.fn()
   const ResendMock = vi.fn().mockImplementation(() => ({ emails: { send: sendMock } }))
-  return { sendMock, ResendMock }
+  return { sendMock, ResendMock, mkdirMock: vi.fn(), writeFileMock: vi.fn() }
 })
 vi.mock('resend', () => ({ Resend: ResendMock }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  mkdirMock.mockImplementation(actual.mkdir)
+  writeFileMock.mockImplementation(actual.writeFile)
+  return { ...actual, mkdir: mkdirMock, writeFile: writeFileMock }
+})
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const MAIL_DIR = path.join(REPO_ROOT, '.local', 'mail')
@@ -136,6 +143,45 @@ describe('log transport — acceptance: GAP-3 keyless fallback', () => {
       "You have an appointment in 24 hours.\n\nhttps://app.example.com/appointments\n\nSign in to see the details, or to change or cancel it.",
     )
   })
+
+  test('a log transport filesystem failure resolves with a fixed safe outcome', async () => {
+    const blockedCwd = await mkdtemp(path.join(tmpdir(), 'email-log-write-failure-'))
+    await writeFile(path.join(blockedCwd, '.local'), 'not a directory')
+    const originalCwd = process.cwd()
+
+    try {
+      process.chdir(blockedCwd)
+      const { sendEmail } = await loadEmail()
+      await expect(sendEmail({
+        to: 'recipient@example.com',
+        subject: APPOINTMENT_REMINDER_SUBJECT,
+        text: appointmentReminderText('https://app.example.com'),
+      })).resolves.toEqual({ outcome: 'failed', transport: 'log', error: 'email delivery failed' })
+    } finally {
+      process.chdir(originalCwd)
+      await rm(blockedCwd, { recursive: true, force: true })
+    }
+  })
+
+  test('a never-settling log transport write is bounded by the configured timeout', async () => {
+    vi.useFakeTimers()
+    writeFileMock.mockImplementationOnce(() => new Promise<void>(() => {}))
+
+    try {
+      const { sendEmail } = await loadEmail({ EMAIL_SEND_TIMEOUT_MS: '25' })
+      const outcome = sendEmail({
+        to: 'recipient@example.com',
+        subject: APPOINTMENT_REMINDER_SUBJECT,
+        text: appointmentReminderText('https://app.example.com'),
+      })
+      await vi.advanceTimersByTimeAsync(25)
+
+      const settled = await Promise.race([outcome, Promise.resolve('still pending' as const)])
+      expect(settled).toEqual({ outcome: 'failed', transport: 'log', error: 'email delivery failed' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('application log line — acceptance + adversarial: id and domain only (UX_SPEC §4.15, SEC-6)', () => {
@@ -234,7 +280,7 @@ describe('resend transport — acceptance: one message, one SDK call', () => {
     expect(sendMock).toHaveBeenLastCalledWith(expect.objectContaining({ from: 'b-sender@example.com' }))
   })
 
-  test('an SDK-reported error (not a throw) returns outcome failed with a mapped error', async () => {
+  test('an SDK-reported error (not a throw) returns outcome failed with a fixed safe error', async () => {
     sendMock.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'invalid from address' } })
     const { sendEmail } = await loadEmail({ RESEND_API_KEY: 're_test_key', RESEND_FROM: 'clinic@example.com' })
     const result = await sendEmail({
@@ -244,7 +290,7 @@ describe('resend transport — acceptance: one message, one SDK call', () => {
     })
     expect(result.outcome).toBe('failed')
     expect(result.transport).toBe('resend')
-    expect(result.error).toContain('invalid from address')
+    expect(result.error).toBe('email delivery failed')
   })
 })
 
@@ -327,6 +373,15 @@ describe('mandatory adversarial — message validation, rejected not truncated',
 })
 
 describe('mandatory adversarial — error never carries PHI or a credential', () => {
+  test('a provider error echoing a seven-character patient reference is replaced by a fixed safe error', async () => {
+    sendMock.mockRejectedValue(new Error('smtp rejected PT-1234'))
+    const { sendEmail } = await loadEmail({ RESEND_API_KEY: 're_test_key', RESEND_FROM: 'clinic@example.com' })
+    const result = await sendEmail({ to: 'recipient@example.com', subject: 'x', text: 'PT-1234' })
+
+    expect(result).toEqual({ outcome: 'failed', transport: 'resend', error: 'email delivery failed' })
+    expect(result.error).not.toContain('PT-1234')
+  })
+
   test('a mapped error never contains a patient name, date of birth, patient reference, address, or share token', async () => {
     sendMock.mockRejectedValue(new Error('smtp rejected: mailbox unavailable'))
     const { sendEmail } = await loadEmail({ RESEND_API_KEY: 're_test_key', RESEND_FROM: 'clinic@example.com' })
@@ -342,7 +397,7 @@ describe('mandatory adversarial — error never carries PHI or a credential', ()
     expect(result.error).not.toContain('1990-01-01')
     expect(result.error).not.toContain('recipient@example.com')
     expect(result.error).not.toContain('tok_secret999')
-    expect(result.error).toBe('smtp rejected: mailbox unavailable')
+    expect(result.error).toBe('email delivery failed')
   })
 })
 
