@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useProviderShell } from '../../../components/shell/ProviderShell'
+import type { AppointmentDto } from '../../../lib/scheduling/booking'
 
-type Transition = 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+type Transition = AppointmentDto['allowedTransitions'][number]
 type Schedule = {
   timeZone: string
   slots: Array<{
@@ -15,21 +16,11 @@ type Schedule = {
       id: string
       patientRef: string
       serviceName: string
-      status: string
+      status: AppointmentDto['status']
       outOfHours: boolean
-      allowedTransitions: Transition[]
+      allowedTransitions: AppointmentDto['allowedTransitions']
     }
   }>
-}
-
-type AppointmentPatch = {
-  id: string
-  startsAt: string
-  endsAt: string
-  status: string
-  serviceName: string
-  outOfHours: boolean
-  allowedTransitions: Transition[]
 }
 
 function todayIn(timeZone: string): string {
@@ -72,9 +63,8 @@ export default function ProviderSchedulePage() {
       const response = await fetch(`/api/appointments/${appointmentId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      const payload = await response.json() as AppointmentPatch | { message?: string }
-      if (!response.ok) throw new Error(('message' in payload ? payload.message : undefined) ?? 'Appointment could not be updated.')
-      const appointment = payload as AppointmentPatch
+      const appointment = await response.json() as AppointmentDto & { message?: string }
+      if (!response.ok) throw new Error(appointment.message ?? 'Appointment could not be updated.')
       setSchedule((current) => current && {
         ...current,
         slots: current.slots.map((slot) => slot.appointment?.id !== appointmentId ? slot : {
