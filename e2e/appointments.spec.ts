@@ -71,6 +71,14 @@ test.describe('JOR-257 appointments', () => {
     await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
   })
 
+  test('noShow_serverWithholdsActions', async ({ page }) => {
+    await signedIn(page)
+    await show(page, [appointment({ status: 'no_show', canChange: false, allowedTransitions: [] })])
+    await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: No-show')
+    await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(0)
+    await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
+  })
+
   test('outOfHours_serverOfferedActionsRemainAvailable', async ({ page }) => {
     await signedIn(page)
     await show(page, [appointment({ outOfHours: true })])
@@ -135,6 +143,12 @@ test.describe('JOR-257 appointments', () => {
     await page.locator('input:visible').fill(SLOT_ID)
     await page.getByRole('button', { name: 'Confirm reschedule' }).click()
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Jun 11, 2030')
+  })
+
+  test('appointmentTime_includesViewerZoneAbbreviation', async ({ page }) => {
+    await signedIn(page)
+    await show(page, [appointment()])
+    await expect(page.locator('[data-testid="appointment-item"]:visible time')).toContainText(/(?:AM|PM)\s+[A-Z]{2,5}$/)
   })
 
   test('zeroAppointments_rendersCleanEmptyState', async ({ page }) => {
