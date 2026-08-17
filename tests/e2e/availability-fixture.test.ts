@@ -2,6 +2,8 @@
 // below the page/API layer so JOR-223 can consume the fixture unchanged.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import {
+  E2_NON_PROVIDER_ACCOUNT_ID,
+  E2_NON_PROVIDER_EMAIL,
   E2_OTHER_PROVIDER_EMAIL,
   E2_PROVIDER_ACCOUNT_ID,
   E2_PROVIDER_EMAIL,
@@ -116,16 +118,42 @@ describe('JOR-284 shared provider availability fixture', () => {
     ])
   })
 
-  test('unknownProviderActorCannotApplyAvailability', async () => {
-    const token = await providerToken(E2_PROVIDER_EMAIL)
-    const rejected = await apply(token, {
+  test('plantedUnknownProviderIsDeniedAvailabilityReadsAndWrites', async () => {
+    const unknownProviderToken = await providerToken(E2_NON_PROVIDER_EMAIL)
+
+    const provider = await request(
+      `/rest/v1/providers?user_id=eq.${E2_NON_PROVIDER_ACCOUNT_ID}`,
+      unknownProviderToken,
+    )
+    expect(provider.status).toBe(200)
+    expect(await provider.json()).toEqual([])
+
+    const owner = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, unknownProviderToken)
+    expect(owner.status).toBe(200)
+    expect(await owner.json()).toEqual([])
+    const hours = await request(
+      `/rest/v1/working_hours?provider_id=eq.${E2_PROVIDER_ID}`,
+      unknownProviderToken,
+    )
+    expect(await hours.json()).toEqual([])
+    const blocks = await request(
+      `/rest/v1/availability_blocks?provider_id=eq.${E2_PROVIDER_ID}`,
+      unknownProviderToken,
+    )
+    expect(await blocks.json()).toEqual([])
+
+    const rejected = await apply(unknownProviderToken, {
       ...ownAvailability,
-      p_actor_user_id: '00000000-0000-0000-0000-000000000000',
+      p_actor_user_id: E2_NON_PROVIDER_ACCOUNT_ID,
     })
     expect(rejected.status).toBe(403)
+    const error = await rejected.text()
+    expect(error).not.toContain('Dr. Avery Chen')
+    expect(error).not.toContain(E2_PROVIDER_ID)
 
-    const provider = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, token)
-    expect(await provider.json()).toEqual([
+    const ownerToken = await providerToken(E2_PROVIDER_EMAIL)
+    const unchangedOwner = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, ownerToken)
+    expect(await unchangedOwner.json()).toEqual([
       expect.objectContaining({ id: E2_PROVIDER_ID, slot_minutes: 30 }),
     ])
   })

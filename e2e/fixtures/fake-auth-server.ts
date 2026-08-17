@@ -128,9 +128,11 @@ export const E2_PROVIDER_ID = '66336633-6633-4633-8633-663366336633'
 export const E2_OTHER_PROVIDER_ID = '66446644-6644-4644-8644-664466446644'
 export const E2_PROVIDER_EMAIL = 'avery.chen@example.test'
 export const E2_OTHER_PROVIDER_EMAIL = 'riley.patel@example.test'
+export const E2_NON_PROVIDER_EMAIL = 'taylor.morgan@example.test'
 export const E2_PROVIDER_PASSWORD = 'ProviderFixturePassword9'
 export const E2_PROVIDER_ACCOUNT_ID = '11331133-1133-4133-8133-113311331133'
 export const E2_OTHER_PROVIDER_ACCOUNT_ID = '11441144-1144-4144-8144-114411441144'
+export const E2_NON_PROVIDER_ACCOUNT_ID = '11551155-1155-4155-8155-115511551155'
 export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
 export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
@@ -301,6 +303,19 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       {
         id: E2_OTHER_PROVIDER_ACCOUNT_ID,
         email: E2_OTHER_PROVIDER_EMAIL,
+        password: E2_PROVIDER_PASSWORD,
+        userMetadata: {},
+        appMetadata: { provider: 'email', providers: ['email'] },
+      },
+    ],
+    // Intentionally authenticated but absent from PROVIDERS. Availability
+    // isolation regressions use this account to prove that a valid session is
+    // not sufficient authority to claim provider-owned data.
+    [
+      E2_NON_PROVIDER_EMAIL,
+      {
+        id: E2_NON_PROVIDER_ACCOUNT_ID,
+        email: E2_NON_PROVIDER_EMAIL,
         password: E2_PROVIDER_PASSWORD,
         userMetadata: {},
         appMetadata: { provider: 'email', providers: ['email'] },
