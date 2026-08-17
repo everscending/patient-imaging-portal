@@ -1,10 +1,29 @@
 import { execFileSync } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
-import { startE8AcceptanceFixture, type E8AcceptanceFixture } from './fixtures/e8-acceptance'
+import {
+  startE8AcceptanceFixture,
+  type DispatchAudit,
+  type E8AcceptanceFixture,
+} from './fixtures/e8-acceptance'
 import { readE8RunRecord, writeE8RunRecord } from './fixtures/e8-run-record'
 
 let fixture: E8AcceptanceFixture
+
+function serializePersistedDispatchAudits(audits: DispatchAudit[], expectedAppointmentIds: string[]): string {
+  const expectedTargets = new Set(expectedAppointmentIds)
+  return audits
+    .map((audit) => JSON.stringify({
+      ...audit,
+      // The target reference is required audit structure, not free-form detail.
+      // Normalize only a target proven to belong to this scenario; an
+      // unexpected persisted target remains visible to the forbidden-term scan.
+      appointmentId: expectedTargets.has(audit.appointmentId)
+        ? '<expected-appointment-target>'
+        : audit.appointmentId,
+    }))
+    .join('\n')
+}
 
 beforeAll(async () => {
   fixture = await startE8AcceptanceFixture()
@@ -41,10 +60,15 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     }])
     expect(fixture.dispatchLogs()).toHaveLength(1)
     expect(await fixture.dispatchAudits()).toEqual([{
+      id: expect.any(Number),
+      occurredAt: expect.any(String),
+      actorKind: 'system',
+      actorRef: null,
+      action: 'reminder.dispatch',
+      targetKind: 'appointment',
       appointmentId,
       outcome: 'granted',
-      transport: 'log',
-      leadHours: 24,
+      detail: { transport: 'log', leadHours: 24 },
     }])
   })
 
@@ -110,13 +134,17 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect(await fixture.mailMessages()).toEqual([])
     const failedAudits = await fixture.dispatchAudits()
     expect(failedAudits).toEqual([{
+      id: expect.any(Number),
+      occurredAt: expect.any(String),
+      actorKind: 'system',
+      actorRef: null,
+      action: 'reminder.dispatch',
+      targetKind: 'appointment',
       appointmentId,
       outcome: 'denied',
-      transport: 'log',
-      leadHours: 24,
+      detail: { transport: 'log', leadHours: 24 },
     }])
-    const failedAuditDetails = failedAudits.map(({ outcome, transport, leadHours }) => ({ outcome, transport, leadHours }))
-    expect(fixture.phiTerms().filter((term) => JSON.stringify(failedAuditDetails).includes(term))).toEqual([])
+    expect(fixture.phiTerms().filter((term) => serializePersistedDispatchAudits(failedAudits, [appointmentId]).includes(term))).toEqual([])
 
     await fixture.setAppointmentRecipient(appointmentId, 'recovered@example.test')
     const retried = await fixture.runAuthorizedJob()
@@ -127,9 +155,20 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect(await fixture.mailMessages()).toHaveLength(1)
     expect(fixture.dispatchLogs()).toHaveLength(1)
     expect(await fixture.dispatchAudits()).toEqual([
-      { appointmentId, outcome: 'denied', transport: 'log', leadHours: 24 },
-      { appointmentId, outcome: 'granted', transport: 'log', leadHours: 24 },
+      expect.objectContaining({ appointmentId, outcome: 'denied', detail: { transport: 'log', leadHours: 24 } }),
+      expect.objectContaining({ appointmentId, outcome: 'granted', detail: { transport: 'log', leadHours: 24 } }),
     ])
+  })
+
+  test('the persisted dispatch audit scan includes raw detail that could carry PHI or a secret', async () => {
+    const [appointmentId] = await fixture.prepareDueAppointments(1)
+    await fixture.runAuthorizedJob()
+    await fixture.plantPersistedDispatchAuditLeak(appointmentId, 'e8-cron-secret')
+
+    const scannedText = serializePersistedDispatchAudits(await fixture.dispatchAudits(), [appointmentId])
+    const leakedTerms = fixture.phiTerms().filter((term) => scannedText.includes(term))
+
+    expect(leakedTerms).toContain('e8-cron-secret')
   })
 
   test('ten barrier-released HTTP runs deliver the measured due set at least 99 percent with zero duplicates or PHI', async () => {
@@ -162,7 +201,7 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     const scannedText = [
       ...messages.map((message) => JSON.stringify(message)),
       ...logs.map((log) => JSON.stringify(log)),
-      ...audits.map(({ outcome, transport, leadHours }) => JSON.stringify({ outcome, transport, leadHours })),
+      serializePersistedDispatchAudits(audits, appointmentIds),
     ].join('\n')
     const leakedTerms = fixture.phiTerms().filter((term) => scannedText.includes(term))
     const deliveryRate = messages.length / appointmentIds.length
@@ -174,6 +213,7 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect(messages.every((message) => message.subject === 'Appointment reminder' && message.text === expectedBody)).toBe(true)
     expect(logs).toHaveLength(10)
     expect(audits).toHaveLength(10)
+    expect(audits.map((audit) => audit.appointmentId).sort()).toEqual([...appointmentIds].sort())
     expect(audits.every((audit) => audit.outcome === 'granted')).toBe(true)
     expect(duplicateRecipients).toBe(0)
     expect(leakedTerms).toEqual([])

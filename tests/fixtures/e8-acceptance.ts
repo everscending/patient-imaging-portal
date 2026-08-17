@@ -37,10 +37,19 @@ export type JobResponse = {
 export type MailMessage = { to: string; subject: string; text: string }
 export type DispatchLog = { event: 'email.sent'; id: string; domain: string; transport: 'log' }
 export type DispatchAudit = {
+  id: number
+  occurredAt: string
+  actorKind: 'system'
+  actorRef: null
+  action: 'reminder.dispatch'
+  targetKind: 'appointment'
   appointmentId: string
   outcome: 'granted' | 'denied'
-  transport: 'log' | 'resend'
-  leadHours: number
+  detail: {
+    transport: 'log' | 'resend'
+    leadHours: number
+    [key: string]: unknown
+  }
 }
 
 export type OutboxState = {
@@ -58,6 +67,7 @@ export type E8AcceptanceFixture = {
   insertPreexistingSend(appointmentId: string): Promise<void>
   insertDueOutboxMessage(recipient?: string): Promise<string>
   setAppointmentRecipient(appointmentId: string, email: string): Promise<void>
+  plantPersistedDispatchAuditLeak(appointmentId: string, leak: string): Promise<void>
   reminderRows(): Promise<ReminderRow[]>
   outboxRows(): Promise<OutboxState[]>
   mailMessages(): Promise<MailMessage[]>
@@ -577,6 +587,20 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
         )
         if (updated !== appointmentId) throw new Error('E8 fixture: recipient update reached no appointment')
       },
+      async plantPersistedDispatchAuditLeak(appointmentId, leak) {
+        if (!scenarioAppointmentIds.includes(appointmentId)) {
+          throw new Error('E8 fixture: planted audit leak must belong to the active scenario')
+        }
+        const updated = await dockerPsql(
+          run,
+          `update audit_events
+              set detail = detail || jsonb_build_object('diagnostic', ${sqlLiteral(leak)})
+            where action = 'reminder.dispatch'
+              and target_id = ${sqlLiteral(appointmentId)}::uuid
+          returning id::text;`,
+        )
+        if (updated === '') throw new Error('E8 fixture: planted audit leak reached no dispatch audit')
+      },
       async reminderRows() {
         const raw = await dockerPsql(
           run,
@@ -621,14 +645,18 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
         const raw = await dockerPsql(
           run,
           `select coalesce(json_agg(json_build_object(
+             'id', id,
+             'occurredAt', occurred_at,
+             'actorKind', actor_kind,
+             'actorRef', actor_ref,
+             'action', action,
+             'targetKind', target_kind,
              'appointmentId', target_id,
              'outcome', outcome,
-             'transport', detail ->> 'transport',
-             'leadHours', (detail ->> 'leadHours')::integer
+             'detail', detail
            ) order by id), '[]'::json)::text
              from audit_events
-            where action = 'reminder.dispatch'
-              and target_id = any(array[${scenarioAppointmentIds.map((id) => `${sqlLiteral(id)}::uuid`).join(',')}]);`,
+            where action = 'reminder.dispatch';`,
         )
         return JSON.parse(raw) as DispatchAudit[]
       },
