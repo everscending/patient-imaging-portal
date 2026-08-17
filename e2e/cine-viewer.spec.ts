@@ -9,8 +9,10 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 const STUDY_ID = '99669966-9966-4966-8966-996699669966'
 const CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
 const PASSWORD = 'CorrectHorseBattery9'
-const SEEDED_PATIENT = { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' }
+const SEEDED_DATE_OF_BIRTH = '1988-03-14'
 const IDENTITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'identity-fixture.lock')
+
+type SeededPatient = { patientRef: string; dateOfBirth: string }
 
 type Manifest = {
   id: string
@@ -24,11 +26,15 @@ function manifest(frames: Manifest['frames'], defaultFps = 17): Manifest {
   return { id: CLIP_ID, frameCount: frames.length, defaultFps, expiresAt: '2026-08-16T12:00:00.000Z', frames }
 }
 
+let ownsIdentityFixture = false
+let seededPatient: SeededPatient
+
 async function acquireIdentityFixture(): Promise<void> {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     try {
       await mkdir(IDENTITY_FIXTURE_LOCK)
+      ownsIdentityFixture = true
       return
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -38,22 +44,31 @@ async function acquireIdentityFixture(): Promise<void> {
   throw new Error('identity fixture lock timed out')
 }
 
+async function releaseIdentityFixture(): Promise<void> {
+  if (!ownsIdentityFixture) return
+  ownsIdentityFixture = false
+  await rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true })
+}
+
 async function fakeServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
   return (JSON.parse(raw) as { url: string }).url
 }
 
-async function resetIdentity(request: APIRequestContext): Promise<void> {
+async function resetIdentity(request: APIRequestContext): Promise<SeededPatient> {
   const response = await request.post(`${await fakeServerUrl()}/__test__/reset-identity`)
   expect(response.ok()).toBe(true)
+  const fixture = (await response.json()) as { patientRef?: unknown }
+  expect(fixture.patientRef).toEqual(expect.any(String))
+  return { patientRef: fixture.patientRef as string, dateOfBirth: SEEDED_DATE_OF_BIRTH }
 }
 
-async function signInLinkedPatient(request: APIRequestContext): Promise<void> {
+async function signInLinkedPatient(request: APIRequestContext, patient: SeededPatient): Promise<void> {
   const email = `cine-${randomUUID()}@example.test`
   expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
   expect((await request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
   const verification = await request.post('/api/identity/verify', {
-    data: SEEDED_PATIENT,
+    data: patient,
     headers: { 'x-forwarded-for': '192.0.2.214' },
   })
   expect(verification.status(), await verification.text()).toBe(200)
@@ -70,25 +85,24 @@ async function openClip(page: Page, payload: Manifest): Promise<void> {
 }
 
 test.describe.serial('cine viewer', () => {
-  test.beforeAll(acquireIdentityFixture)
-  test.afterAll(async () => rm(IDENTITY_FIXTURE_LOCK, { recursive: true, force: true }))
-
   test.beforeEach(async ({ request }) => {
-    await resetIdentity(request)
+    await acquireIdentityFixture()
+    seededPatient = await resetIdentity(request)
   })
+  test.afterEach(releaseIdentityFixture)
 
   test('setup regression: leasedIdentityFixture_resetAndRealVerifyRouteLinkCurrentSeed', async ({ request }) => {
-    await signInLinkedPatient(request)
+    await signInLinkedPatient(request, seededPatient)
     const state = (await (await request.get(`${await fakeServerUrl()}/__test__/identity-state`)).json()) as {
       patients: Array<{ patient_ref: string; user_id: string | null }>
     }
-    expect(state.patients.find((patient) => patient.patient_ref === SEEDED_PATIENT.patientRef)?.user_id).toEqual(
+    expect(state.patients.find((patient) => patient.patient_ref === seededPatient.patientRef)?.user_id).toEqual(
       expect.any(String),
     )
   })
 
   test('mandatory adversarial: apiDrivenGaps_continuePlaybackWithCorrectDenominatorAndMarkers', async ({ page }) => {
-    await signInLinkedPatient(page.request)
+    await signInLinkedPatient(page.request, seededPatient)
     await openClip(page, manifest([
       { index: 0, available: true, url: '/missing-cine-frame.svg' },
       { index: 1, available: false, url: null },
@@ -119,7 +133,7 @@ test.describe.serial('cine viewer', () => {
   })
 
   test('mandatory adversarial: defaultFps_nonOverlayControls_noShareAndOrientationPreservesState', async ({ page }) => {
-    await signInLinkedPatient(page.request)
+    await signInLinkedPatient(page.request, seededPatient)
     await openClip(page, manifest([
       { index: 0, available: true, url: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E' },
       { index: 1, available: true, url: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E' },
@@ -141,7 +155,7 @@ test.describe.serial('cine viewer', () => {
   })
 
   test('mandatory adversarial: keyboardAccessibleTouchSizedAt390AndNoHardcodedHex', async ({ page }) => {
-    await signInLinkedPatient(page.request)
+    await signInLinkedPatient(page.request, seededPatient)
     await page.setViewportSize({ width: 390, height: 844 })
     await openClip(page, manifest([
       { index: 0, available: false, url: null },
