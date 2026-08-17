@@ -60,6 +60,46 @@ describe.sequential('E8 live reminder acceptance through POST /api/jobs/reminder
     expect(fixture.dispatchLogs()).toEqual([])
   })
 
+  test('a due outbox row is claimed and completed through the real REST boundary', async () => {
+    const [appointmentId] = await fixture.prepareDueAppointments(1)
+    await fixture.insertPreexistingSend(appointmentId)
+    const outboxId = await fixture.insertDueOutboxMessage()
+
+    const result = await fixture.runAuthorizedJob()
+
+    expect(result).toEqual({ status: 200, body: { due: 1, sent: 0, skipped: 1, failed: 0 } })
+    expect(await fixture.outboxRows()).toEqual([{
+      id: outboxId,
+      attempts: 0,
+      nextAttemptAt: expect.any(String),
+      sentAt: expect.any(String),
+      lastError: null,
+    }])
+    expect(await fixture.mailMessages()).toContainEqual({
+      to: 'outbox@example.test',
+      subject: 'Share notice',
+      text: 'A secure link is ready.',
+    })
+  })
+
+  test('a failed outbox delivery persists the bounded retry update through the real REST boundary', async () => {
+    const [appointmentId] = await fixture.prepareDueAppointments(1)
+    await fixture.insertPreexistingSend(appointmentId)
+    const outboxId = await fixture.insertDueOutboxMessage('invalid-recipient')
+
+    const result = await fixture.runAuthorizedJob()
+
+    expect(result).toEqual({ status: 200, body: { due: 1, sent: 0, skipped: 1, failed: 0 } })
+    expect(await fixture.outboxRows()).toEqual([{
+      id: outboxId,
+      attempts: 1,
+      nextAttemptAt: expect.any(String),
+      sentAt: null,
+      lastError: 'email_delivery_failed',
+    }])
+    expect(await fixture.mailMessages()).toEqual([])
+  })
+
   test('an explicit transport rejection is retried and then sent without a duplicate row', async () => {
     const [appointmentId] = await fixture.prepareDueAppointments(1, 'invalid-recipient')
 

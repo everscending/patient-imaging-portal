@@ -43,13 +43,23 @@ export type DispatchAudit = {
   leadHours: number
 }
 
+export type OutboxState = {
+  id: string
+  attempts: number
+  nextAttemptAt: string
+  sentAt: string | null
+  lastError: string | null
+}
+
 export type E8AcceptanceFixture = {
   runJob(secret?: string): Promise<JobResponse>
   runAuthorizedJob(): Promise<JobResponse>
   prepareDueAppointments(count: number, emailOverride?: string): Promise<string[]>
   insertPreexistingSend(appointmentId: string): Promise<void>
+  insertDueOutboxMessage(recipient?: string): Promise<string>
   setAppointmentRecipient(appointmentId: string, email: string): Promise<void>
   reminderRows(): Promise<ReminderRow[]>
+  outboxRows(): Promise<OutboxState[]>
   mailMessages(): Promise<MailMessage[]>
   dispatchLogs(): DispatchLog[]
   dispatchAudits(): Promise<DispatchAudit[]>
@@ -158,6 +168,10 @@ function requiredEq(url: URL, name: string): string {
   const raw = url.searchParams.get(name)
   if (!raw?.startsWith('eq.')) throw new Error(`E8 fixture: ${name} must use an equality filter`)
   return raw.slice(3)
+}
+
+function requireIsNull(url: URL, name: string): void {
+  if (url.searchParams.get(name) !== 'is.null') throw new Error(`E8 fixture: ${name} must use an is-null filter`)
 }
 
 function requiredUuid(value: string, name: string): string {
@@ -274,7 +288,7 @@ async function handleAuditInsert(run: Run, req: IncomingMessage, res: ServerResp
   res.end()
 }
 
-async function handleEmailOutbox(run: Run, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleEmailOutbox(run: Run, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   assertServiceRole(req)
   if (req.method === 'GET') {
     const rows = await dockerPsql(
@@ -287,8 +301,54 @@ async function handleEmailOutbox(run: Run, req: IncomingMessage, res: ServerResp
     return
   }
   if (req.method === 'PATCH') {
-    sendJson(res, 200, [])
-    return
+    const body = await bodyOf(req)
+    const id = requiredUuid(requiredEq(url, 'id'), 'outbox id')
+    requireIsNull(url, 'sent_at')
+    const keys = Object.keys(body).sort()
+    if (keys.length === 1 && keys[0] === 'next_attempt_at') {
+      if (url.searchParams.get('select') !== 'id') throw new Error('E8 fixture: outbox claim must return its id')
+      const previousDue = requiredIso(requiredEq(url, 'next_attempt_at'), 'previous next_attempt_at')
+      const claimedUntil = requiredIso(String(body.next_attempt_at), 'claimed next_attempt_at')
+      const updated = await dockerPsql(
+        run,
+        `update email_outbox
+            set next_attempt_at = ${sqlLiteral(claimedUntil)}::timestamptz
+          where id = ${sqlLiteral(id)}::uuid
+            and sent_at is null
+            and next_attempt_at = ${sqlLiteral(previousDue)}::timestamptz
+        returning json_build_object('id', id)::text;`,
+      )
+      sendJson(res, 200, updated === '' ? [] : [JSON.parse(updated)])
+      return
+    }
+    if (keys.length === 1 && keys[0] === 'sent_at' && !url.searchParams.has('next_attempt_at')) {
+      const sentAt = requiredIso(String(body.sent_at), 'outbox sent_at')
+      await dockerPsql(
+        run,
+        `update email_outbox
+            set sent_at = ${sqlLiteral(sentAt)}::timestamptz
+          where id = ${sqlLiteral(id)}::uuid and sent_at is null;`,
+      )
+      sendJson(res, 200, [])
+      return
+    }
+    if (keys.join(',') === 'attempts,last_error,next_attempt_at' && !url.searchParams.has('next_attempt_at')) {
+      const attempts = Number(body.attempts)
+      if (!Number.isSafeInteger(attempts) || attempts < 1) throw new Error('E8 fixture: outbox attempts must be a positive integer')
+      if (body.last_error !== 'email_delivery_failed') throw new Error('E8 fixture: outbox error category changed')
+      const nextAttemptAt = requiredIso(String(body.next_attempt_at), 'retry next_attempt_at')
+      await dockerPsql(
+        run,
+        `update email_outbox
+            set attempts = ${attempts},
+                last_error = 'email_delivery_failed',
+                next_attempt_at = ${sqlLiteral(nextAttemptAt)}::timestamptz
+          where id = ${sqlLiteral(id)}::uuid and sent_at is null;`,
+      )
+      sendJson(res, 200, [])
+      return
+    }
+    throw new Error('E8 fixture: outbox PATCH shape changed')
   }
   throw new Error('E8 fixture: email_outbox accepts GET or PATCH only')
 }
@@ -299,7 +359,7 @@ async function handleBoundaryRequest(run: Run, req: IncomingMessage, res: Server
   if (url.pathname === '/rest/v1/rpc/claim_reminder_send') return handleClaim(run, req, res)
   if (url.pathname === '/rest/v1/reminder_sends') return handleReminderUpdate(run, req, res, url)
   if (url.pathname === '/rest/v1/audit_events') return handleAuditInsert(run, req, res)
-  if (url.pathname === '/rest/v1/email_outbox') return handleEmailOutbox(run, req, res)
+  if (url.pathname === '/rest/v1/email_outbox') return handleEmailOutbox(run, req, res, url)
   sendJson(res, 404, { code: 'PGRST404', message: 'E8 fixture has no handler for this request' })
 }
 
@@ -494,6 +554,16 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
            values (${sqlLiteral(appointmentId)}::uuid, 24, 'sent', now());`,
         )
       },
+      async insertDueOutboxMessage(recipient = 'outbox@example.test') {
+        const id = randomUUID()
+        await dockerPsql(run, 'delete from email_outbox;')
+        await dockerPsql(
+          run,
+          `insert into email_outbox (id, recipient, subject, body, next_attempt_at)
+           values (${sqlLiteral(id)}::uuid, ${sqlLiteral(recipient)}, 'Share notice', 'A secure link is ready.', now());`,
+        )
+        return id
+      },
       async setAppointmentRecipient(appointmentId, email) {
         if (!scenarioAppointmentIds.includes(appointmentId)) {
           throw new Error('E8 fixture: recipient update must belong to the active scenario')
@@ -519,6 +589,19 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
            ) order by appointment_id), '[]'::json)::text from reminder_sends;`,
         )
         return JSON.parse(raw) as ReminderRow[]
+      },
+      async outboxRows() {
+        const raw = await dockerPsql(
+          run,
+          `select coalesce(json_agg(json_build_object(
+             'id', id,
+             'attempts', attempts,
+             'nextAttemptAt', next_attempt_at,
+             'sentAt', sent_at,
+             'lastError', last_error
+           ) order by id), '[]'::json)::text from email_outbox;`,
+        )
+        return JSON.parse(raw) as OutboxState[]
       },
       async mailMessages() {
         const names = (await mailNames()).filter((name) => !scenarioMailBaseline.has(name) && name.endsWith('.json'))
