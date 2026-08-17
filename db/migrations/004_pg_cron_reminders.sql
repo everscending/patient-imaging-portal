@@ -15,7 +15,9 @@ end $$;
 -- leaves an unexamined due band. REMINDER_CRON_MINUTES supplies */5 by default.
 do $$ begin
   if exists (select 1 from pg_extension where extname = 'pg_cron')
-     and exists (select 1 from pg_extension where extname = 'pg_net') then
+     and exists (select 1 from pg_extension where extname = 'pg_net')
+     and nullif(current_setting('app.app_base_url', true), '') is not null
+     and nullif(current_setting('app.cron_secret', true), '') is not null then
     perform cron.schedule(
       'patient-imaging-reminders',
       '*/' || coalesce(nullif(current_setting('app.reminder_cron_minutes', true), ''), '5') || ' * * * *',
@@ -29,5 +31,7 @@ do $$ begin
         current_setting('app.cron_secret', true)
       )
     );
+  else
+    raise notice 'reminder cron not scheduled until deployment configuration is provisioned';
   end if;
 end $$;
