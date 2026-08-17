@@ -1947,6 +1947,18 @@ inside its clean checkout and confirms the emitted step list contains TypeScript
 ESLint, unit, integration, product Playwright, and the E2 report validation; it
 never serially invokes the three cumulative tiers or includes itself recursively.
 
+Each Next process pins both `outputFileTracingRoot` and `turbopack.root` to the
+directory containing `next.config.ts`. This is required for linked lane
+worktrees: Next's tracing and active bundler watchers must stay inside that
+checkout, never infer the parent repository's lockfile and watch sibling
+worktrees. Playwright still derives its server address from `PORT`, so
+concurrent lanes set distinct ports; stopping one fixture does not affect
+another lane's root or server. Development servers also default Watchpack to a
+one-second polling interval. This avoids exhausting shared native filesystem
+watchers when multiple worktrees run Next concurrently; an explicitly supplied
+`WATCHPACK_POLLING` value still takes precedence, and production start mode is
+unchanged.
+
 Both workflows normalize concurrency to the source branch and cancel obsolete
 runs. `scripts/gate.sh` emits a duration for each command, while the workflows
 record dependency, browser, and certification setup durations in the GitHub job

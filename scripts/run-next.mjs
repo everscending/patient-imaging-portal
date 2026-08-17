@@ -7,7 +7,13 @@ if (mode !== 'dev' && mode !== 'start') {
   process.exit(1)
 }
 
+const nextEnv = { ...process.env }
+if (mode === 'dev' && nextEnv.WATCHPACK_POLLING === undefined) {
+  nextEnv.WATCHPACK_POLLING = '1000'
+}
+
 const child = spawn('npx', ['next', mode, '-p', String(config.port)], {
+  env: nextEnv,
   stdio: 'inherit',
 })
 

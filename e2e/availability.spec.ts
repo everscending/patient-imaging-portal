@@ -3,7 +3,7 @@
 // provider-scoped PostgREST tables and transactional RPC needed by that API.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
@@ -15,6 +15,21 @@ import {
 } from './fixtures/fake-auth-server'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
+const AVAILABILITY_FIXTURE_LOCK = path.join(REPO_ROOT, '.local', 'availability-fixture.lock')
+
+async function acquireAvailabilityFixture(): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(AVAILABILITY_FIXTURE_LOCK)
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  throw new Error('availability fixture lock timed out')
+}
 
 async function fakeAuthServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -63,6 +78,9 @@ async function saveAndReadResponse(page: Page): Promise<{
 }
 
 test.describe.serial('provider availability', () => {
+  test.beforeAll(acquireAvailabilityFixture)
+  test.afterAll(async () => rm(AVAILABILITY_FIXTURE_LOCK, { recursive: true, force: true }))
+
   test.beforeEach(async ({ request }) => {
     await resetAvailability(request)
   })
