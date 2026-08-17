@@ -142,6 +142,30 @@ test('mandatory adversarial: studies_malformedResponse_degradesWithoutStackTrace
   expect(body).not.toMatch(/at .*\(.*:\d+:\d+\)|postgres|database|ECONNREFUSED/i)
 })
 
+test('mandatory adversarial: studies_wellTypedButInvalidRecords_degradeSafely', async ({ page }) => {
+  await linkedSession(page)
+  let responseBody: unknown = { studies: [] }
+  await page.route('**/api/studies', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(responseBody) })
+  })
+
+  const invalidStudies = [
+    { ...completedStudies[0], id: '' },
+    { ...completedStudies[0], occurredAt: '2026-02-30' },
+    { ...completedStudies[0], imageCount: -1 },
+    { ...completedStudies[0], clipCount: 1.5 },
+  ]
+
+  for (const study of invalidStudies) {
+    responseBody = { studies: [study] }
+    await page.goto('/studies')
+    await expect(page.getByTestId('studies-degraded')).toHaveText(
+      'Images are temporarily unavailable. Please try again.',
+    )
+    await expect(page.getByTestId('study-card')).toHaveCount(0)
+  }
+})
+
 test('mandatory adversarial: studies_pageDoesNotClientFilterVisitStatus', async () => {
   const source = await readFile(path.join(REPO_ROOT, 'app/(patient)/studies/page.tsx'), 'utf8')
   expect(source).not.toMatch(/(?:study|visit)\s*\.\s*status|status\s*===|status\s*!==/)
