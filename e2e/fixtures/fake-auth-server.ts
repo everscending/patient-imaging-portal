@@ -23,6 +23,11 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+)
+
 type FakeUser = {
   id: string
   email: string
@@ -183,13 +188,23 @@ const STUDIES: FakeStudy[] = [
 ]
 const IMAGES = [
   {
-    id: 'dd00dd00-dd00-4d00-8d00-dd00dd00dd00',
+    id: '10000000-0000-4000-8000-000000000001',
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     width: 1024,
     height: 768,
-    ordinal: 0,
-    storage_key: 'e2/seeded-image.png',
+    ordinal: 1,
+    storage_key: 'full-1.png',
+    thumb_key: 'thumb-1.png',
+  },
+  {
+    id: '10000000-0000-4000-8000-000000000002',
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E2_SEEDED_STUDY_ID,
+    width: 800,
+    height: 600,
+    ordinal: 2,
+    storage_key: 'full-2.png',
     thumb_key: null,
   },
 ]
@@ -895,6 +910,22 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {
       answerAsDependency(req, res, healthState.storage)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/storage/v1/object/sign/phi') {
+      void readJsonBody(req).then((body) => {
+        const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : []
+        sendJson(res, 200, paths.map((path) => ({
+          error: null,
+          path,
+          signedURL: `/object/sign/phi/${encodeURIComponent(path)}?token=e2-fixture`,
+        })))
+      })
+      return
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/sign/phi/')) {
+      res.writeHead(200, { 'Content-Type': 'image/png' })
+      res.end(ONE_PIXEL_PNG)
       return
     }
     sendJson(res, 404, { error: 'not_found', message: 'no fake handler for this path' })
