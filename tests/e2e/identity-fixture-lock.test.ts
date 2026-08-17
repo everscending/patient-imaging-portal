@@ -49,7 +49,7 @@ describe('shared identity fixture lock ownership', () => {
     }
   })
 
-  test.each(['share-create.spec.ts', 'cine-viewer.spec.ts'])(
+  test.each(['share-create.spec.ts', 'cine-viewer.spec.ts', 'reports.spec.ts'])(
     '%s leases the canonical identity fixture for its serial live checks',
     async (suite) => {
       const source = await readFile(path.join(process.cwd(), 'e2e', suite), 'utf8')
