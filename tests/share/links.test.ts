@@ -28,7 +28,13 @@ const {
 
 vi.mock('../../lib/db/client', () => ({ serviceClient: serviceMock, anonClient: anonMock }))
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: callerIdMock }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: callerIdMock,
+  resolveAuthenticatedSession: async () => {
+    const userId = await callerIdMock()
+    return userId ? { accessToken: 'caller-token', userId } : null
+  },
+}))
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
@@ -146,6 +152,25 @@ afterEach(() => {
 })
 
 describe('share minting', () => {
+  test('expiredSessionRejectsMalformedBodyBeforeValidationOrDataAccess', async () => {
+    callerIdMock.mockResolvedValue(null)
+    const request = new Request('https://portal.example/api/shares', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'not json at all',
+    })
+
+    const response = await mintPost(request)
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
+    expect(request.bodyUsed).toBe(false)
+    expect(callerIdMock).toHaveBeenCalledOnce()
+    expect(anonMock).not.toHaveBeenCalled()
+    expect(guardMock).not.toHaveBeenCalled()
+    expect(serviceMock).not.toHaveBeenCalled()
+  })
+
   test('foreignImagesForeignReportsAndPreliminaryReportsReturn404WithoutMintWrites', async () => {
     const patients = [
       query({ data: { id: PATIENT_ID }, error: null }),
@@ -187,7 +212,7 @@ describe('share minting', () => {
       expect(response.status).toBe(422)
       expect(await response.json()).toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
     }
-    expect(callerIdMock).not.toHaveBeenCalled()
+    expect(callerIdMock).toHaveBeenCalledTimes(invalidBodies.length)
     expect(guardMock).not.toHaveBeenCalled()
     expect(anonMock).not.toHaveBeenCalled()
     expect(serviceMock).not.toHaveBeenCalled()
@@ -240,7 +265,8 @@ describe('share minting', () => {
 
   test('outboxFailureKeepsActiveLinkAndNeverSendsInline', async () => {
     const source = readFileSync('lib/share/links.ts', 'utf8')
-    expect(source).not.toMatch(/notify\/email|sendEmail\s*\(/)
+    expect(source).toMatch(/import\s*\{\s*enqueueEmail\s*\}\s*from\s*['"]\.\.\/notify\/email['"]/)
+    expect(source).not.toMatch(/sendEmail\s*\(|from\s*['"]resend['"]|\.emails\.send\s*\(/)
 
     const returnedErrorOutbox = query({ data: null, error: new Error('queue unavailable') })
     const thrownOutbox = query({ data: null, error: null }, new Error('outbox offline'))

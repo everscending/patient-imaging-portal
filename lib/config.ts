@@ -10,6 +10,8 @@ export type Config = {
   resendApiKey: string | null
   resendFrom: string | null
   emailTransport: 'resend' | 'log' // default 'resend'; 'log' when no key (GAP-3)
+  emailOutboxMaxAttempts: number // default 5
+  emailSendTimeoutMs: number // default 10000
   cronSecret: string | null
   shareLinkTtlHours: number // default 48
   minChangeNoticeHours: number // default 24
@@ -123,6 +125,8 @@ function loadConfig(): Config {
   // resolves to 'log' when RESEND_API_KEY is absent, regardless of the
   // requested transport — GAP-3 requires every flow to run without a live key.
   const emailTransport: 'resend' | 'log' = resendApiKey === null ? 'log' : emailTransportRaw ?? 'resend'
+  const emailOutboxMaxAttempts = intWithDefault('EMAIL_OUTBOX_MAX_ATTEMPTS', 5)
+  const emailSendTimeoutMs = intWithDefault('EMAIL_SEND_TIMEOUT_MS', 10_000)
 
   const shareLinkTtlHours = intWithDefault('SHARE_LINK_TTL_HOURS', 48)
   const minChangeNoticeHours = intWithDefault('MIN_CHANGE_NOTICE_HOURS', 24)
@@ -152,6 +156,8 @@ function loadConfig(): Config {
     resendApiKey,
     resendFrom,
     emailTransport,
+    emailOutboxMaxAttempts,
+    emailSendTimeoutMs,
     cronSecret,
     shareLinkTtlHours,
     minChangeNoticeHours,

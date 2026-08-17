@@ -14,6 +14,7 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString
 const PASSWORD = 'CorrectHorseBattery9'
 const SEEDED_PATIENT = { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' }
 const SECOND_IMAGE_ID = '10000000-0000-4000-8000-000000000002'
+const IMAGE_VIEWER_READY_TIMEOUT_MS = 15_000
 let identityFixtureLockToken: string | undefined
 
 async function source(file: string): Promise<string> {
@@ -53,13 +54,27 @@ function holdImage(page: Page, filename: string): { requested: () => boolean; re
   return { requested: () => requested, release: releaseRequest }
 }
 
-async function openViewer(page: Page): Promise<void> {
+async function openViewer(page: Page, hydrationDelayMs = 0): Promise<void> {
   await resetIdentity(page.request)
   await registerAndSignIn(page.request)
   await linkSeededPatient(page.request)
   await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`, { waitUntil: 'domcontentloaded' })
-  await expect(page.getByTestId('image-viewer')).toBeVisible()
-  await expect(page.getByTestId('image-viewer')).toHaveAttribute('data-hydrated', 'true')
+  const viewer = page.getByTestId('image-viewer')
+  await expect(viewer).toBeVisible()
+  if (hydrationDelayMs > 0) {
+    await viewer.evaluate((element, delayMs) => {
+      element.setAttribute('data-hydrated', 'false')
+      const hold = new MutationObserver(() => {
+        if (element.getAttribute('data-hydrated') !== 'false') element.setAttribute('data-hydrated', 'false')
+      })
+      hold.observe(element, { attributeFilter: ['data-hydrated'] })
+      window.setTimeout(() => {
+        hold.disconnect()
+        element.setAttribute('data-hydrated', 'true')
+      }, delayMs)
+    }, hydrationDelayMs)
+  }
+  await expect(viewer).toHaveAttribute('data-hydrated', 'true', { timeout: IMAGE_VIEWER_READY_TIMEOUT_MS })
 }
 
 test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverage', () => {
@@ -84,6 +99,12 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
     expect(viewer).toContain('images.find((image) => image.id === initialImageId)?.id ?? images[0]?.id')
     expect(viewer).toContain('Date.parse(selected.expiresAt)')
     expect(viewer).toContain('window.setTimeout(router.refresh')
+  })
+
+  test('openViewer_waitsForDelayedHydrationBeyondGenericAssertionTimeout', async ({ page }) => {
+    test.setTimeout(60_000)
+    await openViewer(page, 6_000)
+    await expect(page.getByTestId('image-viewer')).toHaveAttribute('data-hydrated', 'true')
   })
 
   test('throttledFullImage_keepsEveryControlInteractiveUntilReplacement', async function throttledFullImage_keepsEveryControlInteractiveUntilReplacement({ page }) {
