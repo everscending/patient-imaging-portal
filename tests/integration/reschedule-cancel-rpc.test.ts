@@ -95,8 +95,8 @@ function cancelCall(f: Fixture, appointmentId: string, minimumNotice = MINIMUM_N
   ) result;`)
 }
 
-function makeActorClinician(f: Fixture, role: 'provider' | 'admin'): void {
-  psql(`update patients set user_id = null where id = '${f.patientId}';
+function makeActorClinician(f: Fixture, role: 'provider' | 'admin', retainPatientLink = false): void {
+  psql(`${retainPatientLink ? '' : `update patients set user_id = null where id = '${f.patientId}';`}
     ${role === 'provider'
       ? `update providers set user_id = '${f.actorUserId}' where id = '${f.providerId}';`
       : `insert into staff_admins (user_id) values ('${f.actorUserId}');`}`)
@@ -207,6 +207,30 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
       from appointment_transitions where appointment_id = '${id}';`)).toBe(`requested|cancelled|${f.actorUserId}`)
     expect(psql(`select action || '|' || actor_ref || '|' || outcome
       from audit_events where target_id = '${id}';`)).toBe(`booking.cancel|${f.actorUserId}|granted`)
+  })
+
+  test.each(['provider', 'admin'] as const)('%sWithPatientLink_cancellationUsesClinicianNoticeRules', (role) => {
+    const f = fixture({ startsInHours: 1 })
+    const id = appointment(f)
+    makeActorClinician(f, role, true)
+
+    expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('cancelled')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('1')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}' and action = 'booking.cancel';`)).toBe('1')
+  })
+
+  test('patientWithUnrelatedProviderRole_cannotUseThatRoleToWeakenNoticeFloor', () => {
+    const f = fixture({ startsInHours: 1 })
+    const id = appointment(f)
+    const unrelatedProviderId = randomUUID()
+    psql(`insert into providers (id, user_id, full_name, time_zone)
+      values ('${unrelatedProviderId}', '${f.actorUserId}', 'Dr. Unrelated', 'America/Chicago');`)
+
+    expectSqlState(cancelCall(f, id, "interval '0 hours'"), 'appointment is not available to caller')
+    expect(psql(`select status::text from appointments where id = '${id}';`)).toBe('requested')
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
   })
 
   test('reschedule_auditFailure_rollsBackAppointmentBothSlotsTransitionAndAudit', () => {
