@@ -234,7 +234,7 @@ describe('resend transport — acceptance: one message, one SDK call', () => {
     expect(sendMock).toHaveBeenLastCalledWith(expect.objectContaining({ from: 'b-sender@example.com' }))
   })
 
-  test('an SDK-reported error (not a throw) returns outcome failed with a mapped error', async () => {
+  test('an SDK-reported error (not a throw) returns outcome failed with a fixed safe error', async () => {
     sendMock.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'invalid from address' } })
     const { sendEmail } = await loadEmail({ RESEND_API_KEY: 're_test_key', RESEND_FROM: 'clinic@example.com' })
     const result = await sendEmail({
@@ -244,7 +244,7 @@ describe('resend transport — acceptance: one message, one SDK call', () => {
     })
     expect(result.outcome).toBe('failed')
     expect(result.transport).toBe('resend')
-    expect(result.error).toContain('invalid from address')
+    expect(result.error).toBe('email delivery failed')
   })
 })
 
@@ -327,6 +327,15 @@ describe('mandatory adversarial — message validation, rejected not truncated',
 })
 
 describe('mandatory adversarial — error never carries PHI or a credential', () => {
+  test('a provider error echoing a seven-character patient reference is replaced by a fixed safe error', async () => {
+    sendMock.mockRejectedValue(new Error('smtp rejected PT-1234'))
+    const { sendEmail } = await loadEmail({ RESEND_API_KEY: 're_test_key', RESEND_FROM: 'clinic@example.com' })
+    const result = await sendEmail({ to: 'recipient@example.com', subject: 'x', text: 'PT-1234' })
+
+    expect(result).toEqual({ outcome: 'failed', transport: 'resend', error: 'email delivery failed' })
+    expect(result.error).not.toContain('PT-1234')
+  })
+
   test('a mapped error never contains a patient name, date of birth, patient reference, address, or share token', async () => {
     sendMock.mockRejectedValue(new Error('smtp rejected: mailbox unavailable'))
     const { sendEmail } = await loadEmail({ RESEND_API_KEY: 're_test_key', RESEND_FROM: 'clinic@example.com' })
@@ -342,7 +351,7 @@ describe('mandatory adversarial — error never carries PHI or a credential', ()
     expect(result.error).not.toContain('1990-01-01')
     expect(result.error).not.toContain('recipient@example.com')
     expect(result.error).not.toContain('tok_secret999')
-    expect(result.error).toBe('smtp rejected: mailbox unavailable')
+    expect(result.error).toBe('email delivery failed')
   })
 })
 

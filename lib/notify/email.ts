@@ -84,8 +84,6 @@ async function sendViaLog(message: EmailMessage): Promise<SendOutcome> {
   return { outcome: 'sent', transport: 'log' }
 }
 
-const MAX_ERROR_LENGTH = 500
-
 class EmailTimeoutError extends Error {
   constructor() {
     super('email delivery timed out')
@@ -109,27 +107,11 @@ function withinTimeout<T>(operation: Promise<T>): Promise<T> {
   })
 }
 
-// A provider code or message only — never the message this adapter was
-// asked to send, so a caller's own text can never surface through here.
-function shortError(error: unknown): string {
-  if (error instanceof Error) return error.message.slice(0, MAX_ERROR_LENGTH)
-  if (typeof error === 'string') return error.slice(0, MAX_ERROR_LENGTH)
-  if (
-    error !== null &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message.slice(0, MAX_ERROR_LENGTH)
-  }
-  return 'resend send failed'
-}
-
-function safeTransportError(error: unknown, message: EmailMessage): string {
-  const mapped = shortError(error)
-  const sensitiveValues = [message.to, message.subject, ...message.text.split(/\s+/)]
-    .filter((value) => value.length >= 8)
-  return sensitiveValues.some((value) => mapped.includes(value)) ? 'email delivery failed' : mapped
+// Provider errors are untrusted and may echo arbitrary message content. A
+// fixed adapter-owned value is the only reliable way to keep PHI out of the
+// public outcome and the durable outbox error field.
+function safeTransportError(): string {
+  return 'email delivery failed'
 }
 
 // Wrapped in try/catch rather than relying on async auto-wrapping: a
@@ -152,7 +134,7 @@ async function sendViaResend(message: EmailMessage): Promise<SendOutcome> {
       }),
     )
     if (result.error) {
-      return { outcome: 'failed', transport: 'resend', error: safeTransportError(result.error, message) }
+      return { outcome: 'failed', transport: 'resend', error: safeTransportError() }
     }
     logSend(result.data?.id ?? randomUUID(), message.to, 'resend')
     return { outcome: 'sent', transport: 'resend' }
@@ -160,6 +142,6 @@ async function sendViaResend(message: EmailMessage): Promise<SendOutcome> {
     if (error instanceof EmailTimeoutError) {
       return { outcome: 'failed', transport: 'resend', error: error.message }
     }
-    return { outcome: 'failed', transport: 'resend', error: safeTransportError(error, message) }
+    return { outcome: 'failed', transport: 'resend', error: safeTransportError() }
   }
 }
