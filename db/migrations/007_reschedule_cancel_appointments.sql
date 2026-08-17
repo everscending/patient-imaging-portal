@@ -86,8 +86,9 @@ begin
     return;
   end if;
 
+  -- app_user controls this argument; ADR-0008 is the non-weakenable floor.
   if (select s.starts_at from slots s where s.id = v_appointment.slot_id)
-       <= now() + p_minimum_notice then
+       <= now() + greatest(p_minimum_notice, interval '24 hours') then
     return query select 'minimum_notice'::text,
       null::uuid, null::uuid, null::timestamptz, null::timestamptz,
       null::appointment_status, null::text, null::text, null::text, null::boolean;
@@ -179,8 +180,9 @@ begin
     return;
   end if;
 
+  -- app_user controls this argument; ADR-0008 is the non-weakenable floor.
   if (select s.starts_at from slots s where s.id = v_appointment.slot_id)
-       <= now() + p_minimum_notice then
+       <= now() + greatest(p_minimum_notice, interval '24 hours') then
     return query select 'minimum_notice'::text,
       null::uuid, null::uuid, null::timestamptz, null::timestamptz,
       null::appointment_status, null::text, null::text, null::text, null::boolean;

@@ -83,15 +83,15 @@ function appSql(actorUserId: string, call: string): string {
   return `set role app_user; set request.jwt.claim.sub = ${literal(actorUserId)}; ${call}`
 }
 
-function rescheduleCall(f: Fixture, appointmentId: string, slotId: string): string {
+function rescheduleCall(f: Fixture, appointmentId: string, slotId: string, minimumNotice = MINIMUM_NOTICE): string {
   return appSql(f.actorUserId, `select row_to_json(result) from reschedule_appointment(
-    '${appointmentId}'::uuid, '${slotId}'::uuid, '${f.actorUserId}'::uuid, ${MINIMUM_NOTICE}
+    '${appointmentId}'::uuid, '${slotId}'::uuid, '${f.actorUserId}'::uuid, ${minimumNotice}
   ) result;`)
 }
 
-function cancelCall(f: Fixture, appointmentId: string): string {
+function cancelCall(f: Fixture, appointmentId: string, minimumNotice = MINIMUM_NOTICE): string {
   return appSql(f.actorUserId, `select row_to_json(result) from cancel_appointment(
-    '${appointmentId}'::uuid, '${f.actorUserId}'::uuid, ${MINIMUM_NOTICE}
+    '${appointmentId}'::uuid, '${f.actorUserId}'::uuid, ${minimumNotice}
   ) result;`)
 }
 
@@ -165,6 +165,18 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select count(*) from audit_events where target_id = '${nearId}';`)).toBe('0')
     expect(psql(`select status::text from slots where id = '${near.slotIds[0]}';`)).toBe('open')
     expect(psql(`select status::text from slots where id = '${near.slotIds[1]}';`)).toBe('open')
+  })
+
+  test('authenticatedCaller_cannotWeakenMinimumNoticeForRescheduleOrCancel', () => {
+    const f = fixture({ startsInHours: 1 })
+    const id = appointment(f)
+    const weakenedNotice = "interval '0 hours'"
+
+    expect(JSON.parse(psql(rescheduleCall(f, id, f.slotIds[1]!, weakenedNotice))).result_error).toBe('minimum_notice')
+    expect(JSON.parse(psql(cancelCall(f, id, weakenedNotice))).result_error).toBe('minimum_notice')
+    expect(psql(`select slot_id || '|' || status::text from appointments where id = '${id}';`)).toBe(`${f.slotIds[0]}|requested`)
+    expect(psql(`select count(*) from appointment_transitions where appointment_id = '${id}';`)).toBe('0')
+    expect(psql(`select count(*) from audit_events where target_id = '${id}';`)).toBe('0')
   })
 
   test('reschedule_auditFailure_rollsBackAppointmentBothSlotsTransitionAndAudit', () => {
