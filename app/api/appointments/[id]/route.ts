@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { guardPhiAccess, resolveScheduleActor } from '../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../lib/access/identity'
-import { cancel, reschedule, transition } from '../../../../lib/scheduling/booking'
+import { cancel, reschedule, transition, type ChangeResult } from '../../../../lib/scheduling/booking'
 import { clinicianTransitionStatuses } from '../../../../lib/scheduling/lifecycle'
 import { parseBody, parseParams, uuidSchema } from '../../../../lib/validation'
 import { errorResponse } from '../../../../lib/validation/envelope'
@@ -12,6 +12,12 @@ const PatchSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('cancel') }).strict(),
   z.object({ action: z.literal('transition'), status: z.enum(clinicianTransitionStatuses) }).strict(),
 ])
+type ChangeError = Extract<ChangeResult, { ok: false }>['error']
+const CHANGE_ERROR_RESPONSES = {
+  slot_unavailable: { status: 409, message: 'That slot is no longer available.' },
+  minimum_notice: { status: 422, message: 'Changes are not allowed within 24 hours of the appointment.' },
+  not_reschedulable: { status: 422, message: 'This appointment can no longer be changed.' },
+} as const satisfies Record<ChangeError, { status: number; message: string }>
 type RouteContext = { params: Promise<{ id: string }> }
 
 function denied(status: 401 | 403 | 404): Response {
@@ -38,8 +44,8 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
         : await transition({ appointmentId: params.value.id, status: body.value.status, actorUserId: callerId })
     if (!result.ok) {
       if (result.error === 'invalid_transition') return errorResponse(422, 'invalid_transition', "That change is not allowed from this appointment's current status.")
-      const status = result.error === 'slot_unavailable' ? 409 : 422
-      return errorResponse(status, result.error, 'The appointment could not be changed.')
+      const mapping = CHANGE_ERROR_RESPONSES[result.error]
+      return errorResponse(mapping.status, result.error, mapping.message)
     }
     return Response.json(result.appointment, { status: 200 })
   } catch {

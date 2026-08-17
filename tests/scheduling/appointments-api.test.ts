@@ -54,15 +54,26 @@ describe('POST /api/appointments', () => {
     const response = await collection.POST(request({ slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID, patientId: ID }))
     expect(response.status).toBe(422); expect(bookMock).not.toHaveBeenCalled()
   })
-  test('nonexistent_slot_maps_slot_unavailable_to_409', async () => {
-    bookMock.mockResolvedValue({ ok: false, error: 'slot_unavailable' })
-    expect((await collection.POST(request({ slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID }))).status).toBe(409)
+  test('book_result_errors_map_to_their_pinned_status_and_envelope', async () => {
+    const cases = [
+      ['slot_unavailable', 409, 'That slot is no longer available.'],
+      ['idempotency_key_reused', 409, 'That request key was already used for a different slot.'],
+      ['service_not_offered', 422, 'This provider does not offer that service.'],
+    ] as const
+    for (const [error, status, message] of cases) {
+      bookMock.mockResolvedValueOnce({ ok: false, error })
+      const response = await collection.POST(request({ slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID }))
+      expect(response.status).toBe(status)
+      expect(await response.json()).toEqual({ error, message })
+    }
   })
   test('concurrent_same_key_same_slot_post_produces_201_then_200_and_no_route_booking_audit', async () => {
     bookMock.mockResolvedValueOnce({ ok: true, appointment: dto, reused: false }).mockResolvedValueOnce({ ok: true, appointment: dto, reused: true })
     const body = { slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID }
     const [one, two] = await Promise.all([collection.POST(request(body)), collection.POST(request(body))])
     expect([one.status, two.status].sort()).toEqual([200, 201])
+    expect(await one.json()).toEqual({ id: ID, slotId: SLOT, startsAt: dto.startsAt, endsAt: dto.endsAt, status: 'requested', providerName: 'Dr. A', serviceName: 'MRI' })
+    expect(await two.json()).toEqual({ id: ID, slotId: SLOT, startsAt: dto.startsAt, endsAt: dto.endsAt, status: 'requested', providerName: 'Dr. A', serviceName: 'MRI' })
     expect(bookMock).toHaveBeenCalledTimes(2) // booking.ts, never this route, owns booking audit rows
   })
 })
@@ -71,9 +82,11 @@ describe('GET /api/appointments', () => {
   test('get_ten_rows_creates_one_collection_guard_audit_row', async () => {
     listMock.mockResolvedValue(Array.from({ length: 10 }, () => dto)); const response = await collection.GET()
     expect(response.status).toBe(200); expect(guardMock).toHaveBeenCalledOnce(); expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: ACTOR }, { kind: 'collection', of: 'appointment' }, 'appointment.view')
+    expect(await response.json()).toEqual({ appointments: Array.from({ length: 10 }, () => dto) })
   })
   test('get_zero_rows_still_creates_one_collection_guard_audit_row', async () => {
-    listMock.mockResolvedValue([]); expect((await collection.GET()).status).toBe(200); expect(guardMock).toHaveBeenCalledOnce()
+    listMock.mockResolvedValue([]); const response = await collection.GET(); expect(response.status).toBe(200); expect(guardMock).toHaveBeenCalledOnce()
+    expect(await response.json()).toEqual({ appointments: [] })
   })
 })
 
@@ -92,8 +105,21 @@ describe('PATCH /api/appointments/:id', () => {
     transitionMock.mockResolvedValue({ ok: false, error: 'invalid_transition' }); const response = await item.PATCH(patch({ action: 'transition', status: 'confirmed' }), context)
     expect(response.status).toBe(422); expect(await response.json()).toEqual({ error: 'invalid_transition', message: "That change is not allowed from this appointment's current status." })
   })
-  test('reschedule_slot_unavailable_maps_to_409_and_success_returns_list_dto', async () => {
-    rescheduleMock.mockResolvedValueOnce({ ok: false, error: 'slot_unavailable' }); expect((await item.PATCH(patch({ action: 'reschedule', slotId: SLOT }), context)).status).toBe(409)
-    const response = await item.PATCH(patch({ action: 'cancel' }), context); expect(await response.json()).toMatchObject({ allowedTransitions: [] })
+  test('change_result_errors_map_to_their_pinned_status_and_envelope', async () => {
+    const cases = [
+      ['slot_unavailable', 409, 'That slot is no longer available.'],
+      ['minimum_notice', 422, 'Changes are not allowed within 24 hours of the appointment.'],
+      ['not_reschedulable', 422, 'This appointment can no longer be changed.'],
+    ] as const
+    for (const [error, status, message] of cases) {
+      rescheduleMock.mockResolvedValueOnce({ ok: false, error })
+      const response = await item.PATCH(patch({ action: 'reschedule', slotId: SLOT }), context)
+      expect(response.status).toBe(status)
+      expect(await response.json()).toEqual({ error, message })
+    }
+  })
+  test('successful_cancel_returns_the_complete_list_dto', async () => {
+    const response = await item.PATCH(patch({ action: 'cancel' }), context)
+    expect(await response.json()).toEqual({ ...dto, status: 'cancelled', allowedTransitions: [] })
   })
 })

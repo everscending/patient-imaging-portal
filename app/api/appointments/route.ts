@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { guardPhiAccess, resolveScheduleActor } from '../../../lib/access/guard'
 import { resolveCallerId } from '../../../lib/access/identity'
-import { bookForActor, listAppointments } from '../../../lib/scheduling/booking'
+import { bookForActor, listAppointments, type BookResult } from '../../../lib/scheduling/booking'
 import { parseBody, uuidSchema } from '../../../lib/validation'
 import { errorResponse } from '../../../lib/validation/envelope'
 
@@ -10,6 +10,12 @@ const CreateSchema = z.object({
   serviceId: uuidSchema,
   idempotencyKey: z.string().uuid(),
 }).strict()
+type BookError = Extract<BookResult, { ok: false }>['error']
+const BOOK_ERROR_RESPONSES = {
+  slot_unavailable: { status: 409, message: 'That slot is no longer available.' },
+  idempotency_key_reused: { status: 409, message: 'That request key was already used for a different slot.' },
+  service_not_offered: { status: 422, message: 'This provider does not offer that service.' },
+} as const satisfies Record<BookError, { status: number; message: string }>
 
 function denied(status: 401 | 403 | 404): Response {
   if (status === 401) return errorResponse(401, 'session_required', 'Sign in to continue.')
@@ -25,8 +31,8 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const result = await bookForActor({ ...parsed.value, actorUserId: callerId })
     if (!result.ok) {
-      const status = result.error === 'service_not_offered' ? 422 : 409
-      return errorResponse(status, result.error, result.error === 'service_not_offered' ? 'This service is not offered for that slot.' : 'The appointment could not be booked.')
+      const mapping = BOOK_ERROR_RESPONSES[result.error]
+      return errorResponse(mapping.status, result.error, mapping.message)
     }
     const { id, startsAt, endsAt, status, providerName, serviceName } = result.appointment
     return Response.json({ id, slotId: parsed.value.slotId, startsAt, endsAt, status, providerName, serviceName }, { status: result.reused ? 200 : 201 })
@@ -42,7 +48,7 @@ export async function GET(): Promise<Response> {
   if (!access.ok) return denied(access.status)
   if (!callerId) return denied(401)
   try {
-    return Response.json(await listAppointments(callerId), { status: 200 })
+    return Response.json({ appointments: await listAppointments(callerId) }, { status: 200 })
   } catch {
     return errorResponse(503, 'appointments_unavailable', 'Appointments are temporarily unavailable.')
   }
