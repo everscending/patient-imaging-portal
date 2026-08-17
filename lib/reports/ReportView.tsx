@@ -14,6 +14,7 @@ export type ReportViewProps = {
     signedByName: string
     signedAt: string
   }
+  shareLinkTtlHours: number
   variant: 'portal' | 'shared'
 }
 
@@ -28,6 +29,7 @@ function signingTimestamp(value: string): string {
 /** The sole structured-text renderer for portal and shared report views. */
 export function ReportView({
   report,
+  shareLinkTtlHours,
   variant,
 }: ReportViewProps): JSX.Element {
   return (
@@ -80,9 +82,7 @@ export function ReportView({
 
       {variant === 'portal' ? (
         <div className="pip-report-actions" aria-label="Report actions">
-          <span data-testid="share-create">
-            <ShareDialog resourceKind="report" resourceId={report.id} shareLinkTtlHours={48} />
-          </span>
+          <ShareDialog resourceKind="report" resourceId={report.id} shareLinkTtlHours={shareLinkTtlHours} />
           <button className="pip-report-action pip-report-print" type="button" onClick={() => window.print()}>
             Print
           </button>
