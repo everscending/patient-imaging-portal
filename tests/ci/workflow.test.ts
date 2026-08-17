@@ -26,34 +26,43 @@ const REQUIRED_UI_GATE_PREFIX = [
 const REQUIRED_E2_ENTRY = [
   'npx playwright test --project=e2-wiring',
   'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
-]
-const PLAYWRIGHT_COMMAND = /^npx playwright test(?: (.+))? --project=([^ ]+)$/
-const REPORT_VALIDATOR = /^node scripts\/validate-playwright-report\.mjs test-results\/playwright\.json (e2e\/.+\.spec\.ts)$/
+] as const
+const PLAYWRIGHT_COMMAND = /^npx playwright test(?: (e2e\/[^ ]+\.spec\.ts))? --project=([^ ]+)$/
+const REPORT_VALIDATOR = /^node scripts\/validate-playwright-report\.mjs test-results\/playwright\.json (e2e\/[^ ]+\.spec\.ts)$/
 
 function suiteForPlaywrightCommand(command: string): string | undefined {
   const match = command.match(PLAYWRIGHT_COMMAND)
   if (!match) return undefined
 
   const [, spec, project] = match
-  return spec ?? `e2e/${project}.spec.ts`
+  if (spec) return spec
+
+  return project === 'e2-wiring' ? 'e2e/e2-wiring.spec.ts' : undefined
 }
 
 function expectValidUiGateManifest(commands: string[]): void {
   expect(commands.slice(0, REQUIRED_UI_GATE_PREFIX.length)).toEqual(REQUIRED_UI_GATE_PREFIX)
 
   const seenSuites = new Set<string>()
+  let hasRequiredE2Entry = false
   for (let index = REQUIRED_UI_GATE_PREFIX.length; index < commands.length; index += 2) {
-    const suite = suiteForPlaywrightCommand(commands[index])
+    const playwrightCommand = commands[index]
+    const validatorCommand = commands[index + 1]
+    const suite = suiteForPlaywrightCommand(playwrightCommand)
     expect(suite, `manifest entry ${index} must start with a Playwright command`).toBeDefined()
     expect(seenSuites.has(suite!), `suite ${suite} has more than one manifest entry`).toBe(false)
     seenSuites.add(suite!)
 
-    const validatorSuite = commands[index + 1]?.match(REPORT_VALIDATOR)?.[1]
+    const validatorSuite = validatorCommand?.match(REPORT_VALIDATOR)?.[1]
     expect(validatorSuite, `Playwright suite ${suite} must have an immediate report validator`).toBeDefined()
     expect(validatorSuite, `report validator must match Playwright suite ${suite}`).toBe(suite)
+
+    if (playwrightCommand === REQUIRED_E2_ENTRY[0] && validatorCommand === REQUIRED_E2_ENTRY[1]) {
+      hasRequiredE2Entry = true
+    }
   }
 
-  expect(seenSuites.has('e2e/e2-wiring.spec.ts')).toBe(true)
+  expect(hasRequiredE2Entry, 'the mandatory e2-wiring manifest entry must remain unchanged').toBe(true)
 }
 
 function executableInvocations(source: string, pattern: RegExp): string[] {
@@ -100,6 +109,12 @@ describe('per-change coverage stays cumulative', () => {
   })
 
   test('JOR-253 and JOR-260 Playwright extensions are accepted without a manifest count edit', () => {
+    expectValidUiGateManifest([
+      ...resolvedUiGate,
+      'npx playwright test e2e/appended-ticket.spec.ts --project=product',
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/appended-ticket.spec.ts',
+    ])
+
     const jor253 = [
       ...REQUIRED_UI_GATE_PREFIX,
       'npx playwright test e2e/book.spec.ts --project=product',
@@ -115,6 +130,14 @@ describe('per-change coverage stays cumulative', () => {
 
     expectValidUiGateManifest(jor253)
     expectValidUiGateManifest(jor260)
+  })
+
+  test('the mandatory e2-wiring command cannot be replaced by a different owner of the same suite', () => {
+    expect(() => expectValidUiGateManifest([
+      ...REQUIRED_UI_GATE_PREFIX,
+      'npx playwright test e2e/e2-wiring.spec.ts --project=product',
+      REQUIRED_E2_ENTRY[1],
+    ])).toThrow()
   })
 
   test('uiGateExtension_withoutMatchingReportValidator_isRejected', () => {
