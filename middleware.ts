@@ -63,7 +63,11 @@ export async function middleware(request: NextRequest): Promise<Response> {
   if (!requiresSession) return NextResponse.next()
 
   const token = getSessionToken(request)
-  if (!token) return NextResponse.redirect(new URL('/login', request.url))
+  // A missing cookie is an unauthenticated request, not a navigation flow.
+  // Return no body so a direct protected-page request cannot disclose a
+  // rendered patient shell or PHI. A present but invalid/expired cookie still
+  // takes the established login redirect below.
+  if (!token) return new NextResponse(null, { status: 401 })
   const { data, error } = await authClient().auth.getUser(token)
 
   if (error || !data.user) {

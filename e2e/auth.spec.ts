@@ -287,10 +287,25 @@ test.describe('Middleware — six verified-patient routes redirect to /verify; t
 })
 
 test.describe('Middleware — expired/absent session', () => {
-  test('acceptance: patientPage_noSession_redirectsToLogin', async ({ page, context }) => {
-    await context.clearCookies()
-    await page.goto('/appointments')
-    await expect(page).toHaveURL(/\/login$/)
+  test('mandatory adversarial: unauthenticatedStudiesReportsProfileReturn401WithoutPhi', async ({ request }) => {
+    const protectedPatientRoutes = [
+      '/studies',
+      '/studies/11111111-1111-1111-1111-111111111111',
+      '/studies/11111111-1111-1111-1111-111111111111/clips/22222222-2222-2222-2222-222222222222',
+      '/reports',
+      '/reports/11111111-1111-1111-1111-111111111111',
+      '/shares',
+      '/profile',
+      '/appointments',
+      '/book',
+    ]
+
+    for (const route of protectedPatientRoutes) {
+      const response = await request.get(route, { maxRedirects: 0 })
+      expect(response.status(), route).toBe(401)
+      expect(response.headers().location, route).toBeUndefined()
+      expect(await response.text(), route).toBe('')
+    }
   })
 
   test('acceptance: patientApi_noSession_returns401WithEnvelope', async ({ request }) => {
