@@ -15,11 +15,13 @@ gates:
     - "npx tsc --noEmit"
     - "npx eslint ."
     - "npx vitest run --project unit"
+    - "npx vitest run --project unit tests/observability/timing.test.ts"
     - "npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts"
   ui:
     - "npx tsc --noEmit"
     - "npx eslint ."
     - "npx vitest run --project unit"
+    - "npx vitest run --project unit tests/observability/timing.test.ts"
     - "npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts"
     - "npx playwright test e2e/book.spec.ts --project=product"
     - "npx playwright test --project=e2-wiring"
