@@ -135,10 +135,16 @@ const {
 
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardPhiAccessMock }))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonClientMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: async () => getSession().callerId }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: async () => getSession().callerId,
+  resolveAuthenticatedSession: async () => {
+    const { token, callerId } = getSession()
+    return token && callerId ? { accessToken: token, userId: callerId } : null
+  },
+}))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: FAKE_SESSION_COOKIE_NAME }))
 vi.mock('../../lib/validation', () => ({
-  uuidSchema: {},
+  reportParamsSchema: {},
   parseParams: (_schema: unknown, params: { reportId?: string }) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.reportId ?? '')
       ? { ok: true, value: { reportId: params.reportId } }

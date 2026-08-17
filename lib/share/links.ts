@@ -9,6 +9,7 @@ import { guardPhiAccess } from '../access/guard'
 import { config } from '../config'
 import { anonClient, serviceClient } from '../db/client'
 import { signStorageKeys } from '../imaging/signing'
+import { enqueueEmail } from '../notify/email'
 import { timed } from '../observability/timing'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
@@ -91,17 +92,12 @@ export async function mintShareLink(input: {
 
     // PHI-free, queued only: this request never invokes an email transport.
     let delivery: 'sent' | 'failed' = 'failed'
-    try {
-      const { error: outboxError } = await client.from('email_outbox').insert({
-        recipient: input.recipientEmail,
-        subject: 'Someone shared a secure medical file with you',
-        body: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
-      })
-      if (!outboxError) delivery = 'sent'
-    } catch {
-      // The link is already durable. A queue outage must not revoke it or turn
-      // its successful creation into an error response.
-    }
+    const queued = await enqueueEmail(client, {
+      to: input.recipientEmail,
+      subject: 'Someone shared a secure medical file with you',
+      text: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,
+    })
+    if (queued) delivery = 'sent'
 
     return { id: (data as { id: string }).id, url, expiresAt, recipientEmail: input.recipientEmail, delivery }
   }, () => 'ok')
