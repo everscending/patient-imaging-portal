@@ -46,9 +46,9 @@ test.describe.serial('JOR-253 /book', () => {
     lockToken = await acquireIdentityFixtureLock()
   })
   test.afterAll(async () => releaseIdentityFixtureLock(lockToken))
-  test.beforeEach(async ({ request }) => {
-    await reset(request)
-    await verifiedPatient(request)
+  test.beforeEach(async ({ page }) => {
+    await reset(page.request)
+    await verifiedPatient(page.request)
   })
 
   // Mandatory adversarial: Another session books a slot between render and confirm: EC-7 and no second appointment.
