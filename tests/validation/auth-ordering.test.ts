@@ -127,6 +127,7 @@ function observedMalformedBody(): { request: Request; wasRead: () => boolean } {
 const malformedAuthenticatedSurfaces: Array<{
   name: string
   create: () => ObservedInvocation
+  auditedWhenTargetIsValid?: boolean
 }> = [
   {
     name: 'DELETE /api/shares/:id',
@@ -147,6 +148,7 @@ const malformedAuthenticatedSurfaces: Array<{
         wasInputRead: params.wasRead,
       }
     },
+    auditedWhenTargetIsValid: true,
   },
   {
     name: 'GET /api/studies/:studyId',
@@ -157,6 +159,7 @@ const malformedAuthenticatedSurfaces: Array<{
         wasInputRead: params.wasRead,
       }
     },
+    auditedWhenTargetIsValid: true,
   },
   {
     name: 'GET /api/studies/:studyId/clips/:clipId',
@@ -167,6 +170,7 @@ const malformedAuthenticatedSurfaces: Array<{
         wasInputRead: params.wasRead,
       }
     },
+    auditedWhenTargetIsValid: true,
   },
   {
     name: 'GET /api/providers',
@@ -214,15 +218,22 @@ beforeEach(() => {
 describe('session authentication precedes EC-12 input validation', () => {
   test.each(malformedAuthenticatedSurfaces)(
     'expired cookie returns 401 before reading malformed input: $name',
-    async ({ create }) => {
+    async ({ create, auditedWhenTargetIsValid }) => {
       const invocation = create()
 
       const response = await invocation.invoke()
 
-      expect(response.status).toBe(401)
-      await expect(response.json()).resolves.toEqual({ error: 'session_required', message: 'Sign in to continue.' })
-      expect(invocation.wasInputRead()).toBe(false)
-      expect(routeState.events).toEqual(['auth'])
+      if (auditedWhenTargetIsValid) {
+        expect(response.status).toBe(422)
+        await expect(response.json()).resolves.toEqual({ error: 'validation_failed', message: 'The request could not be validated.' })
+        expect(invocation.wasInputRead()).toBe(true)
+        expect(routeState.events).toEqual(['auth', 'parse'])
+      } else {
+        expect(response.status).toBe(401)
+        await expect(response.json()).resolves.toEqual({ error: 'session_required', message: 'Sign in to continue.' })
+        expect(invocation.wasInputRead()).toBe(false)
+        expect(routeState.events).toEqual(['auth'])
+      }
       expect(dataFromMock).not.toHaveBeenCalled()
       expect(guardPhiAccessMock).not.toHaveBeenCalled()
       expect(revokeShareLinkMock).not.toHaveBeenCalled()

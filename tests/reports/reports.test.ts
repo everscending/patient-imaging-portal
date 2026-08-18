@@ -330,6 +330,19 @@ describe('reports', () => {
     ])
   })
 
+  test('unauthenticatedReportDetailReachesItsAuditedGuard', async function unauthenticatedReportDetailReachesItsAuditedGuard() {
+    configureSession({ token: null, callerId: null })
+    setGuardStatus(401)
+
+    const response = await detailRoute(new Request(`http://test/api/reports/${REPORT_A}`), { params: Promise.resolve({ reportId: REPORT_A }) })
+
+    expect(response.status).toBe(401)
+    expect(guardCalls).toEqual([
+      { actor: { kind: 'patient', userId: '' }, target: { kind: 'report', id: REPORT_A }, action: 'report.view' },
+    ])
+    expect(JSON.stringify(await response.json())).not.toContain(REPORT_A)
+  })
+
   test('responseDataMinimization', async function responseDataMinimization() {
     seedSigned(REPORT_A, '2026-08-16T10:00:00.000Z')
 
