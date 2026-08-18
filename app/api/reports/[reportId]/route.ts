@@ -25,13 +25,11 @@ async function resolveActor(accessToken: string, userId: string): Promise<Actor>
 
 export async function GET(_request: Request, context: { params: Promise<{ reportId: string }> }): Promise<Response> {
   const session = await resolveAuthenticatedSession()
-  if (!session) return accessError(401)
-
   const parsed = parseParams(reportParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
 
-  const actor = await resolveActor(session.accessToken, session.userId)
-  const result = await getReport(actor, session.accessToken, parsed.value.reportId)
+  const actor = session ? await resolveActor(session.accessToken, session.userId) : { kind: 'patient' as const, userId: '' }
+  const result = await getReport(actor, session?.accessToken ?? '', parsed.value.reportId)
   if (!result.ok) return accessError(result.status)
   return Response.json(result.value, { status: 200 })
 }

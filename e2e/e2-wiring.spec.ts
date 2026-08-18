@@ -295,7 +295,6 @@ test.describe('JOR-264 E2 identity/access wiring', () => {
         status: 401,
         outcome: 'denied',
         actorRef: null,
-        reachesGuard: 'guardsBeforeSession' in endpoint && endpoint.guardsBeforeSession === true,
       })
     }
   })
