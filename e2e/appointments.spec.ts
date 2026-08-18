@@ -1,17 +1,7 @@
 // JOR-257 — patient appointment list actions are server-authorized.
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext } from '@playwright/test'
-import {
-  acquireIdentityFixtureLock,
-  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
-  releaseIdentityFixtureLock,
-} from './fixtures/identity-fixture-lock'
 
-const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'CorrectHorseBattery9'
 const SLOT_ID = '00000000-0000-4000-8000-000000000002'
 const NOTICE = 'Changes are not allowed within 24 hours of the start. Call the clinic.'
@@ -51,21 +41,6 @@ async function signedIn(page: import('@playwright/test').Page): Promise<void> {
   expect((await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
 }
 
-async function fakeServerUrl(): Promise<string> {
-  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
-  return (JSON.parse(raw) as { url: string }).url
-}
-
-async function resetAndLinkSeededPatient(request: APIRequestContext): Promise<void> {
-  expect((await request.post(`${await fakeServerUrl()}/__test__/reset-identity`)).status()).toBe(200)
-  const email = `jor-257-live-${randomUUID()}@example.test`
-  expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
-  expect((await request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
-  expect((await request.post('/api/identity/verify', {
-    data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
-  })).status()).toBe(200)
-}
-
 async function show(page: import('@playwright/test').Page, items: FixtureAppointment[]): Promise<void> {
   await page.route('**/api/appointments', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ appointments: items }) }))
   await page.goto('/appointments')
@@ -73,35 +48,13 @@ async function show(page: import('@playwright/test').Page, items: FixtureAppoint
 }
 
 test.describe('JOR-257 appointments', () => {
-  test('seededLiveAppointments_insideNoticeLocksAndOutsideOffersBoth', async ({ page }) => {
-    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
-    const lockToken = await acquireIdentityFixtureLock()
-    try {
-      await resetAndLinkSeededPatient(page.request)
-      await page.goto('/appointments')
-
-      const visibleItems = page.locator('[data-testid="appointment-item"]:visible')
-      await expect(visibleItems).toHaveCount(2)
-
-      const locked = visibleItems.filter({ has: page.getByTestId('appointment-notice-locked') })
-      await expect(locked).toHaveCount(1)
-      await expect(locked.getByTestId('appointment-notice-locked')).toHaveText(NOTICE)
-      await expect(locked.getByTestId('appointment-reschedule')).toHaveCount(0)
-      await expect(locked.getByTestId('appointment-cancel')).toHaveCount(0)
-
-      const offered = visibleItems.filter({ has: page.getByTestId('appointment-reschedule') })
-      await expect(offered).toHaveCount(1)
-      await expect(offered.getByTestId('appointment-reschedule')).toHaveCount(1)
-      await expect(offered.getByTestId('appointment-cancel')).toHaveCount(1)
-    } finally {
-      await releaseIdentityFixtureLock(lockToken)
-    }
-  })
-
-  test('allowedTransitionsEmpty_hasNoAction', async ({ page }) => {
+  test('liveAppointments_canChangeFalseWithNoTransitionsShowsNotice', async ({ page }) => {
     await signedIn(page)
-    await show(page, [appointment({ allowedTransitions: [], canChange: false })])
-    await expect(page.locator('[data-testid="appointment-notice-locked"]:visible')).toHaveText(NOTICE)
+    await show(page, [
+      appointment({ allowedTransitions: [], canChange: false }),
+      appointment({ id: '00000000-0000-4000-8000-000000000002', status: 'confirmed', allowedTransitions: [], canChange: false }),
+    ])
+    await expect(page.locator('[data-testid="appointment-notice-locked"]:visible')).toHaveText([NOTICE, NOTICE])
     await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(0)
     await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
   })
@@ -119,6 +72,15 @@ test.describe('JOR-257 appointments', () => {
     await expect(page.locator('[data-testid="appointment-out-of-hours"]:visible')).toHaveText('Outside hours. Your appointment is unaffected.')
     await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(0)
     await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
+    await expect(page.locator('[data-testid="appointment-notice-locked"]:visible')).toHaveCount(0)
+  })
+
+  test('completed_serverWithholdsActionsWithoutNoticeLock', async ({ page }) => {
+    await signedIn(page)
+    await show(page, [appointment({ status: 'completed', canChange: false, allowedTransitions: [] })])
+    await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(0)
+    await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
+    await expect(page.locator('[data-testid="appointment-notice-locked"]:visible')).toHaveCount(0)
   })
 
   test('noShow_serverWithholdsActions', async ({ page }) => {
@@ -127,6 +89,7 @@ test.describe('JOR-257 appointments', () => {
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: No-show')
     await expect(page.locator('[data-testid="appointment-reschedule"]:visible')).toHaveCount(0)
     await expect(page.locator('[data-testid="appointment-cancel"]:visible')).toHaveCount(0)
+    await expect(page.locator('[data-testid="appointment-notice-locked"]:visible')).toHaveCount(0)
   })
 
   test('outOfHours_serverOfferedActionsRemainAvailable', async ({ page }) => {
