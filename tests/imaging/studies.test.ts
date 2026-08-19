@@ -10,29 +10,25 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const { guardMock, actorMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.hoisted(() => {
+const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.hoisted(() => {
   const guardMock = vi.fn()
-  const actorMock = vi.fn()
   const callerMock = vi.fn()
   const anonMock = vi.fn()
   const signingMock = vi.fn()
   const cookieMock = vi.fn()
   return {
     guardMock,
-    actorMock,
     callerMock,
     anonMock,
     signingMock,
     cookieMock,
     reset() {
       guardMock.mockReset()
-      actorMock.mockReset()
       callerMock.mockReset()
       anonMock.mockReset()
       signingMock.mockReset()
       cookieMock.mockReset()
       guardMock.mockResolvedValue({ ok: true, patientId: 'patient-1' })
-      actorMock.mockResolvedValue({ kind: 'patient', userId: 'account-1' })
       callerMock.mockResolvedValue('account-1')
       cookieMock.mockResolvedValue({ get: () => ({ value: 'caller-token' }) })
       signingMock.mockImplementation(async (keys: string[]) =>
@@ -42,7 +38,7 @@ const { guardMock, actorMock, callerMock, anonMock, signingMock, cookieMock, res
   }
 })
 
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock, resolveScheduleActor: actorMock }))
+vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
 vi.mock('../../lib/access/identity', () => ({
   resolveCallerId: callerMock,
   resolveAuthenticatedSession: async () => {
@@ -91,8 +87,21 @@ const clipId = '22222222-2222-4222-8222-222222222222'
 beforeEach(() => reset())
 
 describe('mandatory adversarial: guard target, audit count, and ownership are enforced before data reads', () => {
+  test('studyDetailKeepsDualRoleAdminAuthority', async function studyDetailKeepsDualRoleAdminAuthority() {
+    anonMock.mockReturnValue(client({
+      staff_admins: [{ id: 'admin-1', user_id: 'account-1' }],
+      providers: [{ id: 'provider-1', user_id: 'account-1' }],
+    }))
+    guardMock.mockResolvedValue({ ok: false, status: 404 })
+    const { GET } = await import('../../app/api/studies/[studyId]/route')
+
+    await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
+
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'admin', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+  })
+
   test('studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision', async function studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision() {
-    actorMock.mockResolvedValue({ kind: 'provider', userId: 'account-1' })
+    anonMock.mockReturnValue(client({ providers: [{ id: 'provider-1', user_id: 'account-1' }] }))
     guardMock.mockResolvedValue({ ok: false, status: 404 })
     const { GET } = await import('../../app/api/studies/[studyId]/route')
 
@@ -100,12 +109,12 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
 
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
-    expect(actorMock).toHaveBeenCalledOnce()
     expect(guardMock).toHaveBeenCalledTimes(1)
     expect(guardMock).toHaveBeenCalledWith({ kind: 'provider', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
   })
 
   test('studyDetailKeepsPatientUnlinkedAndAnonymousDenials', async function studyDetailKeepsPatientUnlinkedAndAnonymousDenials() {
+    anonMock.mockReturnValue(client({}))
     const { GET } = await import('../../app/api/studies/[studyId]/route')
     guardMock.mockResolvedValueOnce({ ok: false, status: 403 })
     const unlinked = await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
@@ -118,7 +127,6 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(await unlinked.json()).toEqual({ error: 'identity_verification_required', message: 'Verify your identity to continue.' })
     expect(anonymous.status).toBe(401)
     expect(await anonymous.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
-    expect(actorMock).toHaveBeenCalledTimes(1)
     expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
     expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view')
   })
@@ -135,14 +143,31 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
   })
 
   test('foreignStudyStopsBeforeAnyManifestRead', async function foreignStudyStopsBeforeAnyManifestRead() {
+    anonMock.mockReturnValue(client({}))
     guardMock.mockResolvedValue({ ok: false, status: 404 })
     const { GET } = await import('../../app/api/studies/[studyId]/route')
     const response = await GET(new Request('http://test/api/studies/x'), { params: Promise.resolve({ studyId }) })
     expect(response.status).toBe(404)
-    expect(actorMock).toHaveBeenCalledWith('account-1')
     expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
-    expect(anonMock).not.toHaveBeenCalled()
+    expect(anonMock).toHaveBeenCalledOnce()
     expect(signingMock).not.toHaveBeenCalled()
+  })
+
+  test('owningVerifiedPatientReadsStudyDetail', async function owningVerifiedPatientReadsStudyDetail() {
+    anonMock.mockReturnValue(client({
+      studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
+      visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+      providers: [{ id: 'provider-1', full_name: 'Own Provider' }],
+      images: [],
+      cine_clips: [],
+    }))
+    const { GET } = await import('../../app/api/studies/[studyId]/route')
+
+    const response = await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: studyId, description: 'Owned study', images: [], clips: [] })
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
   })
 
   test('unauthenticatedDetailAndClipReadsReachTheirAuditedGuards', async function unauthenticatedDetailAndClipReadsReachTheirAuditedGuards() {
