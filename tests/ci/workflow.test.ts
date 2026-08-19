@@ -239,7 +239,9 @@ describe('timing and warm browser setup', () => {
     expect(workflow).toContain('Playwright setup')
     expect(workflow).toContain("hashFiles('package-lock.json')")
     expect(workflow).toContain('steps.playwright-version.outputs.version')
-    expect(workflow).toMatch(/npx playwright install --with-deps chromium/)
+    expect(workflow).toMatch(/npx playwright install chromium/)
+    expect(workflow).not.toMatch(/playwright install[^\n]*--with-deps/)
+    expect(workflow).toMatch(/- name: Setup — Playwright browser\n\s+timeout-minutes:\s*[1-9]\d*\n\s+run:/)
   })
 
   test('the gate records unit, integration, and Playwright command durations', () => {

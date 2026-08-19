@@ -57,9 +57,10 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}-${{ steps.playwright-version.outputs.version }}
 
       - name: Setup — Playwright browser
+        timeout-minutes: 5
         run: |
           started=$SECONDS
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
           echo "| Playwright setup | $((SECONDS - started))s |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fresh-clone E0/E1 certification
