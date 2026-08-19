@@ -121,6 +121,35 @@ type FakeAvailabilityBlock = {
   reason: string | null
 }
 
+type FakeAppointment = {
+  id: string
+  patient_id: string
+  status: 'confirmed'
+  out_of_hours: boolean
+  created_at: string
+  slots: { starts_at: string; ends_at: string }
+  providers: { full_name: string; time_zone: string }
+  services: { name: string }
+}
+
+type FakeScheduleSlot = {
+  id: string
+  provider_id: string
+  starts_at: string
+  ends_at: string
+  status: 'open' | 'booked'
+}
+
+type FakeScheduleAppointment = {
+  id: string
+  slot_id: string
+  provider_id: string
+  patient_id: string
+  service_name: string
+  status: 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+  out_of_hours: boolean
+}
+
 type FakeIdentityAttempt = {
   id: string
   attempted_patient_ref: string
@@ -201,6 +230,35 @@ const PROVIDERS: FakeProvider[] = [
     full_name: 'Dr. Riley Patel',
     time_zone: 'America/New_York',
     slot_minutes: 20,
+  },
+]
+const APPOINTMENT_SEED_NOW = Date.now()
+const APPOINTMENTS: FakeAppointment[] = [
+  {
+    id: '22552255-2255-4255-8255-225522552255',
+    patient_id: SEEDED_PATIENT.id,
+    status: 'confirmed',
+    out_of_hours: false,
+    created_at: new Date(APPOINTMENT_SEED_NOW).toISOString(),
+    slots: {
+      starts_at: new Date(APPOINTMENT_SEED_NOW + 12 * 60 * 60 * 1_000).toISOString(),
+      ends_at: new Date(APPOINTMENT_SEED_NOW + 13 * 60 * 60 * 1_000).toISOString(),
+    },
+    providers: { full_name: PROVIDERS[0].full_name, time_zone: PROVIDERS[0].time_zone },
+    services: { name: 'MRI' },
+  },
+  {
+    id: '22662266-2266-4266-8266-226622662266',
+    patient_id: SEEDED_PATIENT.id,
+    status: 'confirmed',
+    out_of_hours: true,
+    created_at: new Date(APPOINTMENT_SEED_NOW - 1).toISOString(),
+    slots: {
+      starts_at: new Date(APPOINTMENT_SEED_NOW + 72 * 60 * 60 * 1_000).toISOString(),
+      ends_at: new Date(APPOINTMENT_SEED_NOW + 73 * 60 * 60 * 1_000).toISOString(),
+    },
+    providers: { full_name: PROVIDERS[0].full_name, time_zone: PROVIDERS[0].time_zone },
+    services: { name: 'MRI' },
   },
 ]
 const VISITS: FakeVisit[] = [
@@ -333,6 +391,7 @@ const REPORTS: FakeReport[] = [
 ]
 
 const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
+  ['/rest/v1/appointments', APPOINTMENTS],
   ['/rest/v1/visits', VISITS],
   ['/rest/v1/studies', STUDIES],
   ['/rest/v1/images', IMAGES],
@@ -432,6 +491,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     { provider_id: E2_OTHER_PROVIDER_ID, weekday: 2, starts_local: '10:00:00', ends_local: '14:00:00' },
   ]
   let availabilityBlocks: FakeAvailabilityBlock[] = []
+  let scheduleSlots: FakeScheduleSlot[] = []
+  let scheduleAppointments: FakeScheduleAppointment[] = []
   let generatedSlotRangesByProvider = new Map<string, string[]>()
   const auditEvents: Record<string, unknown>[] = []
   let nextAuditEventId = 1
@@ -612,9 +673,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, userWireShape(user, true))
   }
 
-  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' = 'eq'): string | null {
-    const value = url.searchParams.get(column)
+  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' | 'lt' = 'eq'): string | null {
     const prefix = `${operator}.`
+    const value = url.searchParams.getAll(column).find((candidate) => candidate.startsWith(prefix))
     return value?.startsWith(prefix) ? value.slice(prefix.length) : null
   }
 
@@ -803,6 +864,37 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
         res,
         callerProvider ? applyEqualityFilters(availabilityBlocks.filter((row) => row.provider_id === callerProvider.id), url) : [],
       )
+      return
+    }
+
+    if (url.pathname === '/rest/v1/slots') {
+      const startsAtGte = queryValue(url, 'starts_at', 'gte')
+      const startsAtLt = queryValue(url, 'starts_at', 'lt')
+      const rows = callerProvider ? applyEqualityFilters(scheduleSlots.filter((row) =>
+        row.provider_id === callerProvider.id &&
+        (startsAtGte === null || row.starts_at >= startsAtGte) &&
+        (startsAtLt === null || row.starts_at < startsAtLt)), url) : []
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+
+    if (url.pathname === '/rest/v1/appointments') {
+      if (!callerProvider) {
+        sendPostgrestRows(req, res, patientScopedRows(req, url, APPOINTMENTS))
+        return
+      }
+      const rows = applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => {
+        const patient = patients.find((candidate) => candidate.id === appointment.patient_id)
+        const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
+        return {
+          ...appointment,
+          patients: patient ? { patient_ref: patient.patient_ref } : null,
+          services: { name: appointment.service_name },
+          slots: slot ? { starts_at: slot.starts_at, ends_at: slot.ends_at } : null,
+          providers: { full_name: callerProvider.full_name, time_zone: callerProvider.time_zone },
+        }
+      })
+      sendPostgrestRows(req, res, rows)
       return
     }
 
@@ -1039,6 +1131,43 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     ])
   }
 
+  async function handleScheduleMutation(req: IncomingMessage, res: ServerResponse, rpc: 'transition' | 'cancel'): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
+    const appointmentId = String(body.p_appointment_id)
+    const appointment = scheduleAppointments.find((candidate) => candidate.id === appointmentId)
+    if (!callerProvider || !appointment || appointment.provider_id !== callerProvider.id || body.p_actor_user_id !== caller?.id) {
+      sendJson(res, 200, [{ result_error: 'invalid_transition' }])
+      return
+    }
+    const nextStatus = rpc === 'cancel' ? 'cancelled' : String(body.p_status)
+    const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
+    if (!slot) {
+      sendJson(res, 200, [{ result_error: 'invalid_transition' }])
+      return
+    }
+    const legal = (appointment.status === 'requested' && (nextStatus === 'confirmed' || nextStatus === 'cancelled')) ||
+      (appointment.status === 'confirmed' && (nextStatus === 'cancelled' || ((nextStatus === 'completed' || nextStatus === 'no_show') && new Date(slot.starts_at) < new Date())))
+    if (!legal) {
+      sendJson(res, 200, [{ result_error: rpc === 'cancel' ? 'not_reschedulable' : 'invalid_transition' }])
+      return
+    }
+    appointment.status = nextStatus as FakeScheduleAppointment['status']
+    if (nextStatus === 'cancelled') slot.status = 'open'
+    sendJson(res, 200, [{
+      result_error: null,
+      appointment_id: appointment.id,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      appointment_status: appointment.status,
+      provider_name: callerProvider.full_name,
+      provider_time_zone: callerProvider.time_zone,
+      service_name: appointment.service_name,
+      out_of_hours: appointment.out_of_hours,
+    }])
+  }
+
   function resetIdentityState(res: ServerResponse): void {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
     identityAttempts = []
@@ -1057,6 +1186,17 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     ]
     availabilityBlocks = []
     generatedSlotRangesByProvider = new Map()
+    scheduleSlots = [
+      { id: '26000000-0000-4000-8000-000000000001', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T14:00:00.000Z', ends_at: '2026-08-17T14:30:00.000Z', status: 'booked' },
+      { id: '26000000-0000-4000-8000-000000000002', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T15:00:00.000Z', ends_at: '2026-08-17T15:30:00.000Z', status: 'open' },
+      { id: '26000000-0000-4000-8000-000000000003', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T16:00:00.000Z', ends_at: '2026-08-17T16:30:00.000Z', status: 'booked' },
+      { id: '26000000-0000-4000-8000-000000000004', provider_id: E2_PROVIDER_ID, starts_at: '2099-08-17T16:00:00.000Z', ends_at: '2099-08-17T16:30:00.000Z', status: 'booked' },
+    ]
+    scheduleAppointments = [
+      { id: '26000000-0000-4000-8000-000000000101', slot_id: scheduleSlots[0]!.id, provider_id: E2_PROVIDER_ID, patient_id: SEEDED_PATIENT.id, service_name: 'MRI', status: 'requested', out_of_hours: false },
+      { id: '26000000-0000-4000-8000-000000000102', slot_id: scheduleSlots[2]!.id, provider_id: E2_PROVIDER_ID, patient_id: OTHER_PATIENT.id, service_name: 'Ultrasound', status: 'cancelled', out_of_hours: true },
+      { id: '26000000-0000-4000-8000-000000000103', slot_id: scheduleSlots[3]!.id, provider_id: E2_PROVIDER_ID, patient_id: SEEDED_PATIENT.id, service_name: 'MRI', status: 'confirmed', out_of_hours: false },
+    ]
     sendJson(res, 200, { providerId: E2_PROVIDER_ID })
   }
 
@@ -1141,6 +1281,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       url.pathname === '/rest/v1/working_hours' ||
       url.pathname === '/rest/v1/availability_blocks' ||
       url.pathname === '/rest/v1/cine_frames' ||
+      url.pathname === '/rest/v1/slots' ||
+      url.pathname === '/rest/v1/appointments' ||
       url.pathname === '/rest/v1/reports' ||
       SEEDED_PATIENT_TABLES.has(url.pathname)
     ) {
@@ -1161,6 +1303,14 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
       void handleApplyAvailability(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/transition_appointment') {
+      void handleScheduleMutation(req, res, 'transition')
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/cancel_appointment') {
+      void handleScheduleMutation(req, res, 'cancel')
       return
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {
