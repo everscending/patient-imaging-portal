@@ -70,9 +70,10 @@ jq -n \
     expect(sql).toMatch(/\\getenv\s+app_base_url\s+APP_BASE_URL/)
     expect(sql).toMatch(/\\getenv\s+cron_secret\s+CRON_SECRET/)
     expect(sql).toMatch(/\\getenv\s+reminder_cron_minutes\s+REMINDER_CRON_MINUTES/)
-    expect(sql).toMatch(/alter database[\s\S]+app\.app_base_url/i)
-    expect(sql).toMatch(/alter database[\s\S]+app\.cron_secret/i)
-    expect(sql).toMatch(/alter database[\s\S]+app\.reminder_cron_minutes/i)
+    expect(sql).not.toMatch(/alter database/i)
+    expect(sql).toMatch(/select[\s\S]+set_config[\s\S]+app\.app_base_url[\s\S]+\\gset/i)
+    expect(sql).toMatch(/select[\s\S]+set_config[\s\S]+app\.cron_secret[\s\S]+\\gset/i)
+    expect(sql).toMatch(/select[\s\S]+set_config[\s\S]+app\.reminder_cron_minutes[\s\S]+\\gset/i)
     expect(sql).toMatch(/cron\.unschedule[\s\S]+cron\.schedule/i)
 
     const migration = readFileSync(MIGRATION_PATH, 'utf8')
