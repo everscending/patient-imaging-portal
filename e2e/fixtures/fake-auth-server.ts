@@ -382,7 +382,7 @@ function userWireShape(user: FakeUser, withIdentity: boolean): Record<string, un
   }
 }
 
-type DependencyState = 'ok' | 'down' | 'hang'
+type DependencyState = 'ok' | 'down' | 'hang' | 'error'
 
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const usersByEmail = new Map<string, FakeUser>([
@@ -451,6 +451,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     if (state === 'hang') return
     if (state === 'down') {
       req.socket.destroy()
+      return
+    }
+    if (state === 'error') {
+      sendJson(res, 404, { code: 'PGRST205' })
       return
     }
     sendJson(res, 200, {})
@@ -1110,7 +1114,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleHealthState(req, res)
       return
     }
-    if (req.method === 'GET' && url.pathname === '/rest/v1/') {
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/rest/v1/patients' &&
+      url.searchParams.get('select') === 'id' &&
+      url.searchParams.get('limit') === '0'
+    ) {
       answerAsDependency(req, res, healthState.database)
       return
     }

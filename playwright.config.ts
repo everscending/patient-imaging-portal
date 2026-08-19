@@ -4,6 +4,7 @@ import { config } from './lib/config'
 // baseURL is derived from config.port (ARCHITECTURE.md §9) — never a literal,
 // so a second worktree booting on its own PORT never collides with this one.
 export default defineConfig({
+  workers: 1,
   testDir: './e2e',
   reporter: [['line'], ['json', { outputFile: 'test-results/playwright.json' }]],
   projects: [

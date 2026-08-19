@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v psql >/dev/null 2>&1; then
+  echo "provision-deployed-stack: psql is required; install the PostgreSQL client and add it to PATH" >&2
+  exit 2
+fi
+
+for required in PGHOST PGDATABASE PGUSER PGPASSWORD NEXT_PUBLIC_SUPABASE_URL \
+  NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SOURCE_REF_SALT; do
+  if [ -z "${!required:-}" ]; then
+    echo "provision-deployed-stack: missing $required" >&2
+    exit 2
+  fi
+done
+
+export PROVISION_DEPLOYED_STACK=1
+exec node node_modules/vite-node/vite-node.mjs \
+  -c scripts/vite-node.config.ts scripts/provision-deployed-stack.ts

@@ -28,6 +28,32 @@ the T1 skeleton only.
   the Supabase project settings and in the Vercel project's environment
   variables below — never in this repository (SEC-7).
 
+### Application schema and seed
+
+The provisioner requires the standard PostgreSQL client, `psql`. On macOS,
+install the client and expose its keg-only binaries for this command with:
+
+```bash
+brew install libpq
+PATH="$(brew --prefix libpq)/bin:$PATH" npm run provision:deployed
+```
+
+Before running it, load the four required application variables plus
+`PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` into the shell. On hosts
+where `psql` is already on `PATH`, run:
+
+```bash
+npm run provision:deployed
+```
+
+The command applies every `db/migrations/*.sql` file once in filename order,
+re-applies the PostgREST grants and private bucket definition, seeds the
+deterministic rows and Storage assets once, and then waits for a zero-row
+authenticated PostgREST query to succeed. Applied migration checksums and the
+seed checksum live in the unexposed `app_deploy` schema. A changed applied
+file fails closed instead of being run again. Secrets remain in the process
+environment and are never command arguments or command output.
+
 ### Reminder cron configuration
 
 Vercel environment variables do not configure Postgres sessions. After the
@@ -44,12 +70,14 @@ REMINDER_WINDOW_MINUTES="${REMINDER_WINDOW_MINUTES:-30}" \
 scripts/configure-reminder-cron.sh
 ```
 
-The fixed SQL at `db/deploy/reminder-cron.sql` persists the URL, secret, and
-cadence as database settings, then replaces `patient-imaging-reminders` with a
-schedule using that cadence. Migration 004 fails closed when the target or
-secret has not yet been provisioned: it creates no unauthenticated, null-target
-job. Re-run the command whenever any of these deployment values changes. Real
-values remain in the deployment environment and are never written to Git.
+Enable the `pg_cron` and `pg_net` extensions in Supabase first. The fixed SQL
+reads the URL, secret, and cadence into its private `psql` session without
+printing them, then replaces `patient-imaging-reminders`; `cron.schedule`
+stores the resulting command and cadence. Migration 004 fails closed when the
+target or secret has not yet been provisioned: it creates no unauthenticated,
+null-target job. Re-run the command whenever any of these deployment values
+changes. Real values remain in the deployment environment and are never
+written to Git.
 
 ## Storage: the `phi` bucket
 
@@ -99,6 +127,13 @@ Appended once per deploy run — never edited after the fact.
 | Date | Supabase project ref | Deployed URL | Deployed commit |
 | --- | --- | --- | --- |
 | 2026-08-15 | `dyvbopxzwkavhggawedt` | https://patient-imaging-portal.vercel.app | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
+| 2026-08-19 | `dyvbopxzwkavhggawedt` | https://patient-imaging-portal.vercel.app | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
+
+### Application schema run record
+
+| Timestamp (UTC) | Commit | Provisioned state |
+| --- | --- | --- |
+| 2026-08-19T16:09:39Z | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` | 9 migrations; 1 seed run; 50 patients; 10 providers; private `phi` bucket; `pg_cron` and `pg_net`; one active five-minute reminder job whose latest run succeeded with HTTP 200 |
 
 ## Live check
 
@@ -109,6 +144,8 @@ guessed object path in `phi`, both made after the run record above.
 | --- | --- | --- | --- | --- |
 | 2026-08-15T18:23:53Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
 | 2026-08-15T18:23:53Z | Guessed object in `phi` | 400 | — | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
+| 2026-08-19T16:09:39Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
+| 2026-08-19T16:09:39Z | Guessed object in `phi` | 400 | — | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
 
 ## E0 wiring confirmation (JOR-217)
 
