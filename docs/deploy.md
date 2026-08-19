@@ -28,6 +28,23 @@ the T1 skeleton only.
   the Supabase project settings and in the Vercel project's environment
   variables below — never in this repository (SEC-7).
 
+### Application schema and seed
+
+From a clean checkout, load the four required application variables plus
+`PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` into the shell, then run:
+
+```bash
+npm run provision:deployed
+```
+
+The command applies every `db/migrations/*.sql` file once in filename order,
+re-applies the PostgREST grants and private bucket definition, seeds the
+deterministic rows and Storage assets once, and then waits for a zero-row
+authenticated PostgREST query to succeed. Applied migration checksums and the
+seed checksum live in the unexposed `app_deploy` schema. A changed applied
+file fails closed instead of being run again. Secrets remain in the process
+environment and are never command arguments or command output.
+
 ### Reminder cron configuration
 
 Vercel environment variables do not configure Postgres sessions. After the

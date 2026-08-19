@@ -3,7 +3,8 @@
 // probes in app/api/health/route.ts both resolve through the app's single
 // NEXT_PUBLIC_SUPABASE_URL, which start-test-server.mjs already points at
 // e2e/fixtures/fake-auth-server.ts for the whole suite — so that fixture's
-// GET /rest/v1/ and GET /storage/v1/bucket/phi handlers stand in for the two
+// GET /rest/v1/patients?select=id&limit=0 and GET /storage/v1/bucket/phi
+// handlers stand in for the two
 // dependencies, and its POST /__test__/health-state toggles each
 // independently between 'ok' (answers immediately), 'down' (the connection
 // is refused) and 'hang' (never answers, forcing the probe's own timeout).
@@ -18,7 +19,7 @@ import DependencyError from '../components/system/DependencyError'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
-type DependencyState = 'ok' | 'down' | 'hang'
+type DependencyState = 'ok' | 'down' | 'hang' | 'error'
 type HealthBody = { app: unknown; database: unknown; storage: unknown }
 
 async function fakeAuthServerUrl(): Promise<string> {
@@ -54,6 +55,13 @@ test.describe('GET /api/health — acceptance: the pinned §6 shape, always 200'
     expect(response.status()).toBe(200)
     const body = (await response.json()) as HealthBody
     expect(body).toEqual({ app: 'ok', database: 'down', storage: 'ok' })
+  })
+
+  test('acceptance: health_schemaMissing_returns200WithDatabaseDownAndAppOk', async ({ request }) => {
+    await setHealthState(request, { database: 'error', storage: 'ok' })
+    const response = await request.get('/api/health')
+    expect(response.status()).toBe(200)
+    expect(await response.json()).toEqual({ app: 'ok', database: 'down', storage: 'ok' })
   })
 
   test('acceptance: health_storageUnreachable_returns200WithStorageDown', async ({ request }) => {

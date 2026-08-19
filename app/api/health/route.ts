@@ -2,8 +2,8 @@
 // no PhiTarget (§5's guard is the PHI seam and health names none of it), and
 // always 200: a non-200 here would be indistinguishable from the app being
 // gone, which defeats the one thing an uptime check needs to tell apart
-// (UX_SPEC §4.14). Each probe is a cheap liveness read — a PostgREST root
-// call and a Storage bucket-metadata call — never a query over PHI tables,
+// (UX_SPEC §4.14). Each probe is a cheap liveness read — a zero-row PostgREST
+// query and a Storage bucket-metadata call — never a query returning PHI,
 // so this endpoint is never itself an audited PHI read and never calls
 // lib/access/guard.ts.
 import { NextResponse } from 'next/server'
@@ -25,8 +25,8 @@ async function probe(url: string, headers: Record<string, string>): Promise<Depe
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
-    await fetch(url, { headers, signal: controller.signal, cache: 'no-store' })
-    return 'ok'
+    const response = await fetch(url, { headers, signal: controller.signal, cache: 'no-store' })
+    return response.ok ? 'ok' : 'down'
   } catch {
     return 'down'
   } finally {
@@ -35,9 +35,12 @@ async function probe(url: string, headers: Record<string, string>): Promise<Depe
 }
 
 function probeDatabase(): Promise<DependencyState> {
-  // PostgREST's root path answers as soon as it can reach Postgres — no
-  // table is named, so no PHI is ever in scope of this call.
-  return probe(`${config.supabaseUrl}/rest/v1/`, { apikey: config.supabaseAnonKey })
+  // A root-path 200 does not prove the application schema reached PostgREST's
+  // cache. limit=0 names the schema seam without returning a patient row.
+  return probe(`${config.supabaseUrl}/rest/v1/patients?select=id&limit=0`, {
+    apikey: config.supabaseServiceRoleKey,
+    Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+  })
 }
 
 function probeStorage(): Promise<DependencyState> {
