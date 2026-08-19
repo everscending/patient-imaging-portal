@@ -64,6 +64,7 @@ says `signed`.
 |------|---------|
 | **Share link** | A time-limited, revocable, unguessable URL granting one named recipient access to one image or one report (FR-5, FR-8). |
 | **Share token** | The secret inside a share link. Stored only as a hash; the raw token exists in the email and nowhere else. |
+| **Unresolved share token** | A well-formed share token that matches no persisted share link. It is not a recipient and has no share-link or resource identifier; its denied use is audited without storing the raw token. |
 | **Expiry** | The time after which a share link stops working on its own. |
 | **Revocation** | The sharer explicitly ending a share link before its expiry. |
 | **Recipient** | The person a share link was sent to. Not an account, and never granted more than the one resource shared. |

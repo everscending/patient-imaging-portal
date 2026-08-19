@@ -20,7 +20,7 @@ export type PhiTarget =
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule'; id: string } // id = provider id
-  | { kind: 'share_link'; id: null } // well-formed token with no resolvable PHI target
+  | { kind: 'share_link'; id: null } // unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' } // no id — the whole log, admin only
 

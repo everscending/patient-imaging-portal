@@ -952,7 +952,7 @@ export type PhiTarget =
   | { kind: 'report';      id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule';    id: string }   // id = provider id
-  | { kind: 'share_link';  id: null }     // unresolved well-formed bearer token
+  | { kind: 'share_link';  id: null }     // unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' }                 // no id — the whole log, admin only
 
@@ -1007,8 +1007,8 @@ to re-read per request beyond `patients.user_id` (ADR-0011). A patient account
 that has never verified is refused with `403`; one that has verified stays
 verified.
 
-**Unavailable bearer tokens still cross the guard.** An unknown token uses a
-null share-recipient reference and `{ kind: 'share_link', id: null }`; an
+**Unavailable bearer tokens still cross the guard.** An unresolved share token
+uses a null share-recipient reference and `{ kind: 'share_link', id: null }`; an
 expired or revoked link uses its persisted reference and named resource. The
 guard rejects each and writes the same single denied `share.use` event without
 placing the raw token or PHI in the audit row.
