@@ -1,9 +1,10 @@
 # Performance baseline
 
-Measurement is pending the JOR-296 hosted PostgREST JWT-claim repair. The
-scripts and playback check are committed first; this file will record the
-measured source commit and observed values after that prerequisite is deployed.
-No placeholder below is a benchmark result.
+Measurement is pending the deployed JOR-296 hosted PostgREST JWT-claim repair
+and JOR-297 healthy 100-frame clip. The scripts and playback check are committed
+first; this file will record the measured source commit and observed values
+after both prerequisites are deployed. No placeholder below is a benchmark
+result.
 
 ## Conditions
 
