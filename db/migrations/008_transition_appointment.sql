@@ -96,6 +96,8 @@ begin
    where a.id = v_appointment.id;
 end $$;
 
+grant create on schema public to booking_executor;
 alter function transition_appointment(uuid, appointment_status, uuid) owner to booking_executor;
+revoke create on schema public from booking_executor;
 revoke all on function transition_appointment(uuid, appointment_status, uuid) from public;
 grant execute on function transition_appointment(uuid, appointment_status, uuid) to app_user;

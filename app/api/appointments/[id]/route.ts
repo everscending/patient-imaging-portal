@@ -1,17 +1,9 @@
-import { z } from 'zod'
 import { guardPhiAccess, resolveScheduleActor } from '../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../lib/access/identity'
 import { cancel, reschedule, transition, type ChangeResult } from '../../../../lib/scheduling/booking'
-import { clinicianTransitionStatuses } from '../../../../lib/scheduling/lifecycle'
-import { parseBody, parseParams, uuidSchema } from '../../../../lib/validation'
+import { appointmentParamsSchema, appointmentPatchSchema, parseBody, parseParams } from '../../../../lib/validation'
 import { errorResponse } from '../../../../lib/validation/envelope'
 
-const ParamsSchema = z.object({ id: uuidSchema }).strict()
-const PatchSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('reschedule'), slotId: uuidSchema }).strict(),
-  z.object({ action: z.literal('cancel') }).strict(),
-  z.object({ action: z.literal('transition'), status: z.enum(clinicianTransitionStatuses) }).strict(),
-])
 type ChangeError = Extract<ChangeResult, { ok: false }>['error']
 const CHANGE_ERROR_RESPONSES = {
   slot_unavailable: { status: 409, message: 'That slot is no longer available.' },
@@ -27,16 +19,16 @@ function denied(status: 401 | 403 | 404): Response {
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
-  const params = parseParams(ParamsSchema, await context.params)
-  if (!params.ok) return params.response
-  const body = await parseBody(PatchSchema, request)
-  if (!body.ok) return body.response
   try {
     const callerId = await resolveCallerId()
+    if (!callerId) return denied(401)
+    const params = parseParams(appointmentParamsSchema, await context.params)
+    if (!params.ok) return params.response
+    const body = await parseBody(appointmentPatchSchema, request)
+    if (!body.ok) return body.response
     const actor = callerId ? await resolveScheduleActor(callerId) : { kind: 'patient' as const, userId: '' }
     const access = await guardPhiAccess(actor, { kind: 'appointment', id: params.value.id }, 'appointment.view')
     if (!access.ok) return denied(access.status)
-    if (!callerId) return denied(401)
     const result = body.value.action === 'reschedule'
       ? await reschedule({ appointmentId: params.value.id, slotId: body.value.slotId, actorUserId: callerId })
       : body.value.action === 'cancel'

@@ -177,7 +177,7 @@ test.describe('GET /api/admin/audit and /admin/audit', () => {
 
   test('mandatory adversarial: routeUsesSharedParseQueryForAuditQuery', async () => {
     const source = await readFile(path.join(REPO_ROOT, 'app/api/admin/audit/route.ts'), 'utf8')
-    expect(source).toContain('parseQuery(auditLogQuerySchema, request)')
+    expect(source).toContain('parseQuery(auditLogQuerySchema, new URL(request.url))')
     expect(source).not.toContain('searchParams')
   })
 

@@ -1,4 +1,3 @@
-import { z } from 'zod'
 import { guardPhiAccess, resolveScheduleActor } from '../../../../../lib/access/guard'
 import { resolveCallerId } from '../../../../../lib/access/identity'
 import {
@@ -6,38 +5,24 @@ import {
   AvailabilityValidationError,
   getAvailability,
 } from '../../../../../lib/scheduling/availability'
-import { parseBody, parseParams, uuidSchema } from '../../../../../lib/validation'
+import { availabilityParamsSchema, availabilityPatchSchema, parseBody, parseParams } from '../../../../../lib/validation'
 import { errorResponse } from '../../../../../lib/validation/envelope'
 
-const ParamsSchema = z.object({ providerId: uuidSchema }).strict()
-const WallTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/)
-const PatchSchema = z
-  .object({
-    slotMinutes: z.number().int().min(5).max(240),
-    workingHours: z.array(z.object({
-      weekday: z.number().int().min(0).max(6),
-      startsLocal: WallTimeSchema,
-      endsLocal: WallTimeSchema,
-    }).strict()).max(64),
-    blocks: z.array(z.object({
-      startsAt: z.string().datetime({ offset: true }),
-      endsAt: z.string().datetime({ offset: true }),
-      reason: z.string().trim().max(500).nullable().optional(),
-    }).strict()).max(256),
-  })
-  .strict()
 
 type RouteContext = { params: Promise<{ providerId: string }> }
-const UNKNOWN_ACCOUNT_ID = '00000000-0000-0000-0000-000000000000'
 
-async function authorize(providerId: string): Promise<{ ok: true; callerId: string } | { ok: false; response: Response }> {
-  let callerId: string | null
+async function authenticate(): Promise<{ ok: true; callerId: string | null } | { ok: false; response: Response }> {
+  try {
+    return { ok: true, callerId: await resolveCallerId() }
+  } catch {
+    return { ok: false, response: errorResponse(503, 'availability_unavailable', 'Availability is temporarily unavailable.') }
+  }
+}
+
+async function authorize(providerId: string, callerId: string): Promise<{ ok: true; callerId: string } | { ok: false; response: Response }> {
   let actor: Awaited<ReturnType<typeof resolveScheduleActor>>
   try {
-    callerId = await resolveCallerId()
-    actor = callerId
-      ? await resolveScheduleActor(callerId)
-      : { kind: 'provider', userId: UNKNOWN_ACCOUNT_ID }
+    actor = await resolveScheduleActor(callerId)
   } catch {
     return { ok: false, response: errorResponse(503, 'availability_unavailable', 'Availability is temporarily unavailable.') }
   }
@@ -56,14 +41,16 @@ async function authorize(providerId: string): Promise<{ ok: true; callerId: stri
           : errorResponse(404, 'not_found', 'The requested resource was not found.'),
     }
   }
-  if (!callerId) return { ok: false, response: errorResponse(401, 'session_required', 'Sign in to continue.') }
   return { ok: true, callerId }
 }
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
-  const parsedParams = parseParams(ParamsSchema, await context.params)
+  const authentication = await authenticate()
+  if (!authentication.ok) return authentication.response
+  if (!authentication.callerId) return errorResponse(401, 'session_required', 'Sign in to continue.')
+  const parsedParams = parseParams(availabilityParamsSchema, await context.params)
   if (!parsedParams.ok) return parsedParams.response
-  const authorization = await authorize(parsedParams.value.providerId)
+  const authorization = await authorize(parsedParams.value.providerId, authentication.callerId)
   if (!authorization.ok) return authorization.response
 
   try {
@@ -74,12 +61,15 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
-  const parsedParams = parseParams(ParamsSchema, await context.params)
+  const authentication = await authenticate()
+  if (!authentication.ok) return authentication.response
+  if (!authentication.callerId) return errorResponse(401, 'session_required', 'Sign in to continue.')
+  const parsedParams = parseParams(availabilityParamsSchema, await context.params)
   if (!parsedParams.ok) return parsedParams.response
-  const authorization = await authorize(parsedParams.value.providerId)
-  if (!authorization.ok) return authorization.response
-  const parsedBody = await parseBody(PatchSchema, request)
+  const parsedBody = await parseBody(availabilityPatchSchema, request)
   if (!parsedBody.ok) return parsedBody.response
+  const authorization = await authorize(parsedParams.value.providerId, authentication.callerId)
+  if (!authorization.ok) return authorization.response
 
   try {
     const result = await applyAvailability({

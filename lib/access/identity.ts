@@ -18,6 +18,7 @@ import { SESSION_COOKIE_NAME } from '../session-cookie'
 export type VerifyOutcome = { ok: true; patientRef: string; linkedAt: string } | { ok: false }
 
 export type StatusResult = { linked: true; patientRef: string; linkedAt: string } | { linked: false }
+export type AuthenticatedSession = { accessToken: string; userId: string }
 
 type ServiceClient = ReturnType<typeof serviceClient>
 
@@ -37,13 +38,17 @@ export function computeSourceRef(request: Request): string {
 // NextRequest in scope in a route handler that also needs the raw `Request`
 // for computeSourceRef — then resolves it to an account id via Supabase
 // Auth. Null covers both "no cookie" and "cookie doesn't resolve to a user".
-export async function resolveCallerId(): Promise<string | null> {
+export async function resolveAuthenticatedSession(): Promise<AuthenticatedSession | null> {
   const cookieStore = await cookies()
-  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
-  if (!token) return null
-  const { data, error } = await authClient().auth.getUser(token)
+  const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (!accessToken) return null
+  const { data, error } = await authClient().auth.getUser(accessToken)
   if (error || !data.user) return null
-  return data.user.id
+  return { accessToken, userId: data.user.id }
+}
+
+export async function resolveCallerId(): Promise<string | null> {
+  return (await resolveAuthenticatedSession())?.userId ?? null
 }
 
 // A fixed dummy so the comparison below runs the same shape whether or not a

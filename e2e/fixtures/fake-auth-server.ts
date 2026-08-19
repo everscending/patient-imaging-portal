@@ -19,7 +19,7 @@
 //
 // Binds port 0 and reads the assigned port back (ARCHITECTURE.md §9: a test
 // fixture that listens never claims a fixed port).
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 
@@ -27,6 +27,21 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 )
+
+function seededFrameStorageKeys(count: number): string[] {
+  return Array.from({ length: count }, (_, streamIndex) => {
+    const bytes = createHash('sha256')
+      .update(`patient-imaging-portal\0e2-fixture-frame-storage\0${streamIndex}`)
+      .digest()
+      .subarray(0, 16)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = bytes.toString('hex')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  })
+}
+
+const E3_CINE_FRAME_STORAGE_KEYS = seededFrameStorageKeys(100)
 
 type FakeUser = {
   id: string
@@ -64,6 +79,12 @@ type FakeStudy = {
   patient_id: string
   visit_id: string
   description: string
+}
+
+type FakeCineFrame = {
+  clip_id: string
+  frame_index: number
+  storage_key: string
 }
 
 type FakeReport = {
@@ -109,6 +130,19 @@ type FakeIdentityAttempt = {
   attempted_at: string
 }
 
+type FakeShareLink = {
+  id: string
+  token_hash: string
+  patient_id: string
+  created_by: string
+  recipient_email: string
+  expires_at: string
+  revoked_at: string | null
+  image_id: string | null
+  report_id: string | null
+  created_at: string
+}
+
 const SEEDED_PATIENT: FakePatient = {
   id: '44714471-4471-4471-8471-447144714471',
   user_id: null,
@@ -141,9 +175,17 @@ export const E2_NON_PROVIDER_ACCOUNT_ID = '11551155-1155-4155-8155-115511551155'
 export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
 export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
+export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
+export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
+export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
+export const E3_MISSING_CINE_FRAME_INDEX = 42
+export const E3_MISSING_CINE_FRAME_STORAGE_KEY = E3_CINE_FRAME_STORAGE_KEYS[E3_MISSING_CINE_FRAME_INDEX]!
+export const E4_CANCELLED_VISIT_ID = '77667766-7766-4766-8766-776677667766'
+export const E4_CANCELLED_STUDY_ID = '99889988-9988-4988-8988-998899889988'
+export const E4_PRELIMINARY_REPORT_ID = 'bd88bd88-bd88-4d88-8d88-bd88bd88bd88'
 
 const PROVIDERS: FakeProvider[] = [
   {
@@ -176,6 +218,20 @@ const VISITS: FakeVisit[] = [
     occurred_at: '2026-08-11T14:00:00.000Z',
     status: 'completed',
   },
+  {
+    id: E3_SCHEDULED_VISIT_ID,
+    patient_id: SEEDED_PATIENT.id,
+    provider_id: PROVIDERS[0].id,
+    occurred_at: '2026-08-20T14:00:00.000Z',
+    status: 'scheduled',
+  },
+  {
+    id: E4_CANCELLED_VISIT_ID,
+    patient_id: SEEDED_PATIENT.id,
+    provider_id: PROVIDERS[0].id,
+    occurred_at: '2026-08-09T14:00:00.000Z',
+    status: 'cancelled',
+  },
 ]
 const STUDIES: FakeStudy[] = [
   { id: E2_SEEDED_STUDY_ID, patient_id: SEEDED_PATIENT.id, visit_id: VISITS[0].id, description: 'Seeded abdominal ultrasound' },
@@ -185,10 +241,22 @@ const STUDIES: FakeStudy[] = [
     visit_id: VISITS[1].id,
     description: 'Other patient study',
   },
+  {
+    id: E3_SCHEDULED_STUDY_ID,
+    patient_id: SEEDED_PATIENT.id,
+    visit_id: E3_SCHEDULED_VISIT_ID,
+    description: 'Scheduled seeded follow-up ultrasound',
+  },
+  {
+    id: E4_CANCELLED_STUDY_ID,
+    patient_id: SEEDED_PATIENT.id,
+    visit_id: E4_CANCELLED_VISIT_ID,
+    description: 'Cancelled seeded follow-up ultrasound',
+  },
 ]
 const IMAGES = [
   {
-    id: '10000000-0000-4000-8000-000000000001',
+    id: E2_SEEDED_IMAGE_ID,
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     width: 1024,
@@ -226,6 +294,11 @@ const CINE_CLIPS = [
     poster_key: null,
   },
 ]
+const CINE_FRAMES: FakeCineFrame[] = Array.from({ length: 100 }, (_, frame_index) => ({
+  clip_id: E2_SEEDED_CLIP_ID,
+  frame_index,
+  storage_key: E3_CINE_FRAME_STORAGE_KEYS[frame_index]!,
+}))
 const REPORTS: FakeReport[] = [
   {
     id: E2_SEEDED_REPORT_ID,
@@ -246,6 +319,16 @@ const REPORTS: FakeReport[] = [
     impression: 'Private other-patient impression.',
     signed_by: PROVIDERS[0].id,
     signed_at: '2026-08-13T16:00:00.000Z',
+  },
+  {
+    id: E4_PRELIMINARY_REPORT_ID,
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E4_CANCELLED_STUDY_ID,
+    status: 'preliminary',
+    findings: 'Preliminary seeded follow-up findings.',
+    impression: 'Preliminary seeded follow-up impression.',
+    signed_by: null,
+    signed_at: null,
   },
 ]
 
@@ -299,7 +382,7 @@ function userWireShape(user: FakeUser, withIdentity: boolean): Record<string, un
   }
 }
 
-type DependencyState = 'ok' | 'down' | 'hang'
+type DependencyState = 'ok' | 'down' | 'hang' | 'error'
 
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const usersByEmail = new Map<string, FakeUser>([
@@ -341,6 +424,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const staffAdminUserIds = new Set<string>()
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
+  let shareLinks: FakeShareLink[] = []
+  let emailOutbox: Record<string, unknown>[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
     { provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' },
@@ -351,6 +436,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const auditEvents: Record<string, unknown>[] = []
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
+  const callsByEmail = new Map<string, Record<string, number>>()
   // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
@@ -365,6 +451,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     if (state === 'hang') return
     if (state === 'down') {
       req.socket.destroy()
+      return
+    }
+    if (state === 'error') {
+      sendJson(res, 404, { code: 'PGRST205' })
       return
     }
     sendJson(res, 200, {})
@@ -398,6 +488,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     calls[name] = (calls[name] ?? 0) + 1
   }
 
+  function countForEmail(name: string, email: string): void {
+    const normalizedEmail = email.trim().toLowerCase()
+    const scopedCalls = callsByEmail.get(normalizedEmail) ?? { signup: 0, token: 0, user: 0, updateUser: 0 }
+    scopedCalls[name] = (scopedCalls[name] ?? 0) + 1
+    callsByEmail.set(normalizedEmail, scopedCalls)
+  }
+
   function issueSession(user: FakeUser): Record<string, unknown> {
     const accessToken = randomUUID()
     const refreshToken = randomUUID()
@@ -418,6 +515,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const body = await readJsonBody(req)
     const email = String(body.email ?? '').toLowerCase()
     const password = String(body.password ?? '')
+    countForEmail('signup', email)
 
     const existing = usersByEmail.get(email)
     if (existing) {
@@ -447,6 +545,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const body = await readJsonBody(req)
     const email = String(body.email ?? '').toLowerCase()
     const password = String(body.password ?? '')
+    countForEmail('token', email)
     const user = usersByEmail.get(email)
 
     if (!user || user.password !== password) {
@@ -488,6 +587,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const session = token ? sessionsByToken.get(token) : undefined
     if (!session || session.expiresAt < Math.floor(Date.now() / 1000)) return null
     return [...usersByEmail.values()].find((candidate) => candidate.id === session.userId) ?? null
+  }
+
+  function serviceRoleRequest(req: IncomingMessage): boolean {
+    const authorization = req.headers.authorization
+    const apiKey = req.headers.apikey
+    return typeof authorization === 'string' && typeof apiKey === 'string' && authorization === `Bearer ${apiKey}`
   }
 
   async function handleUpdateUser(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -570,6 +675,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     url: URL,
     rows: T[],
   ): T[] {
+    if (serviceRoleRequest(req)) return applyEqualityFilters(rows, url)
     const user = authenticatedUser(req)
     const patientId = user ? patients.find((patient) => patient.user_id === user.id)?.id : undefined
     if (!patientId) return []
@@ -577,6 +683,82 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       rows.filter((row) => row.patient_id === patientId),
       url,
     )
+  }
+
+  async function handleShareLinks(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const caller = authenticatedUser(req)
+    const callerPatientId = caller ? patients.find((patient) => patient.user_id === caller.id)?.id : undefined
+    const visibleRows = serviceRoleRequest(req)
+      ? applyEqualityFilters(shareLinks, url)
+      : callerPatientId
+        ? applyEqualityFilters(shareLinks.filter((link) => link.patient_id === callerPatientId), url)
+        : []
+
+    if (req.method === 'GET') {
+      const rows = url.searchParams.get('order') === 'created_at.desc'
+        ? visibleRows.toSorted((left, right) => right.created_at.localeCompare(left.created_at))
+        : visibleRows
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+
+    if (req.method === 'POST') {
+      const body = await readJsonBody(req)
+      if (!callerPatientId || body.patient_id !== callerPatientId) {
+        sendJson(res, 403, { message: 'share link is not accessible' })
+        return
+      }
+      const row: FakeShareLink = {
+        id: randomUUID(),
+        token_hash: String(body.token_hash),
+        patient_id: callerPatientId,
+        created_by: String(body.created_by),
+        recipient_email: String(body.recipient_email),
+        expires_at: String(body.expires_at),
+        revoked_at: null,
+        image_id: typeof body.image_id === 'string' ? body.image_id : null,
+        report_id: typeof body.report_id === 'string' ? body.report_id : null,
+        created_at: new Date().toISOString(),
+      }
+      shareLinks.push(row)
+      const returnsRepresentation = String(req.headers.prefer ?? '').includes('return=representation')
+      if (returnsRepresentation || String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json')) {
+        sendJson(res, 201, String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json') ? row : [row])
+      } else {
+        res.writeHead(201)
+        res.end()
+      }
+      return
+    }
+
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req)
+      if (!callerPatientId || visibleRows.length === 0) {
+        sendJson(res, 403, { message: 'share link is not accessible' })
+        return
+      }
+      const visibleIds = new Set(visibleRows.map((row) => row.id))
+      shareLinks = shareLinks.map((row) =>
+        visibleIds.has(row.id)
+          ? { ...row, revoked_at: typeof body.revoked_at === 'string' ? body.revoked_at : row.revoked_at }
+          : row,
+      )
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST' || !authenticatedUser(req)) {
+      sendJson(res, req.method === 'POST' ? 403 : 405, { message: 'email outbox is not accessible' })
+      return
+    }
+    emailOutbox.push(await readJsonBody(req))
+    res.writeHead(201)
+    res.end()
   }
 
   function handleSeededRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -625,7 +807,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
 
     if (url.pathname === '/rest/v1/cine_frames') {
-      sendPostgrestRows(req, res, [])
+      const user = authenticatedUser(req)
+      const patientId = user ? patients.find((patient) => patient.user_id === user.id)?.id : undefined
+      const rows = patientId
+        ? CINE_FRAMES.filter((frame) => CINE_CLIPS.some((clip) => clip.id === frame.clip_id && clip.patient_id === patientId))
+        : []
+      sendPostgrestRows(req, res, applyEqualityFilters(rows, url))
       return
     }
 
@@ -855,6 +1042,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   function resetIdentityState(res: ServerResponse): void {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
     identityAttempts = []
+    shareLinks = []
+    emailOutbox = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
   }
@@ -875,7 +1064,14 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const url = new URL(req.url ?? '/', 'http://fake-auth-server.local')
 
     if (req.method === 'GET' && url.pathname === '/__test__/calls') {
-      sendJson(res, 200, calls)
+      const email = url.searchParams.get('email')
+      sendJson(
+        res,
+        200,
+        email === null
+          ? calls
+          : (callsByEmail.get(email.trim().toLowerCase()) ?? { signup: 0, token: 0, user: 0, updateUser: 0 }),
+      )
       return
     }
     if (req.method === 'POST' && url.pathname === '/__test__/reset-identity') {
@@ -918,12 +1114,25 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleHealthState(req, res)
       return
     }
-    if (req.method === 'GET' && url.pathname === '/rest/v1/') {
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/rest/v1/patients' &&
+      url.searchParams.get('select') === 'id' &&
+      url.searchParams.get('limit') === '0'
+    ) {
       answerAsDependency(req, res, healthState.database)
       return
     }
     if (url.pathname === '/rest/v1/patients') {
       void handlePatients(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/share_links') {
+      void handleShareLinks(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/email_outbox') {
+      void handleEmailOutbox(req, res)
       return
     }
     if (
@@ -962,14 +1171,20 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void readJsonBody(req).then((body) => {
         const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : []
         sendJson(res, 200, paths.map((path) => ({
-          error: null,
+          error: path === E3_MISSING_CINE_FRAME_STORAGE_KEY ? 'Object not found' : null,
           path,
-          signedURL: `/object/sign/phi/${encodeURIComponent(path)}?token=e2-fixture`,
+          signedURL: path === E3_MISSING_CINE_FRAME_STORAGE_KEY ? null : `/object/sign/phi/${encodeURIComponent(path)}?token=e2-fixture`,
         })))
       })
       return
     }
     if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/sign/phi/')) {
+      const storageKey = decodeURIComponent(url.pathname.slice('/storage/v1/object/sign/phi/'.length))
+      if (storageKey === E3_MISSING_CINE_FRAME_STORAGE_KEY) {
+        res.writeHead(404)
+        res.end()
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'image/png' })
       res.end(ONE_PIXEL_PNG)
       return
