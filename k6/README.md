@@ -1,17 +1,17 @@
 # k6 load scripts
 
-This directory holds the k6 load-test scripts for PF-1, PF-2, PF-3 and PF-5
-(REQUIREMENTS.md). Writing the scripts themselves is a later ticket; this
-README documents how they must be run once they exist.
+This directory holds the k6 load-test scripts for PF-1 through PF-6
+(REQUIREMENTS.md). PF-4 and PF-6 are read from the server timing lines produced
+while `booking.js` drives their routes, not from k6 request duration.
 
 ## Stated load
 
 **20–50 virtual users for 60 seconds**, against the seeded dataset
-(REQUIREMENTS.md). Every script in this directory must be runnable at that
-load with `--vus` and `--duration`, e.g.:
+(REQUIREMENTS.md). The scripts embed that ramp and duration, so a measured run
+needs only the configured base URL:
 
 ```sh
-k6 run --vus 50 --duration 60s --env BASE_URL="$BASE_URL" <script>.js
+k6 run --env BASE_URL="$BASE_URL" <script>.js
 ```
 
 ## No literal port

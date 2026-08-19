@@ -67,6 +67,7 @@ run_logic() {
   step TSC npx tsc --noEmit
   step ESLINT npx eslint .
   step VITEST_UNIT npx vitest run --project unit
+  step VITEST_PERFORMANCE npx vitest run --project unit tests/performance/performance-contract.test.ts
 }
 
 run_api() {
@@ -80,6 +81,8 @@ run_ui() {
   run_api
   step PLAYWRIGHT_E8 npx playwright test e2e/e8-wiring.spec.ts --project=e8-wiring
   step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
+  step PLAYWRIGHT_PERFORMANCE npx playwright test e2e/playback-frames.spec.ts --project=product
+  step PLAYWRIGHT_PERFORMANCE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/playback-frames.spec.ts
   # e2-wiring depends on product, so this invocation runs the parallel product
   # suite first and the shared-state E2 proof after it.
   step PLAYWRIGHT npx playwright test --project=e2-wiring
