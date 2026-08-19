@@ -121,6 +121,8 @@ type FakeAvailabilityBlock = {
   reason: string | null
 }
 
+type FakeSlot = { id: string; provider_id: string; starts_at: string; ends_at: string; status: 'open' | 'booked' }
+type FakeBookingAppointment = { id: string; slot_id: string; patient_id: string; service_id: string; idempotency_key: string }
 type FakeAppointment = {
   id: string
   patient_id: string
@@ -131,7 +133,6 @@ type FakeAppointment = {
   providers: { full_name: string; time_zone: string }
   services: { name: string }
 }
-
 type FakeScheduleSlot = {
   id: string
   provider_id: string
@@ -208,6 +209,7 @@ export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
+export const E2_BOOK_SERVICE_ID = '77667766-7766-4766-8766-776677667766'
 export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
 export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
 export const E3_MISSING_CINE_FRAME_INDEX = 42
@@ -494,6 +496,14 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let scheduleSlots: FakeScheduleSlot[] = []
   let scheduleAppointments: FakeScheduleAppointment[] = []
   let generatedSlotRangesByProvider = new Map<string, string[]>()
+  const bookingServices = [
+    { id: E2_BOOK_SERVICE_ID, slug: 'ultrasound', name: 'Ultrasound' },
+    { id: '77887788-7788-4788-8788-778877887788', slug: 'follow-up', name: 'Follow-up ultrasound' },
+    { id: '88778877-8877-4877-8877-887788778877', slug: 'empty', name: 'No-provider service' },
+  ]
+  let bookingSlots: FakeSlot[] = []
+  let bookingAppointments: FakeBookingAppointment[] = []
+  let bookingGeneration = 0
   const auditEvents: Record<string, unknown>[] = []
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
@@ -547,6 +557,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
 
   function count(name: string): void {
     calls[name] = (calls[name] ?? 0) + 1
+  }
+
+  function resetBookingState(): void {
+    bookingGeneration += 1
+    const start = new Date(Date.now() + 72 * 60 * 60 * 1_000)
+    start.setUTCMinutes(0, 0, 0)
+    bookingSlots = [0, 1, 2].map((offset) => {
+      const startsAt = new Date(start.getTime() + offset * 30 * 60 * 1_000)
+      const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1_000)
+      return { id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + offset + 1).padStart(12, '0')}`, provider_id: E2_OTHER_PROVIDER_ID, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: 'open' }
+    })
+    bookingAppointments = []
   }
 
   function countForEmail(name: string, email: string): void {
@@ -719,6 +741,84 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return true
     })
     sendPostgrestRows(req, res, rows)
+  }
+
+  function bookingRpcRow(slot: FakeSlot, serviceId: string, appointment: FakeBookingAppointment | null, resultError: string | null, reused: boolean): Record<string, unknown> {
+    const provider = providers.find((candidate) => candidate.id === slot.provider_id)
+    const service = bookingServices.find((candidate) => candidate.id === serviceId)
+    return {
+      appointment_id: appointment?.id ?? null,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      appointment_status: appointment ? 'requested' : null,
+      provider_name: provider?.full_name ?? null,
+      provider_time_zone: provider?.time_zone ?? null,
+      service_name: service?.name ?? null,
+      out_of_hours: false,
+      result_error: resultError,
+      result_reused: reused,
+    }
+  }
+
+  async function handleBookAppointment(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const slot = bookingSlots.find((candidate) => candidate.id === body.p_slot_id)
+    const serviceId = String(body.p_service_id)
+    const key = String(body.p_idempotency_key)
+    const previous = patient ? bookingAppointments.find((candidate) => candidate.patient_id === patient.id && candidate.idempotency_key === key) : undefined
+    if (previous) {
+      const previousSlot = bookingSlots.find((candidate) => candidate.id === previous.slot_id)!
+      if (previous.slot_id !== body.p_slot_id || previous.service_id !== serviceId) {
+        sendJson(res, 200, [bookingRpcRow(previousSlot, previous.service_id, null, 'idempotency_key_reused', false)])
+        return
+      }
+      sendJson(res, 200, [bookingRpcRow(previousSlot, previous.service_id, previous, null, true)])
+      return
+    }
+    if (!patient || !slot || slot.status !== 'open') {
+      sendJson(res, 200, [bookingRpcRow(slot ?? bookingSlots[0], serviceId, null, 'slot_unavailable', false)])
+      return
+    }
+    if (!bookingServices.some((candidate) => candidate.id === serviceId) || slot.provider_id !== E2_OTHER_PROVIDER_ID) {
+      sendJson(res, 200, [bookingRpcRow(slot, serviceId, null, 'service_not_offered', false)])
+      return
+    }
+    slot.status = 'booked'
+    const appointment = { id: randomUUID(), slot_id: slot.id, patient_id: patient.id, service_id: serviceId, idempotency_key: key }
+    bookingAppointments.push(appointment)
+    sendJson(res, 200, [bookingRpcRow(slot, serviceId, appointment, null, false)])
+  }
+
+  function handleBookingRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (url.pathname === '/rest/v1/services') {
+      sendPostgrestRows(req, res, bookingServices)
+      return
+    }
+    if (url.pathname === '/rest/v1/provider_services') {
+      const serviceId = queryValue(url, 'service_id')
+      const providerId = queryValue(url, 'provider_id')
+      const offerings = [
+        { serviceId: E2_BOOK_SERVICE_ID, provider: providers.find((candidate) => candidate.id === E2_OTHER_PROVIDER_ID)! },
+        { serviceId: E2_BOOK_SERVICE_ID, provider: providers.find((candidate) => candidate.id === E2_PROVIDER_ID)! },
+        { serviceId: '77887788-7788-4788-8788-778877887788', provider: providers.find((candidate) => candidate.id === E2_OTHER_PROVIDER_ID)! },
+      ]
+      const rows = offerings
+        .filter((offering) => offering.serviceId === serviceId && (providerId === null || offering.provider.id === providerId))
+        .map(({ provider }) => ({
+          providers: { id: provider.id, full_name: provider.full_name, time_zone: provider.time_zone },
+          provider_id: provider.id,
+        }))
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+    if (url.pathname === '/rest/v1/slots') {
+      const providerId = queryValue(url, 'provider_id')
+      const rows = bookingSlots.filter((slot) => slot.provider_id === providerId && slot.status === 'open')
+      sendPostgrestRows(req, res, rows)
+      return
+    }
   }
 
   function applyEqualityFilters<T extends Record<string, unknown>>(rows: T[], url: URL): T[] {
@@ -1200,6 +1300,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, { providerId: E2_PROVIDER_ID })
   }
 
+  resetBookingState()
+
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://fake-auth-server.local')
 
@@ -1224,6 +1326,28 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'POST' && url.pathname === '/__test__/reset-availability') {
       resetAvailabilityState(res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/reset-booking') {
+      resetBookingState()
+      sendJson(res, 200, { slots: bookingSlots.length })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/__test__/booking-state') {
+      sendJson(res, 200, { slots: bookingSlots, appointments: bookingAppointments })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/book-slot') {
+      void readJsonBody(req).then((body) => {
+        const slot = bookingSlots.find((candidate) => candidate.id === body.slotId)
+        if (!slot || slot.status !== 'open') {
+          sendJson(res, 409, { error: 'slot_unavailable' })
+          return
+        }
+        slot.status = 'booked'
+        bookingAppointments.push({ id: randomUUID(), slot_id: slot.id, patient_id: OTHER_PATIENT.id, service_id: E2_BOOK_SERVICE_ID, idempotency_key: randomUUID() })
+        sendJson(res, 201, { appointmentCount: bookingAppointments.length })
+      })
       return
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
@@ -1276,6 +1400,14 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (
+      url.pathname === '/rest/v1/services' ||
+      url.pathname === '/rest/v1/provider_services' ||
+      (url.pathname === '/rest/v1/slots' && queryValue(url, 'status') === 'open')
+    ) {
+      handleBookingRead(req, res, url)
+      return
+    }
+    if (
       url.pathname === '/rest/v1/providers' ||
       url.pathname === '/rest/v1/staff_admins' ||
       url.pathname === '/rest/v1/working_hours' ||
@@ -1303,6 +1435,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
       void handleApplyAvailability(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/book_appointment') {
+      void handleBookAppointment(req, res)
       return
     }
     if (url.pathname === '/rest/v1/rpc/transition_appointment') {
