@@ -6,6 +6,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { cookies } from 'next/headers'
 
 import { guardPhiAccess } from '../access/guard'
+import { recordUnavailableShareAccess } from '../audit/events'
 import { config } from '../config'
 import { anonClient, serviceClient } from '../db/client'
 import { signStorageKeys } from '../imaging/signing'
@@ -56,6 +57,16 @@ function one<T>(value: T | T[] | null): T | null {
 
 function imageExpiry(): string {
   return new Date(Date.now() + config.signedUrlTtlSeconds * 1000).toISOString()
+}
+
+async function unavailable(link: LinkRow | null): Promise<{ ok: false }> {
+  const targetId = link?.image_id ?? link?.report_id ?? null
+  await recordUnavailableShareAccess({
+    actorRef: link?.id ?? null,
+    targetKind: link?.image_id ? 'image' : link?.report_id ? 'report' : 'share_link',
+    targetId,
+  })
+  return { ok: false }
 }
 
 async function callerAccessToken(): Promise<string | null> {
@@ -113,10 +124,11 @@ export async function resolveShareToken(token: string): Promise<
     .eq('token_hash', tokenHash(token))
     .maybeSingle()
   const link = data as LinkRow | null
-  if (error || !link || stateOf(link) !== 'active') return { ok: false }
+  if (error || !link) return unavailable(null)
+  if (stateOf(link) !== 'active') return unavailable(link)
   const resourceKind: ResourceKind = link.image_id === null ? 'report' : 'image'
   const resourceId = link.image_id ?? link.report_id
-  if (!resourceId) return { ok: false }
+  if (!resourceId) return unavailable(link)
   return { ok: true, shareLinkId: link.id, patientId: link.patient_id, resourceKind, resourceId, expiresAt: link.expires_at }
 }
 

@@ -16,6 +16,7 @@ const {
   cookieMock,
   callerIdMock,
   errorResponseMock,
+  shareDenialMock,
 } = vi.hoisted(() => ({
   serviceMock: vi.fn(),
   anonMock: vi.fn(),
@@ -24,6 +25,7 @@ const {
   cookieMock: vi.fn(),
   callerIdMock: vi.fn(),
   errorResponseMock: vi.fn(),
+  shareDenialMock: vi.fn(),
 }))
 
 vi.mock('../../lib/db/client', () => ({ serviceClient: serviceMock, anonClient: anonMock }))
@@ -38,6 +40,7 @@ vi.mock('../../lib/access/identity', () => ({
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
+vi.mock('../../lib/audit/events', () => ({ recordUnavailableShareAccess: shareDenialMock }))
 vi.mock('../../lib/validation/envelope', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/validation/envelope')>()
   errorResponseMock.mockImplementation(actual.errorResponse)
@@ -55,7 +58,7 @@ vi.mock('../../lib/config', () => ({
 import { GET as resolveGet } from '../../app/api/s/[token]/route'
 import { DELETE as revokeDelete } from '../../app/api/shares/[id]/route'
 import { GET as listGet, POST as mintPost } from '../../app/api/shares/route'
-import { mintShareLink, resolveShareToken, revokeShareLink } from '../../lib/share/links'
+import { mintShareLink, revokeShareLink } from '../../lib/share/links'
 
 const LINK_ID = '11111111-1111-4111-8111-111111111111'
 const PATIENT_ID = '22222222-2222-4222-8222-222222222222'
@@ -139,6 +142,7 @@ beforeEach(() => {
   cookieMock.mockReset()
   callerIdMock.mockReset()
   errorResponseMock.mockClear()
+  shareDenialMock.mockReset()
   cookieMock.mockResolvedValue({ get: () => ({ value: 'caller-token' }) })
   callerIdMock.mockResolvedValue(USER_ID)
   guardMock.mockResolvedValue({ ok: true, patientId: PATIENT_ID })
@@ -470,16 +474,12 @@ describe('share-token resolution', () => {
       link({ revoked_at: '2026-08-16T11:59:59.000Z' }),
     ]
     const resolverClient = clientFor({
-      share_links: unavailableRows.flatMap((data) => [
-        query({ data, error: null }),
-        query({ data, error: null }),
-      ]),
+      share_links: unavailableRows.map((data) => query({ data, error: null })),
     })
     serviceMock.mockReturnValue(resolverClient)
 
     const bodies: string[] = []
     for (const token of ['unknown-token', 'expired-token', 'revoked-token']) {
-      await expect(resolveShareToken(token)).resolves.toEqual({ ok: false })
       bodies.push(await unavailableBody(await resolveGet(new Request(`https://portal.example/s/${token}`), {
         params: Promise.resolve({ token }),
       })))
@@ -489,6 +489,10 @@ describe('share-token resolution', () => {
     ]))
     expect(signMock).not.toHaveBeenCalled()
     expect(guardMock).not.toHaveBeenCalled()
+    expect(shareDenialMock).toHaveBeenCalledTimes(3)
+    expect(shareDenialMock).toHaveBeenNthCalledWith(1, { actorRef: null, targetKind: 'share_link', targetId: null })
+    expect(shareDenialMock).toHaveBeenNthCalledWith(2, { actorRef: LINK_ID, targetKind: 'image', targetId: IMAGE_ID })
+    expect(shareDenialMock).toHaveBeenNthCalledWith(3, { actorRef: LINK_ID, targetKind: 'image', targetId: IMAGE_ID })
   })
 
   test('revocationBetweenResolutionAndDisclosureNeverReturnsImageOrReportContent', async () => {
@@ -621,6 +625,7 @@ describe('share-token resolution', () => {
     })
     expect(response.status).toBe(200)
     expect(guardMock).toHaveBeenCalledOnce()
+    expect(shareDenialMock).not.toHaveBeenCalled()
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'share_recipient', shareLinkId: LINK_ID },
       { kind: 'image', id: IMAGE_ID },
