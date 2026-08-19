@@ -142,7 +142,7 @@ test.describe.serial('JOR-236 sharing', () => {
     const sources = await Promise.all([
       'components/share/ShareDialog.tsx',
       'lib/reports/ReportView.tsx',
-      'app/(patient)/reports/[reportId]/ReportDetailClient.tsx',
+      'app/(patient)/reports/[reportId]/page.tsx',
     ].map((file) => readFile(path.join(REPO_ROOT, file), 'utf8')))
     expect(sources.every((source) => source.includes('shareLinkTtlHours'))).toBe(true)
     expect(sources.join('\n')).not.toContain('48')

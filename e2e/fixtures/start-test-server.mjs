@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { startFakeAuthServer } from './fake-auth-server.ts'
+import { E5_CRON_SECRET, startFakeAuthServer } from './fake-auth-server.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '..', '..')
@@ -45,6 +45,8 @@ const child = spawn('node', ['scripts/run-next.mjs', 'dev'], {
   env: {
     ...process.env,
     ...envTest,
+    CRON_SECRET: E5_CRON_SECRET,
+    RESEND_API_KEY: '',
     NEXT_PUBLIC_SUPABASE_URL: fakeAuthServer.url,
   },
 })

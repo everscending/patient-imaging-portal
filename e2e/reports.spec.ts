@@ -96,7 +96,6 @@ test.describe.serial('JOR-218 reports', () => {
       readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
-      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/ReportDetailClient.tsx'), 'utf8'),
     ])
     expect(sources.join('\n')).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
@@ -106,7 +105,6 @@ test.describe.serial('JOR-218 reports', () => {
       readFile(path.join(REPO_ROOT, 'lib/reports/ReportView.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/page.tsx'), 'utf8'),
       readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/page.tsx'), 'utf8'),
-      readFile(path.join(REPO_ROOT, 'app/(patient)/reports/[reportId]/ReportDetailClient.tsx'), 'utf8'),
     ])
     expect(sources.join('\n')).not.toContain('dangerouslySetInnerHTML')
   })
