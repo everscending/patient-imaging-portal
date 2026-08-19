@@ -319,7 +319,7 @@ describe('.env.test fallback — acceptance: Playwright gets a usable value with
 })
 
 describe('repo-wide guards', () => {
-  test('process.env appears only in lib/config.ts and this test file', () => {
+  test('process.env readers match the exact allowlist', () => {
     // lib/config.ts is production code's sole reader (ARCHITECTURE.md §2).
     // This test file legitimately touches process.env too, since exercising
     // every branch of config validation requires setting and unsetting it.
@@ -334,13 +334,14 @@ describe('repo-wide guards', () => {
     // lib/config.ts — JOR-195's tests/setup/postgres.ts and the test files
     // that exercise it are the other legitimate readers this guard allows.
     // JOR-229's e2e/fixtures/start-test-server.mjs and JOR-288's
-    // scripts/run-next.mjs join them: both are process-launch boundaries that
-    // must pass a derived environment to a child. Nothing there reads
-    // application configuration; the values are forwarded to the child's own
-    // environment.
+    // scripts/run-next.mjs are process-launch boundaries that forward values
+    // to a child. JOR-295's provisioner is a process-entry boundary that reads
+    // only its PROVISION_DEPLOYED_STACK bootstrap flag; application
+    // configuration remains owned by lib/config.ts.
     expect(hits.sort()).toEqual([
       'e2e/fixtures/start-test-server.mjs',
       'lib/config.ts',
+      'scripts/provision-deployed-stack.ts',
       'scripts/run-next.mjs',
       'tests/config/config.test.ts',
       'tests/gate/gate.test.ts',
