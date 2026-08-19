@@ -22,9 +22,11 @@ import { toLocal, toRfc3339, zonedTimeToInstant } from '../lib/time/zones'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PROVIDER_TIME_ZONE = 'America/Chicago'
-const today = new Date(`${toLocal(PROVIDER_TIME_ZONE, new Date()).date}T00:00:00Z`)
-today.setUTCDate(today.getUTCDate() + ((9 - today.getUTCDay()) % 7 || 7))
-const blockDate = today.toISOString().slice(0, 10)
+const TUESDAY = 2
+const nextTuesday = new Date(`${toLocal(PROVIDER_TIME_ZONE, new Date()).date}T00:00:00Z`)
+const daysUntilNextTuesday = (TUESDAY - nextTuesday.getUTCDay() + 7) % 7 || 7
+nextTuesday.setUTCDate(nextTuesday.getUTCDate() + daysUntilNextTuesday)
+const blockDate = nextTuesday.toISOString().slice(0, 10)
 const BLOCK = {
   startsAt: toRfc3339(PROVIDER_TIME_ZONE, zonedTimeToInstant(PROVIDER_TIME_ZONE, blockDate, '13:00')),
   endsAt: toRfc3339(PROVIDER_TIME_ZONE, zonedTimeToInstant(PROVIDER_TIME_ZONE, blockDate, '14:00')),
