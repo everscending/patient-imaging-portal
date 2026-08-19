@@ -632,9 +632,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, userWireShape(user, true))
   }
 
-  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' = 'eq'): string | null {
-    const value = url.searchParams.get(column)
+  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' | 'lt' = 'eq'): string | null {
     const prefix = `${operator}.`
+    const value = url.searchParams.getAll(column).find((candidate) => candidate.startsWith(prefix))
     return value?.startsWith(prefix) ? value.slice(prefix.length) : null
   }
 
@@ -827,7 +827,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
 
     if (url.pathname === '/rest/v1/slots') {
-      const rows = callerProvider ? applyEqualityFilters(scheduleSlots.filter((row) => row.provider_id === callerProvider.id), url) : []
+      const startsAtGte = queryValue(url, 'starts_at', 'gte')
+      const startsAtLt = queryValue(url, 'starts_at', 'lt')
+      const rows = callerProvider ? applyEqualityFilters(scheduleSlots.filter((row) =>
+        row.provider_id === callerProvider.id &&
+        (startsAtGte === null || row.starts_at >= startsAtGte) &&
+        (startsAtLt === null || row.starts_at < startsAtLt)), url) : []
       sendPostgrestRows(req, res, rows)
       return
     }

@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useProviderShell } from '../../../components/shell/ProviderShell'
-import type { AppointmentDto } from '../../../lib/scheduling/booking'
+import { useProviderShell } from '../../../../components/shell/ProviderShell'
+import type { AppointmentDto } from '../../../../lib/scheduling/booking'
 
 type Transition = AppointmentDto['allowedTransitions'][number]
 type Schedule = {

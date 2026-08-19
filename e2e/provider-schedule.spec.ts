@@ -126,7 +126,7 @@ test.describe.serial('JOR-260 provider schedule', () => {
   test('scheduleSourceUsesLifecycleAndCancellationEnvelope', async () => {
     const [route, page] = await Promise.all([
       readFile(path.join(REPO_ROOT, 'app/api/provider/schedule/route.ts'), 'utf8'),
-      readFile(path.join(REPO_ROOT, 'app/(provider)/schedule/page.tsx'), 'utf8'),
+      readFile(path.join(REPO_ROOT, 'app/(provider)/provider/schedule/page.tsx'), 'utf8'),
     ])
     expect(route).toContain("role: 'provider'")
     expect(route).toContain('allowedTransitions(')
