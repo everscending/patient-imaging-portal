@@ -59,6 +59,11 @@ const { cookieState, resetDatabase, fakeClient } = vi.hoisted(() => {
 })
 
 vi.mock('../../lib/db/client', () => ({ anonClient: fakeClient }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveAuthenticatedSession: async () => cookieState.authenticated
+    ? { accessToken: 'token', userId: 'account-1' }
+    : null,
+}))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
 vi.mock('next/headers', () => ({ cookies: async () => ({ get: () => cookieState.authenticated ? { value: 'token' } : undefined }) }))
 

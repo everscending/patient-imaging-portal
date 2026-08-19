@@ -135,10 +135,16 @@ const {
 
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardPhiAccessMock }))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonClientMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: async () => getSession().callerId }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: async () => getSession().callerId,
+  resolveAuthenticatedSession: async () => {
+    const { token, callerId } = getSession()
+    return token && callerId ? { accessToken: token, userId: callerId } : null
+  },
+}))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: FAKE_SESSION_COOKIE_NAME }))
 vi.mock('../../lib/validation', () => ({
-  uuidSchema: {},
+  reportParamsSchema: {},
   parseParams: (_schema: unknown, params: { reportId?: string }) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.reportId ?? '')
       ? { ok: true, value: { reportId: params.reportId } }
@@ -322,6 +328,19 @@ describe('reports', () => {
       { actor: { kind: 'patient', userId: '' }, target: { kind: 'collection', of: 'report' }, action: 'report.view' },
       { actor: { kind: 'patient', userId: 'patient-account' }, target: { kind: 'collection', of: 'report' }, action: 'report.view' },
     ])
+  })
+
+  test('unauthenticatedReportDetailReachesItsAuditedGuard', async function unauthenticatedReportDetailReachesItsAuditedGuard() {
+    configureSession({ token: null, callerId: null })
+    setGuardStatus(401)
+
+    const response = await detailRoute(new Request(`http://test/api/reports/${REPORT_A}`), { params: Promise.resolve({ reportId: REPORT_A }) })
+
+    expect(response.status).toBe(401)
+    expect(guardCalls).toEqual([
+      { actor: { kind: 'patient', userId: '' }, target: { kind: 'report', id: REPORT_A }, action: 'report.view' },
+    ])
+    expect(JSON.stringify(await response.json())).not.toContain(REPORT_A)
   })
 
   test('responseDataMinimization', async function responseDataMinimization() {

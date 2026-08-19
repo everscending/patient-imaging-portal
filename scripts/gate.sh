@@ -73,10 +73,13 @@ run_api() {
   run_logic
   step VITEST_TIMING npx vitest run --project unit tests/observability/timing.test.ts
   step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts
+  step VITEST_E8 npx vitest run --project e8
 }
 
 run_ui() {
   run_api
+  step PLAYWRIGHT_E8 npx playwright test e2e/e8-wiring.spec.ts --project=e8-wiring
+  step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
   # e2-wiring depends on product, so this invocation runs the parallel product
   # suite first and the shared-state E2 proof after it.
   step PLAYWRIGHT npx playwright test --project=e2-wiring

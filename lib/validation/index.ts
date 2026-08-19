@@ -16,9 +16,18 @@ function validationFailed<T>(): ParseResult<T> {
   return { ok: false, response: errorResponse(422, 'validation_failed', VALIDATION_FAILED_MESSAGE) }
 }
 
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel()
+  } catch {
+    // A broken request stream is still malformed input. Its transport error is
+    // never allowed to replace the shared, no-PHI validation envelope.
+  }
+}
+
 /**
  * Rejects a malformed, oversized or out-of-range body with 422 validation_failed.
- * "Oversized" is larger than `config.maxRequestBodyBytes` (65536, ADR-0012).
+ * "Oversized" is larger than `config.maxRequestBodyBytes` (ADR-0012).
  */
 export async function parseBody<T>(schema: ZodType<T>, request: Request): Promise<ParseResult<T>> {
   const contentType = request.headers.get('content-type') ?? ''
@@ -41,15 +50,20 @@ export async function parseBody<T>(schema: ZodType<T>, request: Request): Promis
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let totalBytes = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    totalBytes += value.byteLength
-    if (totalBytes > config.maxRequestBodyBytes) {
-      await reader.cancel()
-      return validationFailed()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      if (totalBytes > config.maxRequestBodyBytes) {
+        await cancelReader(reader)
+        return validationFailed()
+      }
+      chunks.push(value)
     }
-    chunks.push(value)
+  } catch {
+    await cancelReader(reader)
+    return validationFailed()
   }
 
   const bytes = new Uint8Array(totalBytes)
@@ -67,16 +81,23 @@ export async function parseBody<T>(schema: ZodType<T>, request: Request): Promis
     return validationFailed()
   }
 
-  const result = schema.safeParse(json)
-  if (!result.success) return validationFailed()
-  return { ok: true, value: result.data }
+  try {
+    const result = schema.safeParse(json)
+    if (!result.success) return validationFailed()
+    return { ok: true, value: result.data }
+  } catch {
+    return validationFailed()
+  }
 }
 
 /** Validates the request's query string. Unknown parameters are rejected. */
-export function parseQuery<T>(schema: ZodType<T>, request: Request): ParseResult<T> {
-  let query: Record<string, string>
+export function parseQuery<T>(schema: ZodType<T>, url: URL): ParseResult<T> {
+  const query: Record<string, string | string[]> = {}
   try {
-    query = Object.fromEntries(new URL(request.url).searchParams)
+    for (const [key, value] of url.searchParams) {
+      const previous = query[key]
+      query[key] = previous === undefined ? value : Array.isArray(previous) ? [...previous, value] : [previous, value]
+    }
   } catch {
     return validationFailed()
   }
@@ -89,7 +110,7 @@ export function parseQuery<T>(schema: ZodType<T>, request: Request): ParseResult
 /** Validates a route's path parameters — a non-uuid id is 422, never a 500. */
 export function parseParams<T>(
   schema: ZodType<T>,
-  params: Record<string, string | string[] | undefined>,
+  params: Record<string, string | string[]>,
 ): ParseResult<T> {
   const result = schema.safeParse(params)
   if (!result.success) return validationFailed()
@@ -100,6 +121,80 @@ export function parseParams<T>(
 // (ADR-0012): rejects a non-uuid before it can reach Postgres as a malformed
 // query parameter.
 export const uuidSchema: ZodType<string> = z.string().uuid()
+
+const rfc3339Schema = z.string().datetime({ offset: true })
+const wallTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/)
+
+/** Booking request and route schemas (EC-12). */
+export const appointmentCreateSchema = z.object({
+  slotId: uuidSchema,
+  serviceId: uuidSchema,
+  idempotencyKey: uuidSchema,
+}).strict()
+export const appointmentParamsSchema = z.object({ id: uuidSchema }).strict()
+export const appointmentPatchSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('reschedule'), slotId: uuidSchema }).strict(),
+  z.object({ action: z.literal('cancel') }).strict(),
+  z.object({ action: z.literal('transition'), status: z.enum(['confirmed', 'completed', 'no_show']) }).strict(),
+])
+export const slotsQuerySchema = z.object({
+  providerId: uuidSchema,
+  serviceId: uuidSchema,
+  from: rfc3339Schema,
+  to: rfc3339Schema,
+}).strict().refine(({ from, to }) => new Date(to) > new Date(from))
+export const providersQuerySchema = z.object({ serviceId: uuidSchema }).strict()
+
+/** Provider availability request and route schemas (EC-12). */
+export const availabilityParamsSchema = z.object({ providerId: uuidSchema }).strict()
+export const availabilityPatchSchema = z.object({
+  slotMinutes: z.number().int().min(5).max(240),
+  workingHours: z.array(z.object({
+    weekday: z.number().int().min(0).max(6),
+    startsLocal: wallTimeSchema,
+    endsLocal: wallTimeSchema,
+  }).strict()).max(64),
+  blocks: z.array(z.object({
+    startsAt: rfc3339Schema,
+    endsAt: rfc3339Schema,
+    reason: z.string().trim().max(500).nullable().optional(),
+  }).strict()).max(256),
+}).strict()
+
+/** Image and report access path schemas (EC-12). */
+export const studyParamsSchema = z.object({ studyId: uuidSchema }).strict()
+export const studyClipParamsSchema = z.object({ studyId: uuidSchema, clipId: uuidSchema }).strict()
+export const reportParamsSchema = z.object({ reportId: uuidSchema }).strict()
+
+/** Sharing request and route schemas (EC-12). */
+export const createShareSchema = z.object({
+  resourceKind: z.enum(['image', 'report']),
+  resourceId: uuidSchema,
+  recipientEmail: z.string().trim().email().max(320),
+}).strict()
+export const shareParamsSchema = z.object({ id: uuidSchema }).strict()
+export const shareTokenParamsSchema = z.object({ token: z.string().min(1).max(512) }).strict()
+
+/** Auth and profile request schemas (EC-12). */
+export const registerRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  password: z.string().min(8).max(128),
+}).strict()
+export const loginRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(254),
+  password: z.string().min(1).max(128),
+}).strict()
+export const profilePatchSchema = z.object({
+  fullName: z.string().trim().min(1).max(200),
+  phone: z.union([z.string().trim().min(1).max(64), z.null()]),
+}).strict()
+
+/** Remaining API request schemas; route handlers never declare schemas. */
+export const servicesQuerySchema = z.object({}).strict()
+export const identityVerifyRequestSchema = z.object({
+  patientRef: z.string().trim().min(1).max(64),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+}).strict()
 
 const auditActions = [
   'identity.verify',

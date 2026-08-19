@@ -31,10 +31,11 @@ type GuardedEndpoint = {
   action: string
   targetKind: string
   targetId: string | null
+  guardsBeforeSession?: boolean
 }
 
 const GUARDED_ENDPOINTS = [
-  { path: '/api/studies', action: 'study.view', targetKind: 'study_list', targetId: null },
+  { path: '/api/studies', action: 'study.view', targetKind: 'study_list', targetId: null, guardsBeforeSession: true },
   { path: `/api/studies/${E2_SEEDED_STUDY_ID}`, action: 'study.view', targetKind: 'study', targetId: E2_SEEDED_STUDY_ID },
   {
     path: `/api/studies/${E2_SEEDED_STUDY_ID}/clips/${E2_SEEDED_CLIP_ID}`,
@@ -42,7 +43,7 @@ const GUARDED_ENDPOINTS = [
     targetKind: 'clip',
     targetId: E2_SEEDED_CLIP_ID,
   },
-  { path: '/api/reports', action: 'report.view', targetKind: 'report_list', targetId: null },
+  { path: '/api/reports', action: 'report.view', targetKind: 'report_list', targetId: null, guardsBeforeSession: true },
   { path: `/api/reports/${E2_SEEDED_REPORT_ID}`, action: 'report.view', targetKind: 'report', targetId: E2_SEEDED_REPORT_ID },
 ] as const satisfies readonly GuardedEndpoint[]
 
@@ -136,13 +137,22 @@ async function expectOneGuardAudit(
 async function expectGuardedAccess(
   request: APIRequestContext,
   endpoint: GuardedEndpoint,
-  expected: { status: 200 | 401 | 403 | 404; outcome: 'granted' | 'denied'; actorRef: string | null },
+  expected: {
+    status: 200 | 401 | 403 | 404
+    outcome: 'granted' | 'denied'
+    actorRef: string | null
+    reachesGuard?: boolean
+  },
 ): Promise<void> {
   const before = (await state(request)).auditEvents.length
   const response = await request.get(endpoint.path, { maxRedirects: 0 })
   expect(response.status(), endpoint.path).toBe(expected.status)
   if (expected.status === 403) {
     expect(await response.json()).toEqual({ error: 'identity_verification_required', message: expect.any(String) })
+  }
+  if (expected.reachesGuard === false) {
+    expect((await state(request)).auditEvents.slice(before), 'authentication must precede params and the PHI guard').toEqual([])
+    return
   }
   await expectOneGuardAudit(request, before, {
     actorRef: expected.actorRef,
@@ -281,7 +291,11 @@ test.describe('JOR-264 E2 identity/access wiring', () => {
 
   test('mandatory adversarial: noSessionGuardedRequestAlwaysReturns401', async ({ request }) => {
     for (const endpoint of GUARDED_ENDPOINTS) {
-      await expectGuardedAccess(request, endpoint, { status: 401, outcome: 'denied', actorRef: null })
+      await expectGuardedAccess(request, endpoint, {
+        status: 401,
+        outcome: 'denied',
+        actorRef: null,
+      })
     }
   })
 

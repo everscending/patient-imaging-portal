@@ -1,15 +1,9 @@
-import { z } from 'zod'
 import { guardPhiAccess, resolveScheduleActor } from '../../../lib/access/guard'
 import { resolveCallerId } from '../../../lib/access/identity'
 import { bookForActor, listAppointments, type BookResult } from '../../../lib/scheduling/booking'
-import { parseBody, uuidSchema } from '../../../lib/validation'
+import { appointmentCreateSchema, parseBody } from '../../../lib/validation'
 import { errorResponse } from '../../../lib/validation/envelope'
 
-const CreateSchema = z.object({
-  slotId: uuidSchema,
-  serviceId: uuidSchema,
-  idempotencyKey: z.string().uuid(),
-}).strict()
 type BookError = Extract<BookResult, { ok: false }>['error']
 const BOOK_ERROR_RESPONSES = {
   slot_unavailable: { status: 409, message: 'That slot is no longer available.' },
@@ -24,11 +18,11 @@ function denied(status: 401 | 403 | 404): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const parsed = await parseBody(CreateSchema, request)
-  if (!parsed.ok) return parsed.response
   try {
     const callerId = await resolveCallerId()
     if (!callerId) return denied(401)
+    const parsed = await parseBody(appointmentCreateSchema, request)
+    if (!parsed.ok) return parsed.response
     const result = await bookForActor({ ...parsed.value, actorUserId: callerId })
     if (!result.ok) {
       const mapping = BOOK_ERROR_RESPONSES[result.error]

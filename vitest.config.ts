@@ -24,7 +24,7 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/**/*.test.ts'],
-          exclude: ['tests/integration/**', 'tests/scheduling/booking-concurrency.test.ts'],
+          exclude: ['tests/integration/**', 'tests/scheduling/booking-concurrency.test.ts', 'tests/e8-run-record.test.ts'],
         },
       },
       {
@@ -34,6 +34,14 @@ export default defineConfig({
           environment: 'node',
           include: ['tests/integration/**/*.test.ts', 'tests/scheduling/booking-concurrency.test.ts'],
           globalSetup: ['./tests/setup/postgres.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'e8',
+          environment: 'node',
+          include: ['tests/e8-run-record.test.ts'],
         },
       },
     ],

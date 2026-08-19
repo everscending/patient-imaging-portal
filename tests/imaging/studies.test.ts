@@ -39,7 +39,13 @@ const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.h
 })
 
 vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
-vi.mock('../../lib/access/identity', () => ({ resolveCallerId: callerMock }))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: callerMock,
+  resolveAuthenticatedSession: async () => {
+    const userId = await callerMock()
+    return userId ? { accessToken: 'caller-token', userId } : null
+  },
+}))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonMock }))
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signingMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
@@ -99,6 +105,20 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(response.status).toBe(404)
     expect(anonMock).not.toHaveBeenCalled()
     expect(signingMock).not.toHaveBeenCalled()
+  })
+
+  test('unauthenticatedDetailAndClipReadsReachTheirAuditedGuards', async function unauthenticatedDetailAndClipReadsReachTheirAuditedGuards() {
+    callerMock.mockResolvedValue(null)
+    const { GET: studyGet } = await import('../../app/api/studies/[studyId]/route')
+    const { GET: clipGet } = await import('../../app/api/studies/[studyId]/clips/[clipId]/route')
+
+    const studyResponse = await studyGet(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
+    const clipResponse = await clipGet(new Request(`http://test/api/studies/${studyId}/clips/${clipId}`), { params: Promise.resolve({ studyId, clipId }) })
+
+    expect([studyResponse.status, clipResponse.status]).toEqual([401, 401])
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'clip', id: clipId }, 'clip.view')
+    expect(JSON.stringify([await studyResponse.json(), await clipResponse.json()])).not.toMatch(new RegExp(`${studyId}|${clipId}`))
   })
 })
 
