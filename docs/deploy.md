@@ -127,6 +127,13 @@ Appended once per deploy run — never edited after the fact.
 | Date | Supabase project ref | Deployed URL | Deployed commit |
 | --- | --- | --- | --- |
 | 2026-08-15 | `dyvbopxzwkavhggawedt` | https://patient-imaging-portal.vercel.app | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
+| 2026-08-19 | `dyvbopxzwkavhggawedt` | https://patient-imaging-portal.vercel.app | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
+
+### Application schema run record
+
+| Timestamp (UTC) | Commit | Provisioned state |
+| --- | --- | --- |
+| 2026-08-19T16:09:39Z | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` | 9 migrations; 1 seed run; 50 patients; 10 providers; private `phi` bucket; `pg_cron` and `pg_net`; one active five-minute reminder job whose latest run succeeded with HTTP 200 |
 
 ## Live check
 
@@ -137,6 +144,8 @@ guessed object path in `phi`, both made after the run record above.
 | --- | --- | --- | --- | --- |
 | 2026-08-15T18:23:53Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
 | 2026-08-15T18:23:53Z | Guessed object in `phi` | 400 | — | `1da62e27428e7c6cbef3bda29b01ef9bc7899bd9` |
+| 2026-08-19T16:09:39Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
+| 2026-08-19T16:09:39Z | Guessed object in `phi` | 400 | — | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
 
 ## E0 wiring confirmation (JOR-217)
 
