@@ -51,17 +51,27 @@ describe('container — acceptance: pip-testpg on postgres:16-alpine, ephemeral 
 })
 
 describe('isolation — acceptance + adversarial: a database per run, never shared', () => {
-  test('adversarial: two runs at once never share a database', async () => {
-    const container = await ensureContainer()
-    const [a, b] = await Promise.all([startRun(container), startRun(container)])
-    runsToClean.push(a, b)
+  test(
+    'adversarial: two runs at once never share a database',
+    async () => {
+      const container = await ensureContainer()
+      const [a, b] = await Promise.all([startRun(container), startRun(container)])
+      runsToClean.push(a, b)
 
-    expect(a.dbName).not.toBe(b.dbName)
-    expect(a.dbName).toMatch(/^pip_run_[0-9a-f]+$/)
-    expect(b.dbName).toMatch(/^pip_run_[0-9a-f]+$/)
-    expect(_databaseExistsForTest(a.dbName)).toBe(true)
-    expect(_databaseExistsForTest(b.dbName)).toBe(true)
-  }, HARNESS_TEST_TIMEOUT_MS)
+      expect(a.dbName).not.toBe(b.dbName)
+      expect(a.dbName).toMatch(/^pip_run_[0-9a-f]+$/)
+      expect(b.dbName).toMatch(/^pip_run_[0-9a-f]+$/)
+      expect(_databaseExistsForTest(a.dbName)).toBe(true)
+      expect(_databaseExistsForTest(b.dbName)).toBe(true)
+    },
+    // Two full `startRun`s (each: CREATE DATABASE, registry insert, auth
+    // stub, migrations) queue behind each other on this single Node
+    // process's synchronous docker-exec calls — no real thread-level
+    // parallelism to shrink this. HARNESS_TEST_TIMEOUT_MS has no headroom
+    // left once a nested scratch-clone gate run contends for the same
+    // Docker daemon.
+    20_000,
+  )
 
   test('overlapping runs can share a granted cluster role without invalidating each other', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pip-granted-role-migrations-'))

@@ -258,6 +258,18 @@ function stubAuth(dbName: string): void {
   psqlFile(dbName, AUTH_STUB_SQL)
 }
 
+// The advisory lock in withRoleLock only guards the race on *creating*
+// app_user — once it exists (the common case: the role is cluster-global and
+// this harness never drops it, so any earlier run on this shared container
+// already made one), a run's own migrations touch only its own database and
+// need no cluster-wide exclusion. Skipping the lock in that case avoids two
+// otherwise-pointless docker-exec round trips (acquire + release) per run —
+// pure overhead that otherwise serializes concurrent startRun calls for no
+// reason a genuine adversarial-concurrency test cares about.
+function appUserRoleProvisioned(): boolean {
+  return psql(MAINTENANCE_DB, "SELECT 1 FROM pg_roles WHERE rolname = 'app_user';").trim() === '1'
+}
+
 // Creates a fresh, migrated pip_run_<random> database and registers it so
 // the startup sweep can find it if this run never calls stopRun. Two calls —
 // concurrent or not — never collide: each generates its own random name.
@@ -269,9 +281,13 @@ export async function startRun(container: Container, migrationsDir?: string): Pr
   psql(MAINTENANCE_DB, `CREATE DATABASE "${dbName}";`)
   psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
   stubAuth(dbName)
-  await withRoleLock(() => {
+  if (appUserRoleProvisioned()) {
     runMigrations(dbName, migrationsDir)
-  })
+  } else {
+    await withRoleLock(() => {
+      runMigrations(dbName, migrationsDir)
+    })
+  }
   return {
     dbName,
     port: container.port,
