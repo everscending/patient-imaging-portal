@@ -338,6 +338,17 @@ input {
   background: var(--pip-color-base-200);
 }
 
+.pip-book-page { max-width: 48rem; margin: 0 auto; }
+.pip-slot-list, .pip-slot-day, .pip-book-confirmation { display: grid; gap: 0.75rem; }
+.pip-slot-day { margin: 1rem 0; }
+.pip-slot-day h2 { margin: 0; font-size: 1.1rem; }
+.pip-slot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem; }
+.pip-slot-button { min-height: var(--pip-tap-target); padding: 0.5rem; border: 1px solid var(--pip-color-primary); border-radius: 0.5rem; color: var(--pip-color-primary); background: var(--pip-color-base-100); font: inherit; cursor: pointer; }
+.pip-slot-button[aria-pressed='true'] { color: var(--pip-color-base-100); background: var(--pip-color-primary); }
+.pip-slot-button:disabled { border-color: var(--pip-color-base-300); color: var(--pip-color-secondary); background: var(--pip-color-base-200); cursor: not-allowed; }
+.pip-slot-button:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
+.pip-book-confirmation { margin-top: 1rem; padding: 1rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.5rem; }
+
 /* ShareDialog — one mounted panel becomes a centered dialog at desktop width
    and a bottom sheet below the patient shell's 768px breakpoint. */
 .pip-share-backdrop {
