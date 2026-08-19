@@ -8,6 +8,7 @@ import { buildMigrationProgram, readMigrationFiles } from '../../scripts/provisi
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const GRANTS = readFileSync(path.join(REPO_ROOT, 'db', 'deploy', 'postgrest-grants.sql'), 'utf8')
 const SHELL = readFileSync(path.join(REPO_ROOT, 'scripts', 'provision-deployed-stack.sh'), 'utf8')
+const VITE_CONFIG = readFileSync(path.join(REPO_ROOT, 'scripts', 'vite-node.config.ts'), 'utf8')
 
 describe('deployed schema provisioning', () => {
   test('applies all migrations in filename order and tracks the full filename plus checksum', () => {
@@ -35,6 +36,18 @@ describe('deployed schema provisioning', () => {
     }
     expect(program).toContain('pg_advisory_lock')
     expect(program).toContain('applied migration checksum changed')
+    expect(files.find((file) => file.name === '006_book_appointment.sql')?.sql).toContain(
+      'grant booking_executor to current_user',
+    )
+    for (const name of [
+      '006_book_appointment.sql',
+      '007_reschedule_cancel_appointments.sql',
+      '008_transition_appointment.sql',
+    ]) {
+      expect(files.find((file) => file.name === name)?.sql).toMatch(
+        /grant create on schema public to booking_executor;[\s\S]+alter function[\s\S]+revoke create on schema public from booking_executor;/,
+      )
+    }
   })
 
   test('production role inherits only the reviewed app role privileges', () => {
@@ -46,6 +59,9 @@ describe('deployed schema provisioning', () => {
     expect(GRANTS).toContain('revoke all on all sequences in schema public from authenticated')
     expect(GRANTS).toContain('revoke all on all functions in schema public from authenticated')
     expect(GRANTS).toContain('grant app_user to authenticated with inherit true, set false')
+    expect(GRANTS).toContain('grant execute on function current_patient_id() to app_user')
+    expect(GRANTS).toContain('grant execute on function current_provider_id() to app_user')
+    expect(GRANTS).toContain('grant execute on function is_admin() to app_user')
   })
 
   test('shell requires psql and secrets by name without placing their values in arguments', () => {
@@ -63,6 +79,10 @@ describe('deployed schema provisioning', () => {
     ]) {
       expect(SHELL).toContain(name)
     }
+    expect(SHELL).toContain('PROVISION_DEPLOYED_STACK=1')
+    expect(SHELL).toContain('-c scripts/vite-node.config.ts scripts/provision-deployed-stack.ts')
+    expect(VITE_CONFIG).toContain("conditions: ['react-server']")
+    expect(VITE_CONFIG).toContain("externalConditions: ['react-server']")
     expect(SHELL).not.toMatch(/--password|--db-url|echo.*!required/)
   })
 })

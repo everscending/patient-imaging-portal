@@ -243,7 +243,7 @@ export async function main(): Promise<void> {
   await waitForPostgrest(deploymentConfig)
 }
 
-if (path.resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
+if (process.env.PROVISION_DEPLOYED_STACK === '1') {
   main().catch(() => {
     // Provider/database errors can echo request details. The preceding stage
     // lines identify the failed boundary without forwarding those details.

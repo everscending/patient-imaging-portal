@@ -5,34 +5,14 @@
 \getenv cron_secret CRON_SECRET
 \getenv reminder_cron_minutes REMINDER_CRON_MINUTES
 
-select set_config('app.app_base_url', :'app_base_url', false);
-select set_config('app.cron_secret', :'cron_secret', false);
-select set_config('app.reminder_cron_minutes', :'reminder_cron_minutes', false);
-
--- Persist the three values for pg_cron's future sessions. format(%I, %L)
--- quotes the database name and values; secrets are never interpolated by a
--- shell or committed file.
-do $configure$
-declare
-  database_name text := current_database();
-begin
-  execute format(
-    'alter database %I set app.app_base_url to %L',
-    database_name,
-    current_setting('app.app_base_url')
-  );
-  execute format(
-    'alter database %I set app.cron_secret to %L',
-    database_name,
-    current_setting('app.cron_secret')
-  );
-  execute format(
-    'alter database %I set app.reminder_cron_minutes to %L',
-    database_name,
-    current_setting('app.reminder_cron_minutes')
-  );
-end
-$configure$;
+-- \gset consumes the result instead of printing values, so the secret never
+-- appears in deployment output. The settings only need to live for this
+-- session: cron.schedule stores the resulting command and cadence.
+select
+  set_config('app.app_base_url', :'app_base_url', false) as configured_app_base_url,
+  set_config('app.cron_secret', :'cron_secret', false) as configured_cron_secret,
+  set_config('app.reminder_cron_minutes', :'reminder_cron_minutes', false) as configured_reminder_cron_minutes
+\gset
 
 do $schedule$
 declare

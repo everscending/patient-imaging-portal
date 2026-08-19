@@ -14,4 +14,6 @@ for required in PGHOST PGDATABASE PGUSER PGPASSWORD NEXT_PUBLIC_SUPABASE_URL \
   fi
 done
 
-exec node --conditions=react-server node_modules/vite-node/vite-node.mjs scripts/provision-deployed-stack.ts
+export PROVISION_DEPLOYED_STACK=1
+exec node node_modules/vite-node/vite-node.mjs \
+  -c scripts/vite-node.config.ts scripts/provision-deployed-stack.ts

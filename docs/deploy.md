@@ -70,12 +70,14 @@ REMINDER_WINDOW_MINUTES="${REMINDER_WINDOW_MINUTES:-30}" \
 scripts/configure-reminder-cron.sh
 ```
 
-The fixed SQL at `db/deploy/reminder-cron.sql` persists the URL, secret, and
-cadence as database settings, then replaces `patient-imaging-reminders` with a
-schedule using that cadence. Migration 004 fails closed when the target or
-secret has not yet been provisioned: it creates no unauthenticated, null-target
-job. Re-run the command whenever any of these deployment values changes. Real
-values remain in the deployment environment and are never written to Git.
+Enable the `pg_cron` and `pg_net` extensions in Supabase first. The fixed SQL
+reads the URL, secret, and cadence into its private `psql` session without
+printing them, then replaces `patient-imaging-reminders`; `cron.schedule`
+stores the resulting command and cadence. Migration 004 fails closed when the
+target or secret has not yet been provisioned: it creates no unauthenticated,
+null-target job. Re-run the command whenever any of these deployment values
+changes. Real values remain in the deployment environment and are never
+written to Git.
 
 ## Storage: the `phi` bucket
 
