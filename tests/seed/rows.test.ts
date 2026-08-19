@@ -281,6 +281,27 @@ describe('AC + mandatory adversarial: exactly one cine clip references the broke
   })
 })
 
+describe('JOR-297: one healthy cine clip has all 100 uploaded frames', () => {
+  test('healthyClipIsContiguousAndBrokenClipKeepsItsGap', function healthyClipIsContiguousAndBrokenClipKeepsItsGap() {
+    const assetsByKey = new Map(pool.assets.map((asset) => [asset.key, asset]))
+    const healthyClips = rowSet.cineClips.filter(
+      (clip) => clip.id !== rowSet.fixtures.brokenCineClipId && clip.frame_count === 100,
+    )
+
+    expect(healthyClips).toHaveLength(1)
+    expect(healthyClips[0].id).toBe(rowSet.fixtures.performanceCineClipId)
+    const healthyFrames = rowSet.cineFrames
+      .filter((frame) => frame.clip_id === healthyClips[0].id)
+      .sort((a, b) => a.frame_index - b.frame_index)
+    expect(healthyFrames.map((frame) => frame.frame_index)).toEqual(Array.from({ length: 100 }, (_, index) => index))
+    expect(healthyFrames.every((frame) => assetsByKey.get(frame.storage_key)?.upload === true)).toBe(true)
+
+    const brokenFrames = rowSet.cineFrames.filter((frame) => frame.clip_id === rowSet.fixtures.brokenCineClipId)
+    expect(brokenFrames).toHaveLength(100)
+    expect(brokenFrames.filter((frame) => assetsByKey.get(frame.storage_key)?.upload === false)).toHaveLength(1)
+  })
+})
+
 describe('AC + mandatory adversarial: no seeded appointment has out_of_hours set to true', () => {
   test('outOfHoursColumnNeverAppearsInTheAppointmentsInsert', function outOfHoursColumnNeverAppearsInTheAppointmentsInsert() {
     const plan = toInsertPlan(rowSet)
@@ -425,6 +446,8 @@ describe('AC: clean database → 001, 002, 003 → db/seed/index.ts completes an
       expect(record.rowCounts.providers).toBe(PROVIDER_COUNT)
       expect(record.rowCounts.slots).toBeGreaterThan(14_000)
       expect(record.rowCounts.appointments).toBe(rowSet.appointments.length)
+      expect(record.rowCounts.cine_frames).toBe(rowSet.cineFrames.length)
+      expect(record.performanceCineClipId).toBe(rowSet.fixtures.performanceCineClipId)
       expect(Number(psql(run.dbName, 'select count(*) from patients;'))).toBe(PATIENT_COUNT)
       expect(Number(psql(run.dbName, 'select count(*) from slots;'))).toBe(record.rowCounts.slots)
       expect(Number(psql(run.dbName, 'select count(*) from appointments;'))).toBe(record.rowCounts.appointments)
@@ -563,6 +586,7 @@ describe('Live check: the committed run record still matches the current determi
       patientRefRange: { first: string; last: string }
       unlinkedPatientId: string
       brokenCineClipId: string
+      performanceCineClipId: string
     }
 
     const currentPool = generateAssetPool(artifact.seed)
@@ -582,6 +606,7 @@ describe('Live check: the committed run record still matches the current determi
     expect(current.fixtures.patientRefLast).toBe(artifact.patientRefRange.last)
     expect(current.fixtures.unlinkedPatientId).toBe(artifact.unlinkedPatientId)
     expect(current.fixtures.brokenCineClipId).toBe(artifact.brokenCineClipId)
+    expect(current.fixtures.performanceCineClipId).toBe(artifact.performanceCineClipId)
     expect(artifact.demoAccounts).toEqual({ patient: DEMO_PATIENT_EMAIL, provider: DEMO_PROVIDER_EMAIL, admin: DEMO_ADMIN_EMAIL })
   }, GENERATE_TIMEOUT_MS)
 })

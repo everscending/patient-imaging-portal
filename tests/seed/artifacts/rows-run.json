@@ -12,7 +12,7 @@
     "studies": 150,
     "images": 700,
     "cine_clips": 250,
-    "cine_frames": 5080,
+    "cine_frames": 5160,
     "reports": 150,
     "working_hours": 100,
     "availability_blocks": 10,
@@ -44,6 +44,7 @@
   },
   "unlinkedPatientId": "b2680cc1-05d8-4a68-bce4-f85ec6c193a2",
   "brokenCineClipId": "edde797b-519a-4b80-b096-36ac47dc6641",
+  "performanceCineClipId": "24bfc398-bd0c-4f8d-ab54-85b1836c3b30",
   "pool": {
     "uploadedCount": 0,
     "skippedCount": 839,

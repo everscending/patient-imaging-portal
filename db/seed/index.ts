@@ -55,6 +55,7 @@ export type SeedRunRecord = {
   patientRefRange: { first: string; last: string }
   unlinkedPatientId: string
   brokenCineClipId: string
+  performanceCineClipId: string
   pool: Pick<UploadPoolSummary, 'uploadedCount' | 'skippedCount' | 'missingKey'>
 }
 
@@ -147,6 +148,7 @@ export async function runSeed(deps: RunSeedDeps): Promise<SeedRunRecord> {
     patientRefRange: { first: rowSet.fixtures.patientRefFirst, last: rowSet.fixtures.patientRefLast },
     unlinkedPatientId: rowSet.fixtures.unlinkedPatientId,
     brokenCineClipId: rowSet.fixtures.brokenCineClipId,
+    performanceCineClipId: rowSet.fixtures.performanceCineClipId,
     pool: {
       uploadedCount: uploadSummary.uploadedCount,
       skippedCount: uploadSummary.skippedCount,
