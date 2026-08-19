@@ -121,6 +121,36 @@ type FakeAvailabilityBlock = {
   reason: string | null
 }
 
+type FakeSlot = { id: string; provider_id: string; starts_at: string; ends_at: string; status: 'open' | 'booked' }
+type FakeBookingAppointment = { id: string; slot_id: string; patient_id: string; service_id: string; idempotency_key: string }
+type FakeAppointment = {
+  id: string
+  patient_id: string
+  status: 'confirmed'
+  out_of_hours: boolean
+  created_at: string
+  slots: { starts_at: string; ends_at: string }
+  providers: { full_name: string; time_zone: string }
+  services: { name: string }
+}
+type FakeScheduleSlot = {
+  id: string
+  provider_id: string
+  starts_at: string
+  ends_at: string
+  status: 'open' | 'booked'
+}
+
+type FakeScheduleAppointment = {
+  id: string
+  slot_id: string
+  provider_id: string
+  patient_id: string
+  service_name: string
+  status: 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+  out_of_hours: boolean
+}
+
 type FakeIdentityAttempt = {
   id: string
   attempted_patient_ref: string
@@ -140,6 +170,18 @@ type FakeShareLink = {
   revoked_at: string | null
   image_id: string | null
   report_id: string | null
+  created_at: string
+}
+
+type FakeEmailOutbox = {
+  id: string
+  recipient: string
+  subject: string
+  body: string
+  attempts: number
+  next_attempt_at: string
+  sent_at: string | null
+  last_error: string | null
   created_at: string
 }
 
@@ -179,6 +221,7 @@ export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
+export const E2_BOOK_SERVICE_ID = '77667766-7766-4766-8766-776677667766'
 export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
 export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
 export const E3_MISSING_CINE_FRAME_INDEX = 42
@@ -186,6 +229,7 @@ export const E3_MISSING_CINE_FRAME_STORAGE_KEY = E3_CINE_FRAME_STORAGE_KEYS[E3_M
 export const E4_CANCELLED_VISIT_ID = '77667766-7766-4766-8766-776677667766'
 export const E4_CANCELLED_STUDY_ID = '99889988-9988-4988-8988-998899889988'
 export const E4_PRELIMINARY_REPORT_ID = 'bd88bd88-bd88-4d88-8d88-bd88bd88bd88'
+export const E5_CRON_SECRET = 'e5-test-cron-secret'
 
 const PROVIDERS: FakeProvider[] = [
   {
@@ -201,6 +245,35 @@ const PROVIDERS: FakeProvider[] = [
     full_name: 'Dr. Riley Patel',
     time_zone: 'America/New_York',
     slot_minutes: 20,
+  },
+]
+const APPOINTMENT_SEED_NOW = Date.now()
+const APPOINTMENTS: FakeAppointment[] = [
+  {
+    id: '22552255-2255-4255-8255-225522552255',
+    patient_id: SEEDED_PATIENT.id,
+    status: 'confirmed',
+    out_of_hours: false,
+    created_at: new Date(APPOINTMENT_SEED_NOW).toISOString(),
+    slots: {
+      starts_at: new Date(APPOINTMENT_SEED_NOW + 12 * 60 * 60 * 1_000).toISOString(),
+      ends_at: new Date(APPOINTMENT_SEED_NOW + 13 * 60 * 60 * 1_000).toISOString(),
+    },
+    providers: { full_name: PROVIDERS[0].full_name, time_zone: PROVIDERS[0].time_zone },
+    services: { name: 'MRI' },
+  },
+  {
+    id: '22662266-2266-4266-8266-226622662266',
+    patient_id: SEEDED_PATIENT.id,
+    status: 'confirmed',
+    out_of_hours: true,
+    created_at: new Date(APPOINTMENT_SEED_NOW - 1).toISOString(),
+    slots: {
+      starts_at: new Date(APPOINTMENT_SEED_NOW + 72 * 60 * 60 * 1_000).toISOString(),
+      ends_at: new Date(APPOINTMENT_SEED_NOW + 73 * 60 * 60 * 1_000).toISOString(),
+    },
+    providers: { full_name: PROVIDERS[0].full_name, time_zone: PROVIDERS[0].time_zone },
+    services: { name: 'MRI' },
   },
 ]
 const VISITS: FakeVisit[] = [
@@ -333,6 +406,7 @@ const REPORTS: FakeReport[] = [
 ]
 
 const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
+  ['/rest/v1/appointments', APPOINTMENTS],
   ['/rest/v1/visits', VISITS],
   ['/rest/v1/studies', STUDIES],
   ['/rest/v1/images', IMAGES],
@@ -425,14 +499,24 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
   let shareLinks: FakeShareLink[] = []
-  let emailOutbox: Record<string, unknown>[] = []
+  let emailOutbox: FakeEmailOutbox[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
     { provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' },
     { provider_id: E2_OTHER_PROVIDER_ID, weekday: 2, starts_local: '10:00:00', ends_local: '14:00:00' },
   ]
   let availabilityBlocks: FakeAvailabilityBlock[] = []
+  let scheduleSlots: FakeScheduleSlot[] = []
+  let scheduleAppointments: FakeScheduleAppointment[] = []
   let generatedSlotRangesByProvider = new Map<string, string[]>()
+  const bookingServices = [
+    { id: E2_BOOK_SERVICE_ID, slug: 'ultrasound', name: 'Ultrasound' },
+    { id: '77887788-7788-4788-8788-778877887788', slug: 'follow-up', name: 'Follow-up ultrasound' },
+    { id: '88778877-8877-4877-8877-887788778877', slug: 'empty', name: 'No-provider service' },
+  ]
+  let bookingSlots: FakeSlot[] = []
+  let bookingAppointments: FakeBookingAppointment[] = []
+  let bookingGeneration = 0
   const auditEvents: Record<string, unknown>[] = []
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
@@ -486,6 +570,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
 
   function count(name: string): void {
     calls[name] = (calls[name] ?? 0) + 1
+  }
+
+  function resetBookingState(): void {
+    bookingGeneration += 1
+    const start = new Date(Date.now() + 72 * 60 * 60 * 1_000)
+    start.setUTCMinutes(0, 0, 0)
+    bookingSlots = [0, 1, 2].map((offset) => {
+      const startsAt = new Date(start.getTime() + offset * 30 * 60 * 1_000)
+      const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1_000)
+      return { id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + offset + 1).padStart(12, '0')}`, provider_id: E2_OTHER_PROVIDER_ID, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: 'open' }
+    })
+    bookingAppointments = []
   }
 
   function countForEmail(name: string, email: string): void {
@@ -612,9 +708,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, userWireShape(user, true))
   }
 
-  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' = 'eq'): string | null {
-    const value = url.searchParams.get(column)
+  function queryValue(url: URL, column: string, operator: 'eq' | 'gte' | 'lt' = 'eq'): string | null {
     const prefix = `${operator}.`
+    const value = url.searchParams.getAll(column).find((candidate) => candidate.startsWith(prefix))
     return value?.startsWith(prefix) ? value.slice(prefix.length) : null
   }
 
@@ -658,6 +754,84 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return true
     })
     sendPostgrestRows(req, res, rows)
+  }
+
+  function bookingRpcRow(slot: FakeSlot, serviceId: string, appointment: FakeBookingAppointment | null, resultError: string | null, reused: boolean): Record<string, unknown> {
+    const provider = providers.find((candidate) => candidate.id === slot.provider_id)
+    const service = bookingServices.find((candidate) => candidate.id === serviceId)
+    return {
+      appointment_id: appointment?.id ?? null,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      appointment_status: appointment ? 'requested' : null,
+      provider_name: provider?.full_name ?? null,
+      provider_time_zone: provider?.time_zone ?? null,
+      service_name: service?.name ?? null,
+      out_of_hours: false,
+      result_error: resultError,
+      result_reused: reused,
+    }
+  }
+
+  async function handleBookAppointment(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const slot = bookingSlots.find((candidate) => candidate.id === body.p_slot_id)
+    const serviceId = String(body.p_service_id)
+    const key = String(body.p_idempotency_key)
+    const previous = patient ? bookingAppointments.find((candidate) => candidate.patient_id === patient.id && candidate.idempotency_key === key) : undefined
+    if (previous) {
+      const previousSlot = bookingSlots.find((candidate) => candidate.id === previous.slot_id)!
+      if (previous.slot_id !== body.p_slot_id || previous.service_id !== serviceId) {
+        sendJson(res, 200, [bookingRpcRow(previousSlot, previous.service_id, null, 'idempotency_key_reused', false)])
+        return
+      }
+      sendJson(res, 200, [bookingRpcRow(previousSlot, previous.service_id, previous, null, true)])
+      return
+    }
+    if (!patient || !slot || slot.status !== 'open') {
+      sendJson(res, 200, [bookingRpcRow(slot ?? bookingSlots[0], serviceId, null, 'slot_unavailable', false)])
+      return
+    }
+    if (!bookingServices.some((candidate) => candidate.id === serviceId) || slot.provider_id !== E2_OTHER_PROVIDER_ID) {
+      sendJson(res, 200, [bookingRpcRow(slot, serviceId, null, 'service_not_offered', false)])
+      return
+    }
+    slot.status = 'booked'
+    const appointment = { id: randomUUID(), slot_id: slot.id, patient_id: patient.id, service_id: serviceId, idempotency_key: key }
+    bookingAppointments.push(appointment)
+    sendJson(res, 200, [bookingRpcRow(slot, serviceId, appointment, null, false)])
+  }
+
+  function handleBookingRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (url.pathname === '/rest/v1/services') {
+      sendPostgrestRows(req, res, bookingServices)
+      return
+    }
+    if (url.pathname === '/rest/v1/provider_services') {
+      const serviceId = queryValue(url, 'service_id')
+      const providerId = queryValue(url, 'provider_id')
+      const offerings = [
+        { serviceId: E2_BOOK_SERVICE_ID, provider: providers.find((candidate) => candidate.id === E2_OTHER_PROVIDER_ID)! },
+        { serviceId: E2_BOOK_SERVICE_ID, provider: providers.find((candidate) => candidate.id === E2_PROVIDER_ID)! },
+        { serviceId: '77887788-7788-4788-8788-778877887788', provider: providers.find((candidate) => candidate.id === E2_OTHER_PROVIDER_ID)! },
+      ]
+      const rows = offerings
+        .filter((offering) => offering.serviceId === serviceId && (providerId === null || offering.provider.id === providerId))
+        .map(({ provider }) => ({
+          providers: { id: provider.id, full_name: provider.full_name, time_zone: provider.time_zone },
+          provider_id: provider.id,
+        }))
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+    if (url.pathname === '/rest/v1/slots') {
+      const providerId = queryValue(url, 'provider_id')
+      const rows = bookingSlots.filter((slot) => slot.provider_id === providerId && slot.status === 'open')
+      sendPostgrestRows(req, res, rows)
+      return
+    }
   }
 
   function applyEqualityFilters<T extends Record<string, unknown>>(rows: T[], url: URL): T[] {
@@ -751,14 +925,77 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 405, { message: 'method not allowed' })
   }
 
-  async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST' || !authenticatedUser(req)) {
-      sendJson(res, req.method === 'POST' ? 403 : 405, { message: 'email outbox is not accessible' })
+  function filteredOutbox(url: URL): FakeEmailOutbox[] {
+    return emailOutbox.filter((row) => {
+      const id = queryValue(url, 'id')
+      const nextAttemptAt = queryValue(url, 'next_attempt_at')
+      const rawNextAttemptAt = url.searchParams.get('next_attempt_at')
+      const rawAttempts = url.searchParams.get('attempts')
+      const nextAttemptAtLte = rawNextAttemptAt?.startsWith('lte.') ? rawNextAttemptAt.slice(4) : null
+      const attemptsLt = rawAttempts?.startsWith('lt.') ? rawAttempts.slice(3) : null
+      if (id !== null && row.id !== id) return false
+      if (url.searchParams.get('sent_at') === 'is.null' && row.sent_at !== null) return false
+      if (nextAttemptAt !== null && row.next_attempt_at !== nextAttemptAt) return false
+      if (nextAttemptAtLte && row.next_attempt_at > nextAttemptAtLte) return false
+      if (attemptsLt && row.attempts >= Number(attemptsLt)) return false
+      return true
+    })
+  }
+
+  async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (req.method === 'POST' && authenticatedUser(req)) {
+      const body = await readJsonBody(req)
+      const now = new Date().toISOString()
+      emailOutbox.push({
+        id: randomUUID(),
+        recipient: String(body.recipient),
+        subject: String(body.subject),
+        body: String(body.body),
+        attempts: 0,
+        next_attempt_at: now,
+        sent_at: null,
+        last_error: null,
+        created_at: now,
+      })
+      res.writeHead(201)
+      res.end()
       return
     }
-    emailOutbox.push(await readJsonBody(req))
-    res.writeHead(201)
-    res.end()
+    if (!serviceRoleRequest(req)) {
+      sendJson(res, 403, { message: 'email outbox is not accessible' })
+      return
+    }
+    if (req.method === 'GET') {
+      const rows = filteredOutbox(url).toSorted((left, right) => left.created_at.localeCompare(right.created_at))
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req)
+      const matchingIds = new Set(filteredOutbox(url).map((row) => row.id))
+      emailOutbox = emailOutbox.map((row) => matchingIds.has(row.id) ? { ...row, ...body } as FakeEmailOutbox : row)
+      const updated = emailOutbox.filter((row) => matchingIds.has(row.id))
+      if (String(req.headers.prefer ?? '').includes('return=representation')) {
+        sendJson(res, 200, updated)
+      } else {
+        res.writeHead(204)
+        res.end()
+      }
+      return
+    }
+    sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleExpireShare(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const shareId = String(body.shareId)
+    const index = shareLinks.findIndex((link) => link.id === shareId)
+    if (index === -1) {
+      sendJson(res, 404, { message: 'share link not found' })
+      return
+    }
+    shareLinks[index] = { ...shareLinks[index]!, expires_at: new Date(Date.now() - 1).toISOString() }
+    sendJson(res, 200, { shareId })
   }
 
   function handleSeededRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -803,6 +1040,37 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
         res,
         callerProvider ? applyEqualityFilters(availabilityBlocks.filter((row) => row.provider_id === callerProvider.id), url) : [],
       )
+      return
+    }
+
+    if (url.pathname === '/rest/v1/slots') {
+      const startsAtGte = queryValue(url, 'starts_at', 'gte')
+      const startsAtLt = queryValue(url, 'starts_at', 'lt')
+      const rows = callerProvider ? applyEqualityFilters(scheduleSlots.filter((row) =>
+        row.provider_id === callerProvider.id &&
+        (startsAtGte === null || row.starts_at >= startsAtGte) &&
+        (startsAtLt === null || row.starts_at < startsAtLt)), url) : []
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+
+    if (url.pathname === '/rest/v1/appointments') {
+      if (!callerProvider) {
+        sendPostgrestRows(req, res, patientScopedRows(req, url, APPOINTMENTS))
+        return
+      }
+      const rows = applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => {
+        const patient = patients.find((candidate) => candidate.id === appointment.patient_id)
+        const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
+        return {
+          ...appointment,
+          patients: patient ? { patient_ref: patient.patient_ref } : null,
+          services: { name: appointment.service_name },
+          slots: slot ? { starts_at: slot.starts_at, ends_at: slot.ends_at } : null,
+          providers: { full_name: callerProvider.full_name, time_zone: callerProvider.time_zone },
+        }
+      })
+      sendPostgrestRows(req, res, rows)
       return
     }
 
@@ -1039,6 +1307,43 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     ])
   }
 
+  async function handleScheduleMutation(req: IncomingMessage, res: ServerResponse, rpc: 'transition' | 'cancel'): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
+    const appointmentId = String(body.p_appointment_id)
+    const appointment = scheduleAppointments.find((candidate) => candidate.id === appointmentId)
+    if (!callerProvider || !appointment || appointment.provider_id !== callerProvider.id || body.p_actor_user_id !== caller?.id) {
+      sendJson(res, 200, [{ result_error: 'invalid_transition' }])
+      return
+    }
+    const nextStatus = rpc === 'cancel' ? 'cancelled' : String(body.p_status)
+    const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
+    if (!slot) {
+      sendJson(res, 200, [{ result_error: 'invalid_transition' }])
+      return
+    }
+    const legal = (appointment.status === 'requested' && (nextStatus === 'confirmed' || nextStatus === 'cancelled')) ||
+      (appointment.status === 'confirmed' && (nextStatus === 'cancelled' || ((nextStatus === 'completed' || nextStatus === 'no_show') && new Date(slot.starts_at) < new Date())))
+    if (!legal) {
+      sendJson(res, 200, [{ result_error: rpc === 'cancel' ? 'not_reschedulable' : 'invalid_transition' }])
+      return
+    }
+    appointment.status = nextStatus as FakeScheduleAppointment['status']
+    if (nextStatus === 'cancelled') slot.status = 'open'
+    sendJson(res, 200, [{
+      result_error: null,
+      appointment_id: appointment.id,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      appointment_status: appointment.status,
+      provider_name: callerProvider.full_name,
+      provider_time_zone: callerProvider.time_zone,
+      service_name: appointment.service_name,
+      out_of_hours: appointment.out_of_hours,
+    }])
+  }
+
   function resetIdentityState(res: ServerResponse): void {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
     identityAttempts = []
@@ -1057,8 +1362,21 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     ]
     availabilityBlocks = []
     generatedSlotRangesByProvider = new Map()
+    scheduleSlots = [
+      { id: '26000000-0000-4000-8000-000000000001', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T14:00:00.000Z', ends_at: '2026-08-17T14:30:00.000Z', status: 'booked' },
+      { id: '26000000-0000-4000-8000-000000000002', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T15:00:00.000Z', ends_at: '2026-08-17T15:30:00.000Z', status: 'open' },
+      { id: '26000000-0000-4000-8000-000000000003', provider_id: E2_PROVIDER_ID, starts_at: '2026-08-17T16:00:00.000Z', ends_at: '2026-08-17T16:30:00.000Z', status: 'booked' },
+      { id: '26000000-0000-4000-8000-000000000004', provider_id: E2_PROVIDER_ID, starts_at: '2099-08-17T16:00:00.000Z', ends_at: '2099-08-17T16:30:00.000Z', status: 'booked' },
+    ]
+    scheduleAppointments = [
+      { id: '26000000-0000-4000-8000-000000000101', slot_id: scheduleSlots[0]!.id, provider_id: E2_PROVIDER_ID, patient_id: SEEDED_PATIENT.id, service_name: 'MRI', status: 'requested', out_of_hours: false },
+      { id: '26000000-0000-4000-8000-000000000102', slot_id: scheduleSlots[2]!.id, provider_id: E2_PROVIDER_ID, patient_id: OTHER_PATIENT.id, service_name: 'Ultrasound', status: 'cancelled', out_of_hours: true },
+      { id: '26000000-0000-4000-8000-000000000103', slot_id: scheduleSlots[3]!.id, provider_id: E2_PROVIDER_ID, patient_id: SEEDED_PATIENT.id, service_name: 'MRI', status: 'confirmed', out_of_hours: false },
+    ]
     sendJson(res, 200, { providerId: E2_PROVIDER_ID })
   }
+
+  resetBookingState()
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://fake-auth-server.local')
@@ -1078,12 +1396,38 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       resetIdentityState(res)
       return
     }
+    if (req.method === 'POST' && url.pathname === '/__test__/expire-share') {
+      void handleExpireShare(req, res)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/__test__/seed-admin') {
       void handleSeedAdmin(req, res)
       return
     }
     if (req.method === 'POST' && url.pathname === '/__test__/reset-availability') {
       resetAvailabilityState(res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/reset-booking') {
+      resetBookingState()
+      sendJson(res, 200, { slots: bookingSlots.length })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/__test__/booking-state') {
+      sendJson(res, 200, { slots: bookingSlots, appointments: bookingAppointments })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/__test__/book-slot') {
+      void readJsonBody(req).then((body) => {
+        const slot = bookingSlots.find((candidate) => candidate.id === body.slotId)
+        if (!slot || slot.status !== 'open') {
+          sendJson(res, 409, { error: 'slot_unavailable' })
+          return
+        }
+        slot.status = 'booked'
+        bookingAppointments.push({ id: randomUUID(), slot_id: slot.id, patient_id: OTHER_PATIENT.id, service_id: E2_BOOK_SERVICE_ID, idempotency_key: randomUUID() })
+        sendJson(res, 201, { appointmentCount: bookingAppointments.length })
+      })
       return
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
@@ -1132,7 +1476,19 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (url.pathname === '/rest/v1/email_outbox') {
-      void handleEmailOutbox(req, res)
+      void handleEmailOutbox(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/appointments' && req.method === 'GET' && serviceRoleRequest(req)) {
+      sendJson(res, 200, [])
+      return
+    }
+    if (
+      url.pathname === '/rest/v1/services' ||
+      url.pathname === '/rest/v1/provider_services' ||
+      (url.pathname === '/rest/v1/slots' && queryValue(url, 'status') === 'open')
+    ) {
+      handleBookingRead(req, res, url)
       return
     }
     if (
@@ -1141,6 +1497,8 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       url.pathname === '/rest/v1/working_hours' ||
       url.pathname === '/rest/v1/availability_blocks' ||
       url.pathname === '/rest/v1/cine_frames' ||
+      url.pathname === '/rest/v1/slots' ||
+      url.pathname === '/rest/v1/appointments' ||
       url.pathname === '/rest/v1/reports' ||
       SEEDED_PATIENT_TABLES.has(url.pathname)
     ) {
@@ -1161,6 +1519,18 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
       void handleApplyAvailability(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/book_appointment') {
+      void handleBookAppointment(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/transition_appointment') {
+      void handleScheduleMutation(req, res, 'transition')
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/cancel_appointment') {
+      void handleScheduleMutation(req, res, 'cancel')
       return
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {

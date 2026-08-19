@@ -10,7 +10,7 @@ export default defineConfig({
   projects: [
     {
       name: 'product',
-      testIgnore: /e[0124]-wiring\.spec\.ts/,
+      testIgnore: /e[01245]-wiring\.spec\.ts/,
     },
     {
       // The E2 fixture exposes mutable identity and audit state. Running it
@@ -30,6 +30,10 @@ export default defineConfig({
     {
       name: 'e8-wiring',
       testMatch: /e8-wiring\.spec\.ts/,
+    },
+    {
+      name: 'e5-wiring',
+      testMatch: /e5-wiring\.spec\.ts/,
     },
     {
       name: 'certification',
