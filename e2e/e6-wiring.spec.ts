@@ -18,11 +18,16 @@ import {
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
   releaseIdentityFixtureLock,
 } from './fixtures/identity-fixture-lock'
+import { toLocal, toRfc3339, zonedTimeToInstant } from '../lib/time/zones'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
+const PROVIDER_TIME_ZONE = 'America/Chicago'
+const today = new Date(`${toLocal(PROVIDER_TIME_ZONE, new Date()).date}T00:00:00Z`)
+today.setUTCDate(today.getUTCDate() + ((9 - today.getUTCDay()) % 7 || 7))
+const blockDate = today.toISOString().slice(0, 10)
 const BLOCK = {
-  startsAt: '2026-08-18T13:00:00-05:00',
-  endsAt: '2026-08-18T14:00:00-05:00',
+  startsAt: toRfc3339(PROVIDER_TIME_ZONE, zonedTimeToInstant(PROVIDER_TIME_ZONE, blockDate, '13:00')),
+  endsAt: toRfc3339(PROVIDER_TIME_ZONE, zonedTimeToInstant(PROVIDER_TIME_ZONE, blockDate, '14:00')),
   reason: 'E6 in-window meeting',
 } as const
 const WIDE_HOURS = [
