@@ -143,6 +143,18 @@ type FakeShareLink = {
   created_at: string
 }
 
+type FakeEmailOutbox = {
+  id: string
+  recipient: string
+  subject: string
+  body: string
+  attempts: number
+  next_attempt_at: string
+  sent_at: string | null
+  last_error: string | null
+  created_at: string
+}
+
 const SEEDED_PATIENT: FakePatient = {
   id: '44714471-4471-4471-8471-447144714471',
   user_id: null,
@@ -186,6 +198,7 @@ export const E3_MISSING_CINE_FRAME_STORAGE_KEY = E3_CINE_FRAME_STORAGE_KEYS[E3_M
 export const E4_CANCELLED_VISIT_ID = '77667766-7766-4766-8766-776677667766'
 export const E4_CANCELLED_STUDY_ID = '99889988-9988-4988-8988-998899889988'
 export const E4_PRELIMINARY_REPORT_ID = 'bd88bd88-bd88-4d88-8d88-bd88bd88bd88'
+export const E5_CRON_SECRET = 'e5-test-cron-secret'
 
 const PROVIDERS: FakeProvider[] = [
   {
@@ -425,7 +438,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
   let shareLinks: FakeShareLink[] = []
-  let emailOutbox: Record<string, unknown>[] = []
+  let emailOutbox: FakeEmailOutbox[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
     { provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' },
@@ -751,14 +764,77 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 405, { message: 'method not allowed' })
   }
 
-  async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST' || !authenticatedUser(req)) {
-      sendJson(res, req.method === 'POST' ? 403 : 405, { message: 'email outbox is not accessible' })
+  function filteredOutbox(url: URL): FakeEmailOutbox[] {
+    return emailOutbox.filter((row) => {
+      const id = queryValue(url, 'id')
+      const nextAttemptAt = queryValue(url, 'next_attempt_at')
+      const rawNextAttemptAt = url.searchParams.get('next_attempt_at')
+      const rawAttempts = url.searchParams.get('attempts')
+      const nextAttemptAtLte = rawNextAttemptAt?.startsWith('lte.') ? rawNextAttemptAt.slice(4) : null
+      const attemptsLt = rawAttempts?.startsWith('lt.') ? rawAttempts.slice(3) : null
+      if (id !== null && row.id !== id) return false
+      if (url.searchParams.get('sent_at') === 'is.null' && row.sent_at !== null) return false
+      if (nextAttemptAt !== null && row.next_attempt_at !== nextAttemptAt) return false
+      if (nextAttemptAtLte && row.next_attempt_at > nextAttemptAtLte) return false
+      if (attemptsLt && row.attempts >= Number(attemptsLt)) return false
+      return true
+    })
+  }
+
+  async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (req.method === 'POST' && authenticatedUser(req)) {
+      const body = await readJsonBody(req)
+      const now = new Date().toISOString()
+      emailOutbox.push({
+        id: randomUUID(),
+        recipient: String(body.recipient),
+        subject: String(body.subject),
+        body: String(body.body),
+        attempts: 0,
+        next_attempt_at: now,
+        sent_at: null,
+        last_error: null,
+        created_at: now,
+      })
+      res.writeHead(201)
+      res.end()
       return
     }
-    emailOutbox.push(await readJsonBody(req))
-    res.writeHead(201)
-    res.end()
+    if (!serviceRoleRequest(req)) {
+      sendJson(res, 403, { message: 'email outbox is not accessible' })
+      return
+    }
+    if (req.method === 'GET') {
+      const rows = filteredOutbox(url).toSorted((left, right) => left.created_at.localeCompare(right.created_at))
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+    if (req.method === 'PATCH') {
+      const body = await readJsonBody(req)
+      const matchingIds = new Set(filteredOutbox(url).map((row) => row.id))
+      emailOutbox = emailOutbox.map((row) => matchingIds.has(row.id) ? { ...row, ...body } as FakeEmailOutbox : row)
+      const updated = emailOutbox.filter((row) => matchingIds.has(row.id))
+      if (String(req.headers.prefer ?? '').includes('return=representation')) {
+        sendJson(res, 200, updated)
+      } else {
+        res.writeHead(204)
+        res.end()
+      }
+      return
+    }
+    sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleExpireShare(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const shareId = String(body.shareId)
+    const index = shareLinks.findIndex((link) => link.id === shareId)
+    if (index === -1) {
+      sendJson(res, 404, { message: 'share link not found' })
+      return
+    }
+    shareLinks[index] = { ...shareLinks[index]!, expires_at: new Date(Date.now() - 1).toISOString() }
+    sendJson(res, 200, { shareId })
   }
 
   function handleSeededRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -1078,6 +1154,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       resetIdentityState(res)
       return
     }
+    if (req.method === 'POST' && url.pathname === '/__test__/expire-share') {
+      void handleExpireShare(req, res)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/__test__/seed-admin') {
       void handleSeedAdmin(req, res)
       return
@@ -1132,7 +1212,11 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (url.pathname === '/rest/v1/email_outbox') {
-      void handleEmailOutbox(req, res)
+      void handleEmailOutbox(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/appointments' && req.method === 'GET' && serviceRoleRequest(req)) {
+      sendJson(res, 200, [])
       return
     }
     if (
