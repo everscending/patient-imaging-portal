@@ -94,7 +94,7 @@ test.describe.serial('JOR-253 /book', () => {
     await page.getByTestId('slot-item').first().click()
     await expect(page.getByTestId('booking-success')).toHaveCount(0)
     await page.getByTestId('book-submit').click()
-    await expect(page.getByRole('alert')).toContainText('This confirmation key was already used. Choose a slot again.')
+    await expect(page.locator('.pip-error')).toContainText('This confirmation key was already used. Choose a slot again.')
     await expect(page.getByTestId('booking-conflict')).toHaveCount(0)
     await expect(page.getByTestId('booking-success')).toHaveCount(0)
     expect((await bookingState(page.request)).appointments).toHaveLength(1)
