@@ -1948,14 +1948,16 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test --project=e2-wiring` (the serial E2 project depends on the parallel product project) + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, and E4 |
 
-The Playwright suite has three execution classes. The `product` project contains
-the ordinary browser checks. The `e2-wiring` project depends on `product`, so E2
-remains in the cumulative `ui` gate but runs after ordinary product tests stop
-using the fixture's shared audit state. The `certification` project contains the
-expensive E0/E1 fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
-`main`, nightly, or by manual dispatch. E0 invokes the cumulative `ui` gate once
+The Playwright suite has six projects. `product` contains ordinary browser
+checks. `e2-wiring` depends on `product`, so E2 runs after ordinary product tests
+stop using the fixture's shared audit state. `e4-wiring`, `e5-wiring`, and
+`e8-wiring` are focused wiring projects invoked separately by the `ui` gate;
+`book.spec.ts` and `provider-schedule.spec.ts` are focused `product` entries.
+`certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
+from `.github/workflows/certification.yml` on `main`, nightly, or by manual
+dispatch. E0 invokes the cumulative `ui` gate once
 inside its clean checkout and confirms the emitted step list contains TypeScript,
 ESLint, unit, integration, product Playwright, and the E2 report validation; it
 never serially invokes the three cumulative tiers or includes itself recursively.
