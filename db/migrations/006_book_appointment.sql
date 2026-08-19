@@ -11,6 +11,11 @@ exception when duplicate_object then
 end
 $$;
 
+-- PostgreSQL 16 no longer gives CREATEROLE users implicit SET permission on
+-- roles they create. Supabase's migration role needs this before transferring
+-- ownership of the SECURITY DEFINER functions below.
+grant booking_executor to current_user;
+
 grant usage on schema public to booking_executor;
 grant select on slots, appointments, provider_services, providers, services,
                 patients to booking_executor;
@@ -235,6 +240,8 @@ begin
    where a.id = v_appointment_id;
 end $$;
 
+grant create on schema public to booking_executor;
 alter function book_appointment(uuid,uuid,uuid,text,uuid) owner to booking_executor;
+revoke create on schema public from booking_executor;
 revoke all on function book_appointment(uuid,uuid,uuid,text,uuid) from public;
 grant execute on function book_appointment(uuid,uuid,uuid,text,uuid) to app_user;

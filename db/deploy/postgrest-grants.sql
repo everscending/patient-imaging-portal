@@ -13,3 +13,6 @@ revoke all on all tables in schema public from authenticated;
 revoke all on all sequences in schema public from authenticated;
 revoke all on all functions in schema public from authenticated;
 grant app_user to authenticated with inherit true, set false;
+grant execute on function current_patient_id() to app_user;
+grant execute on function current_provider_id() to app_user;
+grant execute on function is_admin() to app_user;
