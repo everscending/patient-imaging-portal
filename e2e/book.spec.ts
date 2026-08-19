@@ -100,6 +100,14 @@ test.describe.serial('JOR-253 /book', () => {
     expect((await bookingState(page.request)).appointments).toHaveLength(1)
   })
 
+  test('confirmTransportFailureRendersStableError', async ({ page }) => {
+    await chooseFirstSlot(page)
+    await page.route('**/api/appointments', (route) => route.abort())
+    await page.getByTestId('book-submit').click()
+    await expect(page.getByText('Could not confirm this appointment.', { exact: true })).toHaveAttribute('role', 'alert')
+    await expect(page.getByTestId('booking-success')).toHaveCount(0)
+  })
+
   // Mandatory adversarial: Availability regeneration after listing: no crash or booking nonexistent slot.
   test('availabilityRegenerationAfterListingDoesNotBookNonexistentSlot', async ({ page }) => {
     await chooseFirstSlot(page)
