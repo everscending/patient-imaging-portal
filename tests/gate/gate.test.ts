@@ -73,6 +73,14 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     )
+    expect(ui).toContain('npx playwright test --project=e4-wiring')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts',
+    )
+    expect(ui).toContain('npx playwright test e2e/e5-wiring.spec.ts --project=e5-wiring')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts',
+    )
   })
 })
 
@@ -166,17 +174,25 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
     )
     expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts',
+    )
+    expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
+    )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts',
     )
     expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
   })
 
   test('mutable fake-server projects run serially and E2 runs after product', () => {
     expect(source).toMatch(/defineConfig\(\{\s*workers:\s*1,/)
-    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[01245\]-wiring\\\.spec\\\.ts\//)
     expect(source).toMatch(
       /name:\s*'e2-wiring'[\s\S]*testMatch:\s*\/e2-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
     )
+    expect(source).toMatch(/name:\s*'e4-wiring'[\s\S]*testMatch:\s*\/e4-wiring\\\.spec\\\.ts\//)
+    expect(source).toMatch(/name:\s*'e5-wiring'[\s\S]*testMatch:\s*\/e5-wiring\\\.spec\\\.ts\//)
   })
 })
 
