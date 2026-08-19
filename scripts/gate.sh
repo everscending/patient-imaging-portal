@@ -84,8 +84,10 @@ run_ui() {
   # the UI tier, together with the report evidence consumed by the gate.
   step PLAYWRIGHT_BOOK npx playwright test e2e/book.spec.ts --project=product
   step PLAYWRIGHT_BOOK_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts
+  step PLAYWRIGHT_PROVIDER_SCHEDULE npx playwright test e2e/provider-schedule.spec.ts --project=product
+  step PLAYWRIGHT_PROVIDER_SCHEDULE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts
   # e2-wiring depends on product, so this invocation runs the parallel product
-  # suite first and the shared-state E2 proof after it.
+  # suite first and the shared-state E2 proof after the ticket-specific proofs.
   step PLAYWRIGHT npx playwright test --project=e2-wiring
   step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
 }
