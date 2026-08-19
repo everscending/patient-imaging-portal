@@ -14,8 +14,8 @@
 //     -> shareRecipientGrantPersistsExactlyOneAuditEvent
 //   unauthenticated share-recipient denial persists exactly one row
 //     -> shareRecipientDenialPersistsExactlyOneAuditEvent
-//   unknown and inactive share-recipient denials persist exactly one row
-//     -> unknownShareRecipientDenialPersistsExactlyOneAuditEvent
+//   unresolved share-token and inactive recipient denials persist exactly one row
+//     -> unresolvedShareTokenDenialPersistsExactlyOneAuditEvent
 //     -> inactiveShareRecipientDenialPersistsExactlyOneAuditEvent
 //   authenticated audit behavior stays caller-scoped
 //     -> authenticatedCallerAuditPersistsExactlyOnceThroughCallerScopedClient
@@ -238,18 +238,18 @@ describe('audit persistence across the real PHI guard and centralized writer', (
     expect(writeScopes).toEqual(['service'])
   })
 
-  test('unknownShareRecipientDenialPersistsExactlyOneAuditEvent', async function unknownShareRecipientDenialPersistsExactlyOneAuditEvent() {
+  test('unresolvedShareTokenDenialPersistsExactlyOneAuditEvent', async function unresolvedShareTokenDenialPersistsExactlyOneAuditEvent() {
     setCallerHasSession(false)
 
     const result = await guardPhiAccess(
-      { kind: 'share_recipient', shareLinkId: null },
+      { kind: 'anonymous' },
       { kind: 'share_link', id: null },
       'share.use',
     )
 
     expect(result).toEqual({ ok: false, status: 404 })
     expect(auditRows).toEqual([{
-      actor_kind: 'share_recipient', actor_ref: null, action: 'share.use', target_kind: 'share_link', target_id: null, outcome: 'denied', detail: null,
+      actor_kind: 'anonymous', actor_ref: null, action: 'share.use', target_kind: 'share_link', target_id: null, outcome: 'denied', detail: null,
     }])
     expect(writeScopes).toEqual(['service'])
   })

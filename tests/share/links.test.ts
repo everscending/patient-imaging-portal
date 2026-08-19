@@ -486,7 +486,7 @@ describe('share-token resolution', () => {
     expect(signMock).not.toHaveBeenCalled()
     expect(guardMock).toHaveBeenCalledTimes(3)
     expect(guardMock).toHaveBeenNthCalledWith(1,
-      { kind: 'share_recipient', shareLinkId: null },
+      { kind: 'anonymous' },
       { kind: 'share_link', id: null },
       'share.use',
     )

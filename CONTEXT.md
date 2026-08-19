@@ -64,7 +64,8 @@ says `signed`.
 |------|---------|
 | **Share link** | A time-limited, revocable, unguessable URL granting one named recipient access to one image or one report (FR-5, FR-8). |
 | **Share token** | The secret inside a share link. Stored only as a hash; the raw token exists in the email and nowhere else. |
-| **Unresolved share token** | A well-formed share token that matches no persisted share link. It is not a recipient and has no share-link or resource identifier; its denied use is audited without storing the raw token. |
+| **Unresolved share token** | A well-formed share token that matches no persisted share link. Its caller is anonymous, not a recipient, and its denied use is audited without storing the raw token. |
+| **Anonymous caller** | A caller with neither an authenticated account nor a persisted share link. |
 | **Expiry** | The time after which a share link stops working on its own. |
 | **Revocation** | The sharer explicitly ending a share link before its expiry. |
 | **Recipient** | The person a share link was sent to. Not an account, and never granted more than the one resource shared. |
@@ -95,7 +96,7 @@ available" response, never the content, never a hint that it once existed
 |------|---------|
 | **PHI** | Protected Health Information: patient identity, images, cine clips, frames, reports, and appointments with named providers. Everything in the tables above except provider working hours is PHI. |
 | **Audit event** | One append-only record of a PHI access or a booking/status change, carrying actor, action, target and timestamp (SEC-4). Never updated, never deleted. |
-| **Actor** | Who caused an audit event — an account, or a share-link recipient identified by the token's record. |
+| **Actor** | Who caused an audit event — an account, a share-link recipient identified by the link's record, an anonymous caller, or the system for scheduled work. |
 | **Target** | What the event was about, recorded as an identifier reference. Never the content itself, and never a name or date of birth (SEC-6). |
 
 ---

@@ -11,7 +11,8 @@ export type Actor =
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
-  | { kind: 'share_recipient'; shareLinkId: string | null }
+  | { kind: 'share_recipient'; shareLinkId: string }
+  | { kind: 'anonymous' }
 
 export type PhiTarget =
   | { kind: 'study'; id: string }
@@ -33,7 +34,7 @@ function assertNever(value: never): never {
   throw new Error(`lib/access/guard.ts: unreachable variant ${JSON.stringify(value)}`)
 }
 
-function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipient'; actorRef: string | null } {
+function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipient' | 'anonymous'; actorRef: string | null } {
   switch (actor.kind) {
     case 'patient':
     case 'provider':
@@ -44,6 +45,8 @@ function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipie
       return { actorKind: 'account', actorRef: null }
     case 'share_recipient':
       return { actorKind: 'share_recipient', actorRef: actor.shareLinkId }
+    case 'anonymous':
+      return { actorKind: 'anonymous', actorRef: null }
     default:
       return assertNever(actor)
   }
@@ -295,8 +298,8 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
 // legal service-role uses. The token resolver owns the raw-token-to-link-id
 // match; this guard re-checks that the link is active and names the exact
 // target before granting access (FR-9).
-async function decideShareRecipient(shareLinkId: string | null, target: PhiTarget): Promise<GuardResult> {
-  if (!shareLinkId || (target.kind !== 'image' && target.kind !== 'report')) return { ok: false, status: 404 }
+async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Promise<GuardResult> {
+  if (target.kind !== 'image' && target.kind !== 'report') return { ok: false, status: 404 }
 
   const link = await fetchRow<ShareLinkRow>(serviceClient(), 'share_links', 'id, patient_id, image_id, report_id, expires_at, revoked_at', [['id', shareLinkId]])
   if (!link) return { ok: false, status: 404 }
@@ -315,6 +318,8 @@ type AccessDecision = {
 }
 
 async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> {
+  if (actor.kind === 'anonymous') return { result: { ok: false, status: 404 } }
+
   if (actor.kind === 'share_recipient') {
     try {
       return { result: await decideShareRecipient(actor.shareLinkId, target) }

@@ -64,7 +64,7 @@ async function guardUnavailableShareAccess(link: LinkRow | null): Promise<{ ok: 
     : link?.report_id
       ? { kind: 'report' as const, id: link.report_id }
       : { kind: 'share_link' as const, id: null }
-  await guardPhiAccess({ kind: 'share_recipient', shareLinkId: link?.id ?? null }, target, 'share.use')
+  await guardPhiAccess(link ? { kind: 'share_recipient', shareLinkId: link.id } : { kind: 'anonymous' }, target, 'share.use')
   return { ok: false }
 }
 

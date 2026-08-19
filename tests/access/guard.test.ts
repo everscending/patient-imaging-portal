@@ -257,7 +257,7 @@ function expectOk(result: GuardResult): { ok: true; patientId: string | null } {
 }
 
 async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
-  if (actor.kind !== 'share_recipient') setSessionUserId(actor.userId)
+  if (actor.kind !== 'share_recipient' && actor.kind !== 'anonymous') setSessionUserId(actor.userId)
   return guardPhiAccessRaw(actor, target, action)
 }
 
@@ -687,7 +687,8 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
-  | { kind: 'share_recipient'; shareLinkId: string | null }`,
+  | { kind: 'share_recipient'; shareLinkId: string }
+  | { kind: 'anonymous' }`,
     )
     expect(source).toContain(
       `export type PhiTarget =
