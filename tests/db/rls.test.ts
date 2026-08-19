@@ -1,20 +1,13 @@
-// Applies db/migrations/001-003 to a fresh pip_run_<random> database
+// Applies every forward migration to a fresh pip_run_<random> database
 // (ADR-0013) and proves ARCHITECTURE.md §4's row-level security actually
 // took: the enabled-check, every read and write policy, and the grant
 // catalogue, all asserted as `app_user` — never as the migration-running
 // superuser/owner, which bypasses RLS entirely and would prove nothing
 // (§4, and this file's own ownerBypassSeesAllPatientsProvingOwnerRunsAreNotEvidence).
 //
-// `tests/setup/postgres.ts` stubs `auth.uid()` to a hardcoded `null::uuid`
-// for every run in the shared container — correct for 001/002, which never
-// call it, but current_provider_id() and is_admin() (§4) both key off it,
-// and a hardcoded null can never resolve to a real provider or admin no
-// matter what a test sets. This file's own migrated database (not the
-// shared stub) redefines auth.uid() once, in beforeAll, to read the same
-// `request.jwt.claim.sub` setting current_patient_id() already reads — the
-// same shape Supabase's real auth.uid() takes. Session-scoped to this run's
-// throwaway database only; 001/002's tests, and their stubbed auth.uid(),
-// are untouched.
+// Hosted PostgREST supplies the session JWT through `request.jwt.claims`.
+// Every app_user assertion below sets that exact JSON shape so this suite
+// exercises the same identity boundary as production.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -63,21 +56,11 @@ function futureTs(hoursFromNow: number): string {
 // helper — `set role app_user` first, always — which is what
 // appUserIsActiveRoleNeitherSuperuserNorTableOwner below asserts actually
 // puts you in app_user's seat rather than leaving you as the connecting
-// superuser. `claimUserId` is the JWT `sub`; `null` means no claim at all
-// (the anonymous-session case), not an empty string, which would exercise a
-// different branch of the nullif() in current_patient_id().
+// superuser. `claimUserId` is the JWT `sub`; `null` means no claims setting at
+// all (the anonymous-session case).
 function appUserScript(claimUserId: string | null, sql: string): string {
-  const claim = claimUserId !== null ? `set request.jwt.claim.sub = '${claimUserId}';` : ''
+  const claim = claimUserId !== null ? `set request.jwt.claims = '${JSON.stringify({ sub: claimUserId })}';` : ''
   return `set role app_user; ${claim} ${sql}`
-}
-
-function installSessionScopedAuthUid(dbName: string): void {
-  psql(
-    dbName,
-    `create or replace function auth.uid() returns uuid
-     language sql stable
-     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
-  )
 }
 
 // §4 pins RLS + a policy on exactly 14 tables (13 in the enable block plus
@@ -233,8 +216,7 @@ let mainRun: Run
 
 beforeAll(async () => {
   container = await ensureContainer()
-  mainRun = await startRun(container) // default dir: db/migrations, i.e. 001, 002, then 003
-  installSessionScopedAuthUid(mainRun.dbName)
+  mainRun = await startRun(container)
 }, 60_000)
 
 afterAll(async () => {
@@ -524,7 +506,7 @@ describe('AC + adversarial: FR-7 — a patient never sees a preliminary report, 
   })
 })
 
-describe('AC: a session with no request.jwt.claim.sub reads zero rows and raises no error', () => {
+describe('AC: a session with no request.jwt.claims reads zero rows and raises no error', () => {
   test('noJwtClaimReadsZeroRowsNoError', function noJwtClaimReadsZeroRowsNoError() {
     const userA = insertAuthUser(mainRun.dbName)
     insertPatient(mainRun.dbName, userA)

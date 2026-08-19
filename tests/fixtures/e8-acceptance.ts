@@ -457,7 +457,7 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
       run,
       `create or replace function auth.uid() returns uuid
        language sql stable
-       as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
+       as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`,
     )
     const rowSet = await seedDatabase(run, new Date())
     boundary = await startSupabaseBoundary(run)

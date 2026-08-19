@@ -363,7 +363,7 @@ function installSessionScopedAuthUid(dbName: string): void {
     dbName,
     `create or replace function auth.uid() returns uuid
      language sql stable
-     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
+     as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`,
   )
 }
 

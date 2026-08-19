@@ -39,6 +39,7 @@ async function applyAvailability(input: {
   const blocks = sqlLiteral(JSON.stringify(input.blocks))
   const providerId = sqlLiteral(input.providerId)
   const actorUserId = sqlLiteral(input.actorUserId)
+  const actorClaims = sqlLiteral(JSON.stringify({ sub: input.actorUserId }))
   const startsAt = sqlLiteral(input.startsAt)
   const endsAt = sqlLiteral(input.endsAt)
   const appointmentId = sqlLiteral(input.appointmentId)
@@ -55,7 +56,7 @@ declare
   appointment_slot uuid;
   appointment_status appointment_status;
 begin
-  perform set_config('request.jwt.claim.sub', ${actorUserId}, true);
+  perform set_config('request.jwt.claims', ${actorClaims}, true);
   select * into availability_result
     from apply_provider_availability(
       ${providerId}::uuid,

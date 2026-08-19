@@ -46,7 +46,7 @@ async function psqlAsync(sql: string): Promise<string> {
 
 function appUserSql(actorUserId: string, sql: string): string {
   return `set role app_user;
-          set request.jwt.claim.sub = ${sqlLiteral(actorUserId)};
+          set request.jwt.claims = ${sqlLiteral(JSON.stringify({ sub: actorUserId }))};
           set application_name = ${sqlLiteral(rpcApplicationName)};
           ${sql}`
 }
@@ -292,7 +292,7 @@ beforeAll(async () => {
   run = await startRun(container)
   psql(`create or replace function auth.uid() returns uuid
         language sql stable
-        as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`)
+        as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`)
 }, 120_000)
 
 afterAll(async () => {

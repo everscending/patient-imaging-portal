@@ -35,7 +35,7 @@ function installSessionScopedAuthUid(dbName: string): void {
   psql(
     dbName,
     `create or replace function auth.uid() returns uuid language sql stable
-     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
+     as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`,
   )
 }
 
@@ -112,7 +112,7 @@ describe('mandatory adversarial: out-of-hours seed fixture', () => {
     expect(retainedHours).toBeGreaterThan(0)
     psqlScript(run.dbName, `
       begin;
-      select set_config('request.jwt.claim.sub', '${fixtureActor}', true);
+      select set_config('request.jwt.claims', '${JSON.stringify({ sub: fixtureActor })}', true);
       select * from apply_provider_availability(
         '${fixtureProvider}', '${fixtureActor}', 30,
         '[{"weekday":1,"startsLocal":"09:00:00","endsLocal":"12:00:00"}]'::jsonb,

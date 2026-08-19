@@ -29,7 +29,7 @@ const PLATFORM_STUB = `
 create schema storage;
 create table storage.buckets (id text primary key, name text not null, public boolean not null default false);
 create or replace function auth.uid() returns uuid language sql stable
-as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     create role anon nologin noinherit;
@@ -62,7 +62,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('9')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('10')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')

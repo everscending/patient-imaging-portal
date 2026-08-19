@@ -23,6 +23,7 @@ describe('deployed schema provisioning', () => {
       '006_book_appointment.sql',
       '007_reschedule_cancel_appointments.sql',
       '008_transition_appointment.sql',
+      '009_hosted_jwt_claims.sql',
     ])
 
     const program = buildMigrationProgram(files)

@@ -92,20 +92,20 @@ function expectRawFailure(dbName: string, sqlScript: string, sqlstate: string): 
 // `set role app_user` first, always. `claimUserId` is the JWT `sub`; `null`
 // means no claim at all.
 function appUserScript(claimUserId: string | null, sql: string): string {
-  const claim = claimUserId !== null ? `set request.jwt.claim.sub = '${claimUserId}';` : ''
+  const claim = claimUserId !== null ? `set request.jwt.claims = '${JSON.stringify({ sub: claimUserId })}';` : ''
   return `set role app_user; ${claim} ${sql}`
 }
 
 // tests/setup/postgres.ts stubs auth.uid() to a hardcoded null for every run
 // in the shared container — this run's own throwaway database redefines it
-// once, session-scoped, to read the same request.jwt.claim.sub setting
+// once, session-scoped, to read the same request.jwt.claims setting
 // current_patient_id() already reads (tests/db/rls.test.ts's own pattern).
 function installSessionScopedAuthUid(dbName: string): void {
   psql(
     dbName,
     `create or replace function auth.uid() returns uuid
      language sql stable
-     as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
+     as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`,
   )
 }
 
