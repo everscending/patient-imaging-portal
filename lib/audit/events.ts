@@ -165,23 +165,6 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
   return appendAuditEvent(input, false)
 }
 
-/** Audits a bearer share-token refusal before a PHI target can reach the
- * guard. Unknown tokens intentionally have neither an actor nor target id. */
-export async function recordUnavailableShareAccess(input: {
-  actorRef: string | null
-  targetKind: 'share_link' | 'image' | 'report'
-  targetId: string | null
-}): Promise<void> {
-  return appendAuditEvent({
-    actorKind: 'share_recipient',
-    actorRef: input.actorRef,
-    action: 'share.use',
-    targetKind: input.targetKind,
-    targetId: input.targetId,
-    outcome: 'denied',
-  }, false)
-}
-
 /**
  * The guard-only entry point supplies trustworthy provenance for the approved
  * audit-only fallback. Domain modules cannot gain service-role writes merely

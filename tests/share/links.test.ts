@@ -16,7 +16,6 @@ const {
   cookieMock,
   callerIdMock,
   errorResponseMock,
-  shareDenialMock,
 } = vi.hoisted(() => ({
   serviceMock: vi.fn(),
   anonMock: vi.fn(),
@@ -25,7 +24,6 @@ const {
   cookieMock: vi.fn(),
   callerIdMock: vi.fn(),
   errorResponseMock: vi.fn(),
-  shareDenialMock: vi.fn(),
 }))
 
 vi.mock('../../lib/db/client', () => ({ serviceClient: serviceMock, anonClient: anonMock }))
@@ -40,7 +38,6 @@ vi.mock('../../lib/access/identity', () => ({
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
-vi.mock('../../lib/audit/events', () => ({ recordUnavailableShareAccess: shareDenialMock }))
 vi.mock('../../lib/validation/envelope', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/validation/envelope')>()
   errorResponseMock.mockImplementation(actual.errorResponse)
@@ -142,7 +139,6 @@ beforeEach(() => {
   cookieMock.mockReset()
   callerIdMock.mockReset()
   errorResponseMock.mockClear()
-  shareDenialMock.mockReset()
   cookieMock.mockResolvedValue({ get: () => ({ value: 'caller-token' }) })
   callerIdMock.mockResolvedValue(USER_ID)
   guardMock.mockResolvedValue({ ok: true, patientId: PATIENT_ID })
@@ -488,11 +484,22 @@ describe('share-token resolution', () => {
       JSON.stringify({ error: 'share_unavailable', message: 'This link is no longer available.' }),
     ]))
     expect(signMock).not.toHaveBeenCalled()
-    expect(guardMock).not.toHaveBeenCalled()
-    expect(shareDenialMock).toHaveBeenCalledTimes(3)
-    expect(shareDenialMock).toHaveBeenNthCalledWith(1, { actorRef: null, targetKind: 'share_link', targetId: null })
-    expect(shareDenialMock).toHaveBeenNthCalledWith(2, { actorRef: LINK_ID, targetKind: 'image', targetId: IMAGE_ID })
-    expect(shareDenialMock).toHaveBeenNthCalledWith(3, { actorRef: LINK_ID, targetKind: 'image', targetId: IMAGE_ID })
+    expect(guardMock).toHaveBeenCalledTimes(3)
+    expect(guardMock).toHaveBeenNthCalledWith(1,
+      { kind: 'share_recipient', shareLinkId: null },
+      { kind: 'share_link', id: null },
+      'share.use',
+    )
+    expect(guardMock).toHaveBeenNthCalledWith(2,
+      { kind: 'share_recipient', shareLinkId: LINK_ID },
+      { kind: 'image', id: IMAGE_ID },
+      'share.use',
+    )
+    expect(guardMock).toHaveBeenNthCalledWith(3,
+      { kind: 'share_recipient', shareLinkId: LINK_ID },
+      { kind: 'image', id: IMAGE_ID },
+      'share.use',
+    )
   })
 
   test('revocationBetweenResolutionAndDisclosureNeverReturnsImageOrReportContent', async () => {
@@ -625,7 +632,6 @@ describe('share-token resolution', () => {
     })
     expect(response.status).toBe(200)
     expect(guardMock).toHaveBeenCalledOnce()
-    expect(shareDenialMock).not.toHaveBeenCalled()
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'share_recipient', shareLinkId: LINK_ID },
       { kind: 'image', id: IMAGE_ID },

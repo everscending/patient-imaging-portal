@@ -165,7 +165,7 @@ vi.mock('next/headers', () => ({
 }))
 
 import type { AuditAction, RecordAuditEventInput } from '../../lib/audit/events'
-import { recordAuditEvent, recordPhiAccessDecision, recordUnavailableShareAccess } from '../../lib/audit/events'
+import { recordAuditEvent, recordPhiAccessDecision } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
@@ -223,15 +223,6 @@ function expectRedactedWriteFailureLog(calls: unknown[][]): void {
 }
 
 describe('AC: recordAuditEvent appends one row inside the pinned action/outcome sets', () => {
-  test('unavailableShareAccessUsesOneServiceRoleDenialWithNoDetail', async function unavailableShareAccessUsesOneServiceRoleDenialWithNoDetail() {
-    await recordUnavailableShareAccess({ actorRef: null, targetKind: 'share_link', targetId: null })
-    expect(auditRows).toEqual([{
-      actor_kind: 'share_recipient', actor_ref: null, action: 'share.use', target_kind: 'share_link', target_id: null, outcome: 'denied', detail: null,
-    }])
-    expect(serviceClientMock).toHaveBeenCalledOnce()
-    expect(anonClientMock).not.toHaveBeenCalled()
-  })
-
   test('recordAuditEventAppendsRowMatchingInput', async function recordAuditEventAppendsRowMatchingInput() {
     await recordAuditEvent(baseInput())
     expect(auditRows).toHaveLength(1)

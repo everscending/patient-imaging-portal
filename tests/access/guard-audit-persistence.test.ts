@@ -14,6 +14,9 @@
 //     -> shareRecipientGrantPersistsExactlyOneAuditEvent
 //   unauthenticated share-recipient denial persists exactly one row
 //     -> shareRecipientDenialPersistsExactlyOneAuditEvent
+//   unknown and inactive share-recipient denials persist exactly one row
+//     -> unknownShareRecipientDenialPersistsExactlyOneAuditEvent
+//     -> inactiveShareRecipientDenialPersistsExactlyOneAuditEvent
 //   authenticated audit behavior stays caller-scoped
 //     -> authenticatedCallerAuditPersistsExactlyOnceThroughCallerScopedClient
 //   actor/session mismatch persists one caller-scoped denial attributed to
@@ -205,23 +208,23 @@ describe('audit persistence across the real PHI guard and centralized writer', (
 
   test('shareRecipientGrantPersistsExactlyOneAuditEvent', async function shareRecipientGrantPersistsExactlyOneAuditEvent() {
     setCallerHasSession(false)
-    shareLinks.push({ id: 'share-grant', patient_id: 'patient-1', image_id: 'image-1', report_id: null })
+    shareLinks.push({ id: 'share-grant', patient_id: 'patient-1', image_id: 'image-1', report_id: null, expires_at: '2099-01-01T00:00:00.000Z', revoked_at: null })
 
     const result = await guardPhiAccess(
       { kind: 'share_recipient', shareLinkId: 'share-grant' },
       { kind: 'image', id: 'image-1' },
-      'image.view',
+      'share.use',
     )
 
     expect(result).toEqual({ ok: true, patientId: 'patient-1' })
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0]).toMatchObject({ actor_kind: 'share_recipient', actor_ref: 'share-grant', outcome: 'granted' })
+    expect(auditRows[0]).toMatchObject({ actor_kind: 'share_recipient', actor_ref: 'share-grant', action: 'share.use', outcome: 'granted' })
     expect(writeScopes).toEqual(['service'])
   })
 
   test('shareRecipientDenialPersistsExactlyOneAuditEvent', async function shareRecipientDenialPersistsExactlyOneAuditEvent() {
     setCallerHasSession(false)
-    shareLinks.push({ id: 'share-denial', patient_id: 'patient-1', image_id: 'image-1', report_id: null })
+    shareLinks.push({ id: 'share-denial', patient_id: 'patient-1', image_id: 'image-1', report_id: null, expires_at: '2099-01-01T00:00:00.000Z', revoked_at: null })
 
     const result = await guardPhiAccess(
       { kind: 'share_recipient', shareLinkId: 'share-denial' },
@@ -232,6 +235,41 @@ describe('audit persistence across the real PHI guard and centralized writer', (
     expect(result).toEqual({ ok: false, status: 404 })
     expect(auditRows).toHaveLength(1)
     expect(auditRows[0]).toMatchObject({ actor_kind: 'share_recipient', actor_ref: 'share-denial', outcome: 'denied' })
+    expect(writeScopes).toEqual(['service'])
+  })
+
+  test('unknownShareRecipientDenialPersistsExactlyOneAuditEvent', async function unknownShareRecipientDenialPersistsExactlyOneAuditEvent() {
+    setCallerHasSession(false)
+
+    const result = await guardPhiAccess(
+      { kind: 'share_recipient', shareLinkId: null },
+      { kind: 'share_link', id: null },
+      'share.use',
+    )
+
+    expect(result).toEqual({ ok: false, status: 404 })
+    expect(auditRows).toEqual([{
+      actor_kind: 'share_recipient', actor_ref: null, action: 'share.use', target_kind: 'share_link', target_id: null, outcome: 'denied', detail: null,
+    }])
+    expect(writeScopes).toEqual(['service'])
+  })
+
+  test.each([
+    { expires_at: '2026-08-18T00:00:00.000Z', revoked_at: null },
+    { expires_at: '2099-01-01T00:00:00.000Z', revoked_at: '2026-08-18T00:00:00.000Z' },
+  ])('inactiveShareRecipientDenialPersistsExactlyOneAuditEvent', async (state) => {
+    setCallerHasSession(false)
+    shareLinks.push({ id: 'inactive-share', patient_id: 'patient-1', image_id: 'image-1', report_id: null, ...state })
+
+    const result = await guardPhiAccess(
+      { kind: 'share_recipient', shareLinkId: 'inactive-share' },
+      { kind: 'image', id: 'image-1' },
+      'share.use',
+    )
+
+    expect(result).toEqual({ ok: false, status: 404 })
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ actor_kind: 'share_recipient', actor_ref: 'inactive-share', action: 'share.use', outcome: 'denied' })
     expect(writeScopes).toEqual(['service'])
   })
 

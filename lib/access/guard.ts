@@ -11,7 +11,7 @@ export type Actor =
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
-  | { kind: 'share_recipient'; shareLinkId: string }
+  | { kind: 'share_recipient'; shareLinkId: string | null }
 
 export type PhiTarget =
   | { kind: 'study'; id: string }
@@ -20,6 +20,7 @@ export type PhiTarget =
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule'; id: string } // id = provider id
+  | { kind: 'share_link'; id: null } // well-formed token with no resolvable PHI target
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' } // no id — the whole log, admin only
 
@@ -67,6 +68,7 @@ function targetAuditFields(target: PhiTarget): { targetKind: string; targetId: s
     case 'report':
     case 'appointment':
     case 'schedule':
+    case 'share_link':
       return { targetKind: target.kind, targetId: target.id }
     case 'collection':
       // §5: a collection read writes one row with target_id null and
@@ -92,7 +94,7 @@ type ReportRow = { id: string; patient_id: string; status: 'preliminary' | 'sign
 type ReportWithStudyRow = { id: string; patient_id: string; study_id: string }
 type StudyRow = { id: string; patient_id: string; visit_id: string }
 type VisitRow = { id: string }
-type ShareLinkRow = { id: string; patient_id: string; image_id: string | null; report_id: string | null }
+type ShareLinkRow = { id: string; patient_id: string; image_id: string | null; report_id: string | null; expires_at: string; revoked_at: string | null }
 
 // study/image/clip/appointment share the same ownership shape for a patient
 // or an admin actor: one row, keyed by id (and by patient_id for a patient).
@@ -165,6 +167,7 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
       // themselves stay scoped by RLS; this grant never widens what returns.
       return { ok: true, patientId }
     case 'schedule':
+    case 'share_link':
     case 'audit_log':
       // No ownership definition for a patient actor on either target.
       return { ok: false, status: 404 }
@@ -222,6 +225,7 @@ async function decideProvider(client: Client, userId: string, target: PhiTarget)
     case 'collection':
       return { ok: true, patientId: null }
     case 'audit_log':
+    case 'share_link':
       return { ok: false, status: 404 }
     case 'image':
     case 'clip':
@@ -260,6 +264,8 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
       // §5: admin ownership is "always true, and always audited" — the
       // audit write happens unconditionally in guardPhiAccess below.
       return { ok: true, patientId: null }
+    case 'share_link':
+      return { ok: false, status: 404 }
     case 'schedule': {
       const provider = await fetchRow<ProviderRow>(client, 'providers', 'id', [['id', target.id]])
       return provider ? { ok: true, patientId: null } : { ok: false, status: 404 }
@@ -286,15 +292,15 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
 // to key an anonClient read on. Reading the already-resolved share_links row
 // by its id is the guard's own layer of ARCHITECTURE.md §4's "share-link
 // resolution (where there is no auth.uid() to key on)" — one of the three
-// legal service-role uses. The raw-token-to-shareLinkId match, and any
-// expiry/revocation check, belong to the not-yet-built module that resolves
-// the token and calls this guard — this function only re-checks that the
-// target is the exact resource that shareLinkId names (FR-9).
-async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Promise<GuardResult> {
-  if (target.kind !== 'image' && target.kind !== 'report') return { ok: false, status: 404 }
+// legal service-role uses. The token resolver owns the raw-token-to-link-id
+// match; this guard re-checks that the link is active and names the exact
+// target before granting access (FR-9).
+async function decideShareRecipient(shareLinkId: string | null, target: PhiTarget): Promise<GuardResult> {
+  if (!shareLinkId || (target.kind !== 'image' && target.kind !== 'report')) return { ok: false, status: 404 }
 
-  const link = await fetchRow<ShareLinkRow>(serviceClient(), 'share_links', 'id, patient_id, image_id, report_id', [['id', shareLinkId]])
+  const link = await fetchRow<ShareLinkRow>(serviceClient(), 'share_links', 'id, patient_id, image_id, report_id, expires_at, revoked_at', [['id', shareLinkId]])
   if (!link) return { ok: false, status: 404 }
+  if (link.revoked_at !== null || Date.parse(link.expires_at) <= Date.now()) return { ok: false, status: 404 }
 
   const namedId = target.kind === 'image' ? link.image_id : link.report_id
   if (namedId !== target.id) return { ok: false, status: 404 }
