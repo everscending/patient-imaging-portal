@@ -6,7 +6,7 @@ import SlotList from '../../../components/scheduling/SlotList'
 type Service = { id: string; slug: string; name: string }
 type Provider = { id: string; fullName: string; timeZone: string }
 type Slot = { id: string; startsAt: string; endsAt: string }
-type Appointment = { id: string; providerName: string; serviceName: string; startsAt: string }
+type Appointment = { id: string; providerName: string; serviceName: string; startsAt: string; status: 'requested' }
 type ApiError = { error?: string; message?: string }
 
 const LOSER_HEADING = 'That slot is no longer available.'
@@ -105,27 +105,31 @@ export default function BookPage() {
     if (!idempotencyKey) setIdempotencyKey(key)
     setError(null)
     setConflict(false)
-    const response = await fetch('/api/appointments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slotId: selectedSlot.id, serviceId, idempotencyKey: key }),
-    })
-    if (response.ok) {
-      const appointment = await response.json() as Appointment
-      setSuccess(appointment)
-      setSlots((current) => current.filter((slot) => slot.id !== selectedSlot.id))
-      setSelectedSlot(null)
-      setIdempotencyKey(null)
-      return
+    try {
+      const response = await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slotId: selectedSlot.id, serviceId, idempotencyKey: key }),
+      })
+      if (response.ok) {
+        const appointment = await response.json() as Appointment
+        setSuccess(appointment)
+        setSlots((current) => current.filter((slot) => slot.id !== selectedSlot.id))
+        setSelectedSlot(null)
+        setIdempotencyKey(null)
+        return
+      }
+      const body = await response.json().catch(() => ({})) as ApiError
+      if (response.status === 409 && body.error === 'slot_unavailable') {
+        setUnavailableSlotIds((current) => new Set(current).add(selectedSlot.id))
+        setSelectedSlot(null)
+        setConflict(true)
+        return
+      }
+      setError(body.error === 'idempotency_key_reused' ? 'This confirmation key was already used. Choose a slot again.' : body.message ?? 'Could not confirm this appointment.')
+    } catch {
+      setError('Could not confirm this appointment.')
     }
-    const body = await response.json().catch(() => ({})) as ApiError
-    if (response.status === 409 && body.error === 'slot_unavailable') {
-      setUnavailableSlotIds((current) => new Set(current).add(selectedSlot.id))
-      setSelectedSlot(null)
-      setConflict(true)
-      return
-    }
-    setError(body.error === 'idempotency_key_reused' ? 'This confirmation key was already used. Choose a slot again.' : body.message ?? 'Could not confirm this appointment.')
   }
 
   return (
@@ -154,9 +158,9 @@ export default function BookPage() {
           <button type="button" className="pip-button-primary" data-testid="book-submit" onClick={() => void confirm()}>Confirm appointment</button>
         </section>
       )}
-      {conflict && <p className="pip-error" data-testid="booking-conflict"><strong>{LOSER_HEADING}</strong>{LOSER_GUIDANCE}</p>}
+      {conflict && <p className="pip-error" data-testid="booking-conflict" role="alert"><strong>{LOSER_HEADING}</strong>{LOSER_GUIDANCE}</p>}
       {error && <p className="pip-error" role="alert">{error}</p>}
-      {success && <p className="pip-save-summary" data-testid="booking-success">Booked {success.serviceName} with {success.providerName} at {localTime(success.startsAt, viewerZone)}.</p>}
+      {success && <p className="pip-save-summary" data-testid="booking-success" role="status">Appointment requested for {success.serviceName} with {success.providerName} at {localTime(success.startsAt, viewerZone)}.</p>}
     </main>
   )
 }

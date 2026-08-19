@@ -691,7 +691,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       appointment_id: appointment?.id ?? null,
       starts_at: slot.starts_at,
       ends_at: slot.ends_at,
-      appointment_status: appointment ? 'confirmed' : null,
+      appointment_status: appointment ? 'requested' : null,
       provider_name: provider?.full_name ?? null,
       provider_time_zone: provider?.time_zone ?? null,
       service_name: service?.name ?? null,

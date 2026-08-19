@@ -115,6 +115,7 @@ test.describe.serial('JOR-253 /book', () => {
     await page.getByTestId('service-select').selectOption(E2_BOOK_SERVICE_ID)
     await page.getByTestId('provider-select').selectOption({ label: 'Dr. Avery Chen' })
     await expect(page.getByTestId('slot-empty')).toBeVisible()
+    await expect(page.getByTestId('slot-list')).toContainText('Provider time zone: America/Chicago.')
   })
 
   // Mandatory adversarial: A service with no providers.
@@ -143,13 +144,21 @@ test.describe.serial('JOR-253 /book', () => {
     await chooseFirstSlot(page)
     const slotCount = await page.getByTestId('slot-item').count()
     await page.getByTestId('service-select').selectOption('77887788-7788-4788-8788-778877887788')
+    await expect(page.getByTestId('provider-select').locator('option')).toHaveCount(2)
+    await expect(page.getByTestId('provider-select')).not.toContainText('Dr. Avery Chen')
     await expect(page.getByTestId('slot-item')).toHaveCount(slotCount)
   })
 
   test('liveCheckBooksOpenSlotAndNextRenderRemovesIt', async ({ page }) => {
     await chooseFirstSlot(page)
     const bookedSlotId = (await page.getByTestId('slot-item').first().getAttribute('data-slot-id')) ?? ''
-    await page.getByTestId('book-submit').click()
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === 'POST' && new URL(candidate.url()).pathname === '/api/appointments'),
+      page.getByTestId('book-submit').click(),
+    ])
+    expect(response.status()).toBe(201)
+    expect((await response.json() as { status: string }).status).toBe('requested')
+    await expect(page.getByTestId('booking-success')).toContainText('Appointment requested')
     await expect(page.getByTestId('booking-success')).toContainText('Ultrasound')
     await expect(page.getByTestId('booking-success')).toContainText('Dr. Riley Patel')
     await expect(page.getByTestId('booking-success')).toHaveText(/\b(?:[A-Z]{2,4}|GMT[+-]\d+)\b/)

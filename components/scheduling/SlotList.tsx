@@ -38,10 +38,6 @@ export default function SlotList({
   unavailableSlotIds,
   onSelect,
 }: SlotListProps) {
-  if (slots.length === 0) {
-    return <p className="pip-notice" data-testid="slot-empty">No open times are available for this provider.</p>
-  }
-
   const groups = new Map<string, Slot[]>()
   for (const slot of slots) {
     const day = dayLabel(slot.startsAt, viewerTimeZone)
@@ -51,9 +47,10 @@ export default function SlotList({
   return (
     <section data-testid="slot-list" aria-label={`Open appointment times in ${viewerTimeZone}`} className="pip-slot-list">
       <p className="pip-time-zone">Times shown in your time zone: {viewerTimeZone}. Provider time zone: {providerTimeZone}.</p>
+      {slots.length === 0 && <p className="pip-notice" data-testid="slot-empty">No open times are available for this provider.</p>}
       {[...groups].map(([day, daySlots]) => (
-        <section key={day} className="pip-slot-day" aria-labelledby={`slot-day-${day}`}>
-          <h2 id={`slot-day-${day}`}>{day}</h2>
+        <section key={day} className="pip-slot-day" aria-label={day}>
+          <h2>{day}</h2>
           <div className="pip-slot-grid">
             {daySlots.map((slot) => {
               const unavailable = unavailableSlotIds.has(slot.id)
