@@ -48,7 +48,9 @@ describe('deployed schema provisioning', () => {
     expect(GRANTS).toContain('grant app_user to authenticated with inherit true, set false')
   })
 
-  test('shell requires secrets by name and never places their values in arguments', () => {
+  test('shell requires psql and secrets by name without placing their values in arguments', () => {
+    expect(SHELL).toContain('command -v psql')
+    expect(SHELL).toContain('psql is required')
     for (const name of [
       'PGHOST',
       'PGDATABASE',

@@ -30,8 +30,17 @@ the T1 skeleton only.
 
 ### Application schema and seed
 
-From a clean checkout, load the four required application variables plus
-`PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` into the shell, then run:
+The provisioner requires the standard PostgreSQL client, `psql`. On macOS,
+install the client and expose its keg-only binaries for this command with:
+
+```bash
+brew install libpq
+PATH="$(brew --prefix libpq)/bin:$PATH" npm run provision:deployed
+```
+
+Before running it, load the four required application variables plus
+`PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` into the shell. On hosts
+where `psql` is already on `PATH`, run:
 
 ```bash
 npm run provision:deployed
