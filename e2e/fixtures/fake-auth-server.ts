@@ -355,7 +355,7 @@ const CINE_CLIPS = [
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     frame_count: 100,
-    default_fps: 24,
+    default_fps: 12,
     poster_key: null,
   },
   {
@@ -363,7 +363,7 @@ const CINE_CLIPS = [
     patient_id: OTHER_PATIENT.id,
     study_id: E2_FOREIGN_STUDY_ID,
     frame_count: 1,
-    default_fps: 24,
+    default_fps: 12,
     poster_key: null,
   },
 ]

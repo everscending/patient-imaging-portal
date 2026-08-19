@@ -100,9 +100,9 @@ test.describe.serial('JOR-231 E3 imaging wiring', () => {
     await registerSignInAndVerify(page.request)
     const manifest = await page.request.get(`/api/studies/${E2_SEEDED_STUDY_ID}/clips/${E2_SEEDED_CLIP_ID}`)
     expect(manifest.status()).toBe(200)
-    expect((await manifest.json()) as unknown).toEqual(expect.objectContaining({ frameCount: 100, defaultFps: 24 }))
+    expect((await manifest.json()) as unknown).toEqual(expect.objectContaining({ frameCount: 100, defaultFps: 12 }))
     await openSeededClip(page)
-    await expect(page.getByTestId('cine-fps')).toHaveValue('24')
+    await expect(page.getByTestId('cine-fps')).toHaveValue('12')
     await page.getByTestId('cine-next').click()
     await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 2 of 100')
     await page.getByTestId('cine-prev').click()
@@ -154,7 +154,7 @@ test.describe.serial('JOR-231 E3 imaging wiring', () => {
         const playbackWindow = window as typeof window & { __e3Playback?: { samples: PlaybackSample[] } }
         return (playbackWindow.__e3Playback?.samples.length ?? 0) >= 101
       }),
-      { timeout: 8_000 },
+      { timeout: 12_000 },
     ).toBe(true)
     await page.getByTestId('cine-play').click()
     await expect(page.getByTestId('cine-play')).toHaveText('Play')
@@ -183,8 +183,8 @@ test.describe.serial('JOR-231 E3 imaging wiring', () => {
       Array.from({ length: 100 }, (_, index) => index + 1),
     )
     const cycleDurationMs = firstCycle[100]!.at - firstCycle[0]!.at
-    expect(cycleDurationMs).toBeGreaterThan(3_500)
-    expect(cycleDurationMs).toBeLessThan(5_000)
+    expect(cycleDurationMs).toBeGreaterThan(7_500)
+    expect(cycleDurationMs).toBeLessThan(9_500)
 
     await page.getByTestId('cine-fps').selectOption('30')
     await expect(page.getByTestId('cine-fps')).toHaveValue('30')

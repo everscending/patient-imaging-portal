@@ -186,7 +186,7 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
 })
 
 describe('mandatory adversarial: incomplete visits and malformed ids reveal neither records nor signatures', () => {
-  test('isoVisitTimestampBecomesDateOnlyInListAndDetailDtos', async function isoVisitTimestampBecomesDateOnlyInListAndDetailDtos() {
+  test('rfc3339VisitTimestampKeepsItsExplicitOffsetInListAndDetailDtos', async function rfc3339VisitTimestampKeepsItsExplicitOffsetInListAndDetailDtos() {
     const { listStudies, studyDetail } = await import('../../lib/imaging/studies')
     const data = {
       studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
@@ -196,8 +196,8 @@ describe('mandatory adversarial: incomplete visits and malformed ids reveal neit
       cine_clips: [],
     }
 
-    expect((await listStudies(client(data))).studies[0]?.occurredAt).toBe('2026-08-17')
-    expect((await studyDetail(client(data), studyId))?.occurredAt).toBe('2026-08-17')
+    expect((await listStudies(client(data))).studies[0]?.occurredAt).toBe('2026-08-16T23:58:59.000-04:00')
+    expect((await studyDetail(client(data), studyId))?.occurredAt).toBe('2026-08-16T23:58:59.000-04:00')
   })
 
   test('incompleteVisitIsHiddenFromEveryManifest', async function incompleteVisitIsHiddenFromEveryManifest() {

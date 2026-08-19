@@ -20,10 +20,6 @@ function expiresAt(): string {
   return new Date(Date.now() + config.signedUrlTtlSeconds * 1000).toISOString()
 }
 
-function calendarDate(occurredAt: string): string {
-  return new Date(occurredAt).toISOString().slice(0, 10)
-}
-
 async function rows<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Promise<T[]> {
   const { data, error } = await query
   if (error) throw new Error('studies: caller-scoped read failed')
@@ -61,7 +57,7 @@ export async function listStudies(client: Client): Promise<{ studies: Array<Reco
         return {
           id: study.id,
           description: study.description,
-          occurredAt: calendarDate(visit.occurred_at),
+          occurredAt: visit.occurred_at,
           providerName: provider?.full_name ?? '',
           imageCount: images.length,
           clipCount: clips.length,
@@ -91,7 +87,7 @@ export async function studyDetail(client: Client, studyId: string): Promise<Reco
   return {
     id: study.id,
     description: study.description,
-    occurredAt: calendarDate(visit.occurred_at),
+    occurredAt: visit.occurred_at,
     images: images.map((image) => ({
       id: image.id,
       width: image.width,
