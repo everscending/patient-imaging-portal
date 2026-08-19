@@ -39,8 +39,8 @@ function statusWords(status: string): string {
 function offeredActions(appointment: Appointment): { reschedule: boolean; cancel: boolean; noticeLocked: boolean } {
   const reschedule = appointment.canChange
   const cancel = appointment.allowedTransitions.includes('cancelled')
-  const live = appointment.status === 'requested' || appointment.status === 'confirmed'
-  return { reschedule, cancel, noticeLocked: live && !reschedule && !cancel }
+  const terminal = ['cancelled', 'completed', 'no_show'].includes(appointment.status)
+  return { reschedule, cancel, noticeLocked: !terminal && !reschedule && !cancel }
 }
 
 function AppointmentDetails({ appointment }: { appointment: Appointment }) {
