@@ -48,7 +48,7 @@ export default function AppointmentsPage() {
     <main className="pip-appointments-page">
       <h1>Appointments</h1>
       {unavailable ? <p role="alert">Appointments are temporarily unavailable.</p> : null}
-      {appointments?.length === 0 ? <p data-testid="appointments-empty">You have no appointments.</p> : null}
+      {appointments?.length === 0 ? <p data-testid="appointments-empty"><strong>No appointments yet</strong> — booked appointments appear here.</p> : null}
       {appointments && appointments.length > 0 ? (
         <section aria-label="Appointments" data-testid="appointment-list">
           <table className="pip-appointment-table">

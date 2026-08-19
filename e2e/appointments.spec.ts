@@ -168,7 +168,7 @@ test.describe('JOR-257 appointments', () => {
     await signedIn(page)
     await page.route('**/api/appointments', (route) => route.fulfill({ contentType: 'application/json', body: '{"appointments":[]}' }))
     await page.goto('/appointments')
-    await expect(page.getByTestId('appointments-empty')).toHaveText('You have no appointments.')
+    await expect(page.getByTestId('appointments-empty')).toHaveText('No appointments yet — booked appointments appear here.')
     await expect(page.getByTestId('appointment-list')).toHaveCount(0)
   })
 
