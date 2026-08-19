@@ -10,25 +10,29 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.hoisted(() => {
+const { guardMock, actorMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.hoisted(() => {
   const guardMock = vi.fn()
+  const actorMock = vi.fn()
   const callerMock = vi.fn()
   const anonMock = vi.fn()
   const signingMock = vi.fn()
   const cookieMock = vi.fn()
   return {
     guardMock,
+    actorMock,
     callerMock,
     anonMock,
     signingMock,
     cookieMock,
     reset() {
       guardMock.mockReset()
+      actorMock.mockReset()
       callerMock.mockReset()
       anonMock.mockReset()
       signingMock.mockReset()
       cookieMock.mockReset()
       guardMock.mockResolvedValue({ ok: true, patientId: 'patient-1' })
+      actorMock.mockResolvedValue({ kind: 'patient', userId: 'account-1' })
       callerMock.mockResolvedValue('account-1')
       cookieMock.mockResolvedValue({ get: () => ({ value: 'caller-token' }) })
       signingMock.mockImplementation(async (keys: string[]) =>
@@ -38,7 +42,7 @@ const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.h
   }
 })
 
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
+vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock, resolveScheduleActor: actorMock }))
 vi.mock('../../lib/access/identity', () => ({
   resolveCallerId: callerMock,
   resolveAuthenticatedSession: async () => {
@@ -87,6 +91,38 @@ const clipId = '22222222-2222-4222-8222-222222222222'
 beforeEach(() => reset())
 
 describe('mandatory adversarial: guard target, audit count, and ownership are enforced before data reads', () => {
+  test('studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision', async function studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision() {
+    actorMock.mockResolvedValue({ kind: 'provider', userId: 'account-1' })
+    guardMock.mockResolvedValue({ ok: false, status: 404 })
+    const { GET } = await import('../../app/api/studies/[studyId]/route')
+
+    const response = await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
+    expect(actorMock).toHaveBeenCalledOnce()
+    expect(guardMock).toHaveBeenCalledTimes(1)
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'provider', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+  })
+
+  test('studyDetailKeepsPatientUnlinkedAndAnonymousDenials', async function studyDetailKeepsPatientUnlinkedAndAnonymousDenials() {
+    const { GET } = await import('../../app/api/studies/[studyId]/route')
+    guardMock.mockResolvedValueOnce({ ok: false, status: 403 })
+    const unlinked = await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
+
+    callerMock.mockResolvedValue(null)
+    guardMock.mockResolvedValueOnce({ ok: false, status: 401 })
+    const anonymous = await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
+
+    expect(unlinked.status).toBe(403)
+    expect(await unlinked.json()).toEqual({ error: 'identity_verification_required', message: 'Verify your identity to continue.' })
+    expect(anonymous.status).toBe(401)
+    expect(await anonymous.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
+    expect(actorMock).toHaveBeenCalledTimes(1)
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view')
+  })
+
   test('listGuardsOnceWithCollectionTarget', async function listGuardsOnceWithCollectionTarget() {
     anonMock.mockReturnValue(client({ studies: [] }))
     const { GET } = await import('../../app/api/studies/route')
@@ -103,6 +139,8 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     const { GET } = await import('../../app/api/studies/[studyId]/route')
     const response = await GET(new Request('http://test/api/studies/x'), { params: Promise.resolve({ studyId }) })
     expect(response.status).toBe(404)
+    expect(actorMock).toHaveBeenCalledWith('account-1')
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
     expect(anonMock).not.toHaveBeenCalled()
     expect(signingMock).not.toHaveBeenCalled()
   })

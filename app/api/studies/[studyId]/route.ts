@@ -1,4 +1,4 @@
-import { guardPhiAccess } from '../../../../lib/access/guard'
+import { guardPhiAccess, resolveScheduleActor } from '../../../../lib/access/guard'
 import { resolveAuthenticatedSession } from '../../../../lib/access/identity'
 import { anonClient } from '../../../../lib/db/client'
 import { studyDetail } from '../../../../lib/imaging/studies'
@@ -14,7 +14,8 @@ export async function GET(_: Request, context: { params: Promise<Record<string, 
   const session = await resolveAuthenticatedSession()
   const parsed = parseParams(studyParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
-  const access = await guardPhiAccess({ kind: 'patient', userId: session?.userId ?? '' }, { kind: 'study', id: parsed.value.studyId }, 'study.view')
+  const actor = session ? await resolveScheduleActor(session.userId) : { kind: 'patient' as const, userId: '' }
+  const access = await guardPhiAccess(actor, { kind: 'study', id: parsed.value.studyId }, 'study.view')
   if (!access.ok) return denied(access.status)
   if (!session) return denied(401)
   const detail = await studyDetail(anonClient(session.accessToken), parsed.value.studyId)
