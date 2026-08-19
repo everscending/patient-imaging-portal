@@ -121,6 +121,17 @@ type FakeAvailabilityBlock = {
   reason: string | null
 }
 
+type FakeAppointment = {
+  id: string
+  patient_id: string
+  status: 'confirmed'
+  out_of_hours: boolean
+  created_at: string
+  slots: { starts_at: string; ends_at: string }
+  providers: { full_name: string; time_zone: string }
+  services: { name: string }
+}
+
 type FakeScheduleSlot = {
   id: string
   provider_id: string
@@ -219,6 +230,35 @@ const PROVIDERS: FakeProvider[] = [
     full_name: 'Dr. Riley Patel',
     time_zone: 'America/New_York',
     slot_minutes: 20,
+  },
+]
+const APPOINTMENT_SEED_NOW = Date.now()
+const APPOINTMENTS: FakeAppointment[] = [
+  {
+    id: '22552255-2255-4255-8255-225522552255',
+    patient_id: SEEDED_PATIENT.id,
+    status: 'confirmed',
+    out_of_hours: false,
+    created_at: new Date(APPOINTMENT_SEED_NOW).toISOString(),
+    slots: {
+      starts_at: new Date(APPOINTMENT_SEED_NOW + 12 * 60 * 60 * 1_000).toISOString(),
+      ends_at: new Date(APPOINTMENT_SEED_NOW + 13 * 60 * 60 * 1_000).toISOString(),
+    },
+    providers: { full_name: PROVIDERS[0].full_name, time_zone: PROVIDERS[0].time_zone },
+    services: { name: 'MRI' },
+  },
+  {
+    id: '22662266-2266-4266-8266-226622662266',
+    patient_id: SEEDED_PATIENT.id,
+    status: 'confirmed',
+    out_of_hours: true,
+    created_at: new Date(APPOINTMENT_SEED_NOW - 1).toISOString(),
+    slots: {
+      starts_at: new Date(APPOINTMENT_SEED_NOW + 72 * 60 * 60 * 1_000).toISOString(),
+      ends_at: new Date(APPOINTMENT_SEED_NOW + 73 * 60 * 60 * 1_000).toISOString(),
+    },
+    providers: { full_name: PROVIDERS[0].full_name, time_zone: PROVIDERS[0].time_zone },
+    services: { name: 'MRI' },
   },
 ]
 const VISITS: FakeVisit[] = [
@@ -351,6 +391,7 @@ const REPORTS: FakeReport[] = [
 ]
 
 const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
+  ['/rest/v1/appointments', APPOINTMENTS],
   ['/rest/v1/visits', VISITS],
   ['/rest/v1/studies', STUDIES],
   ['/rest/v1/images', IMAGES],
@@ -838,19 +879,21 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
 
     if (url.pathname === '/rest/v1/appointments') {
-      const rows = callerProvider
-        ? applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => {
-            const patient = patients.find((candidate) => candidate.id === appointment.patient_id)
-            const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
-            return {
-              ...appointment,
-              patients: patient ? { patient_ref: patient.patient_ref } : null,
-              services: { name: appointment.service_name },
-              slots: slot ? { starts_at: slot.starts_at, ends_at: slot.ends_at } : null,
-              providers: callerProvider ? { full_name: callerProvider.full_name, time_zone: callerProvider.time_zone } : null,
-            }
-          })
-        : []
+      if (!callerProvider) {
+        sendPostgrestRows(req, res, patientScopedRows(req, url, APPOINTMENTS))
+        return
+      }
+      const rows = applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => {
+        const patient = patients.find((candidate) => candidate.id === appointment.patient_id)
+        const slot = scheduleSlots.find((candidate) => candidate.id === appointment.slot_id)
+        return {
+          ...appointment,
+          patients: patient ? { patient_ref: patient.patient_ref } : null,
+          services: { name: appointment.service_name },
+          slots: slot ? { starts_at: slot.starts_at, ends_at: slot.ends_at } : null,
+          providers: { full_name: callerProvider.full_name, time_zone: callerProvider.time_zone },
+        }
+      })
       sendPostgrestRows(req, res, rows)
       return
     }
