@@ -94,7 +94,8 @@ test.describe('JOR-233 E4 signed-report wiring', () => {
     await expect(page.getByText('Signing provider', { exact: true })).toBeVisible()
     await expect(page.getByText('Dr. Avery Chen', { exact: true })).toBeVisible()
     await expect(page.getByText('Signed', { exact: true })).toBeVisible()
-    await expect(page.getByText(/Aug 12, 2026, 11:00 AM/)).toBeVisible()
+    const expectedSignedAt = await page.evaluate(() => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date('2026-08-12T16:00:00.000Z')))
+    await expect(page.getByText(expectedSignedAt, { exact: true })).toBeVisible()
   })
 
   test('adversarial: mobile report has no horizontal page-body overflow', async function mobileReportHasNoHorizontalPageBodyOverflow({ page }) {
