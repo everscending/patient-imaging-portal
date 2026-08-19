@@ -6,6 +6,7 @@
     "dev": "node scripts/run-next.mjs dev",
     "build": "next build",
     "start": "node scripts/run-next.mjs start",
+    "provision:deployed": "scripts/provision-deployed-stack.sh",
     "gate:logic": "scripts/gate.sh logic",
     "gate:api": "scripts/gate.sh api",
     "gate:ui": "scripts/gate.sh ui"
@@ -29,6 +30,7 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.23",
     "typescript": "^5.7.0",
+    "vite-node": "3.2.4",
     "vitest": "^3.2.7"
   }
 }

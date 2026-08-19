@@ -382,7 +382,7 @@ function userWireShape(user: FakeUser, withIdentity: boolean): Record<string, un
   }
 }
 
-type DependencyState = 'ok' | 'down' | 'hang'
+type DependencyState = 'ok' | 'down' | 'hang' | 'error'
 
 export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const usersByEmail = new Map<string, FakeUser>([
@@ -436,6 +436,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   const auditEvents: Record<string, unknown>[] = []
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
+  const callsByEmail = new Map<string, Record<string, number>>()
   // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
@@ -450,6 +451,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     if (state === 'hang') return
     if (state === 'down') {
       req.socket.destroy()
+      return
+    }
+    if (state === 'error') {
+      sendJson(res, 404, { code: 'PGRST205' })
       return
     }
     sendJson(res, 200, {})
@@ -483,6 +488,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     calls[name] = (calls[name] ?? 0) + 1
   }
 
+  function countForEmail(name: string, email: string): void {
+    const normalizedEmail = email.trim().toLowerCase()
+    const scopedCalls = callsByEmail.get(normalizedEmail) ?? { signup: 0, token: 0, user: 0, updateUser: 0 }
+    scopedCalls[name] = (scopedCalls[name] ?? 0) + 1
+    callsByEmail.set(normalizedEmail, scopedCalls)
+  }
+
   function issueSession(user: FakeUser): Record<string, unknown> {
     const accessToken = randomUUID()
     const refreshToken = randomUUID()
@@ -503,6 +515,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const body = await readJsonBody(req)
     const email = String(body.email ?? '').toLowerCase()
     const password = String(body.password ?? '')
+    countForEmail('signup', email)
 
     const existing = usersByEmail.get(email)
     if (existing) {
@@ -532,6 +545,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const body = await readJsonBody(req)
     const email = String(body.email ?? '').toLowerCase()
     const password = String(body.password ?? '')
+    countForEmail('token', email)
     const user = usersByEmail.get(email)
 
     if (!user || user.password !== password) {
@@ -1050,7 +1064,14 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const url = new URL(req.url ?? '/', 'http://fake-auth-server.local')
 
     if (req.method === 'GET' && url.pathname === '/__test__/calls') {
-      sendJson(res, 200, calls)
+      const email = url.searchParams.get('email')
+      sendJson(
+        res,
+        200,
+        email === null
+          ? calls
+          : (callsByEmail.get(email.trim().toLowerCase()) ?? { signup: 0, token: 0, user: 0, updateUser: 0 }),
+      )
       return
     }
     if (req.method === 'POST' && url.pathname === '/__test__/reset-identity') {
@@ -1093,7 +1114,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleHealthState(req, res)
       return
     }
-    if (req.method === 'GET' && url.pathname === '/rest/v1/') {
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/rest/v1/patients' &&
+      url.searchParams.get('select') === 'id' &&
+      url.searchParams.get('limit') === '0'
+    ) {
       answerAsDependency(req, res, healthState.database)
       return
     }

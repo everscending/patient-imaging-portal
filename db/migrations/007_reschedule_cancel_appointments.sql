@@ -231,8 +231,10 @@ begin
    where a.id = v_appointment.id;
 end $$;
 
+grant create on schema public to booking_executor;
 alter function reschedule_appointment(uuid, uuid, uuid, interval) owner to booking_executor;
 alter function cancel_appointment(uuid, uuid, interval) owner to booking_executor;
+revoke create on schema public from booking_executor;
 revoke all on function reschedule_appointment(uuid, uuid, uuid, interval) from public;
 revoke all on function cancel_appointment(uuid, uuid, interval) from public;
 grant execute on function reschedule_appointment(uuid, uuid, uuid, interval) to app_user;

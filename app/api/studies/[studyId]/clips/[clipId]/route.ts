@@ -12,11 +12,11 @@ function denied(status: 401 | 403 | 404): Response {
 }
 export async function GET(_: Request, context: { params: Promise<Record<string, string>> }): Promise<Response> {
   const session = await resolveAuthenticatedSession()
-  if (!session) return denied(401)
   const parsed = parseParams(studyClipParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
-  const access = await guardPhiAccess({ kind: 'patient', userId: session.userId }, { kind: 'clip', id: parsed.value.clipId }, 'clip.view')
+  const access = await guardPhiAccess({ kind: 'patient', userId: session?.userId ?? '' }, { kind: 'clip', id: parsed.value.clipId }, 'clip.view')
   if (!access.ok) return denied(access.status)
+  if (!session) return denied(401)
   const manifest = await clipManifest(anonClient(session.accessToken), parsed.value.studyId, parsed.value.clipId)
   return manifest ? Response.json(manifest) : denied(404)
 }
