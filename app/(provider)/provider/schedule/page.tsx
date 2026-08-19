@@ -41,6 +41,9 @@ export default function ProviderSchedulePage() {
   const [date, setDate] = useState(() => todayIn(shellTimeZone))
   const [schedule, setSchedule] = useState<Schedule | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => setHydrated(true), [])
 
   useEffect(() => {
     let cancelled = false
@@ -90,7 +93,7 @@ export default function ProviderSchedulePage() {
       <h1>Schedule</h1>
       <p>Time zone: <strong>{schedule?.timeZone ?? shellTimeZone}</strong></p>
       <label htmlFor="schedule-date">Date</label>
-      <input id="schedule-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+      <input id="schedule-date" type="date" value={date} disabled={!hydrated} onChange={(event) => setDate(event.target.value)} />
       {error ? <p role="alert">{error}</p> : null}
       {!schedule && !error ? <p>Loading schedule…</p> : null}
       {schedule?.slots.map((slot) => (
