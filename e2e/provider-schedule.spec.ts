@@ -47,6 +47,17 @@ test.describe.serial('JOR-260 provider schedule', () => {
   test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
   test.beforeEach(async ({ request }) => resetSchedule(request))
 
+  test('slow hydration keeps the selected provider day', async ({ page }) => {
+    await signIn(page.request)
+    await page.route('**/_next/static/**/*.js', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+      await route.continue()
+    })
+    await page.goto('/provider/schedule', { waitUntil: 'commit' })
+    await page.getByLabel('Date').fill(DAY)
+    await expect(page.getByTestId('provider-schedule-row')).toHaveCount(3)
+  })
+
   test('live check: provider sees references only and confirms a requested appointment', async ({ page }) => {
     await signIn(page.request)
     await page.goto('/provider/schedule')

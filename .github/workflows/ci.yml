@@ -65,9 +65,10 @@ jobs:
       # from package-lock.json. The cache key binds both the lockfile and that
       # resolved version, so a browser build never floats across upgrades.
       - name: Setup — Playwright browser
+        timeout-minutes: 5
         run: |
           started=$SECONDS
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
           echo "| Playwright setup | $((SECONDS - started))s |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Product UI gate
