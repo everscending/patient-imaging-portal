@@ -182,14 +182,16 @@ describe('per-change coverage stays cumulative', () => {
     ])).toThrow()
   })
 
-  test('ordinary product Playwright excludes wiring specs; E2 depends on product while E0/E1 remain certification', () => {
+  test('ordinary product Playwright excludes dedicated wiring specs; E2 depends on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[0125\]-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/dependencies:\s*\['product'\]/)
     expect(playwrightConfig).toMatch(/name:\s*'e8-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e8-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e5-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e5-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'certification'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e\[01\]-wiring\\\.spec\\\.ts\//)
   })
