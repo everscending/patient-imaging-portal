@@ -147,7 +147,7 @@ function scanArtifact(text: string, rowSets: PhiRows[] = [seededRows(), E2_DEMO_
   const timingOperations = new Set<string>()
   for (const line of lines) {
     const auditTarget = /^DEMO_AUDIT_DETAIL(?=$|[\s{])/.test(line)
-    const timingTarget = line.match(/"op"\s*:\s*"(share\.create|booking\.create)(?=$|["\s,}])/)?.[1]
+    const timingTarget = line.match(/\{[^}]*"op"\s*:\s*"(share\.create|booking\.create)(?=$|["\s,}])/)?.[1]
     const json = auditTarget
       ? line.startsWith('DEMO_AUDIT_DETAIL ') ? line.slice('DEMO_AUDIT_DETAIL '.length) : undefined
       : line.match(/(\{.*\})/)?.[1]
@@ -318,6 +318,11 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
   test('timingCandidateTruncatedAfterOperation_failsEvenWhenAnotherRecordIsValid', () => {
     const result = scanArtifact(completeArtifact('{"op":"share.create'))
     expect(result.integrityErrors).toContain('timing line is malformed: share.create')
+  })
+
+  test('unrelatedTimingProse_passes', () => {
+    const result = scanArtifact(completeArtifact('documentation mentions "op":"share.create" as an example'))
+    expect(result).toEqual({ hits: [], integrityErrors: [] })
   })
 
   test('emptyOrTruncatedArtifact_failsClosed', () => {
