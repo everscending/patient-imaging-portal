@@ -8,7 +8,7 @@ not added to the denominator.
 
 Command: `npx vitest run --coverage --project unit --project integration`
 Measured: 2026-08-20
-Source commit: `8d64c60e46b7c4cd9a35d673ce6cde92acb79d39`
+Source commit: `f7ceff7814b2e551d867ce36e35403b567084217`
 
 The controlled RED measurement used source checkpoint
 `64db55fcec3da1f6561bbc266e01ea4867202528`: all 839 tests passed, while
@@ -16,12 +16,12 @@ aggregate branch coverage measured 76.36%, below CQ-1. That checkpoint
 predates the committed nine-module include and threshold configuration, so it
 records the source baseline rather than a reproducible threshold-exit snapshot.
 JOR-227 adds public-behavior coverage for the share-link failure paths. The
-final reconciled run passes all 875 tests and all four CQ-1 thresholds.
+final reconciled run passes all 897 tests and all four CQ-1 thresholds.
 
 | Named core module | Statements | Branches | Functions | Lines |
 | --- | ---: | ---: | ---: | ---: |
 | `lib/access/identity.ts` | 95.59% | 75% | 100% | 95.59% |
-| `lib/access/guard.ts` | 94.78% | 80.98% | 95% | 94.78% |
+| `lib/access/guard.ts` | 95.09% | 81.46% | 95% | 95.09% |
 | `lib/imaging/studies.ts` | 100% | 75% | 100% | 100% |
 | `lib/imaging/signing.ts` | 100% | 94.11% | 100% | 100% |
 | `lib/reports/reports.ts` | 98.46% | 86.20% | 100% | 98.46% |
@@ -29,7 +29,7 @@ final reconciled run passes all 875 tests and all four CQ-1 thresholds.
 | `lib/scheduling/lifecycle.ts` | 100% | 100% | 100% | 100% |
 | `lib/notify/reminders.ts` | 100% | 62.50% | 100% | 100% |
 | `lib/share/links.ts` | 100% | 96.49% | 100% | 100% |
-| **All named core logic** | **96.81%** | **81.65%** | **97.50%** | **96.81%** |
+| **All named core logic** | **96.86%** | **81.78%** | **97.50%** | **96.86%** |
 
 The allowlist itself excludes everything not named above. No coverage
 `exclude` glob is used, so a named module cannot be silently subtracted after
