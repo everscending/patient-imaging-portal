@@ -41,7 +41,12 @@ class Query {
   match(row: Row) { return this.filters.every(([k, v]) => typeof v === 'object' && v !== null && 'gte' in v ? String(row[k]) >= String(v.gte) : typeof v === 'object' && v !== null && 'lt' in v ? String(row[k]) < String(v.lt) : typeof v === 'object' && v !== null && 'in' in v ? (v.in as unknown[]).includes(row[k]) : row[k] === v) }
   async execute() {
     if (this.op === 'insert') { if (this.table === 'audit_events') await state.persist(this.payload); const row = { id: this.payload.id ?? crypto.randomUUID(), ...this.payload }; (state.tables[this.table] ??= []).push(row); return { data: row, error: null } }
-    const rows = (state.tables[this.table] ?? []).filter((row) => this.match(row)); if (this.op === 'update') rows.forEach((row) => Object.assign(row, this.payload)); return this.head ? { data: null, error: null, count: rows.length } : { data: rows, error: null }
+    let rows = (state.tables[this.table] ?? []).filter((row) => this.match(row))
+    if (this.table === 'appointments' && this.filters.length === 0) {
+      const patient = state.tables.patients.find((row) => row.user_id === state.userId)
+      if (patient) rows = rows.filter((row) => row.patient_id === patient.id)
+    }
+    if (this.op === 'update') rows.forEach((row) => Object.assign(row, this.payload)); return this.head ? { data: null, error: null, count: rows.length } : { data: rows, error: null }
   }
   async maybeSingle() { const r = await this.execute(); return { ...r, data: Array.isArray(r.data) ? r.data[0] ?? null : r.data } }
   async single() { return this.maybeSingle() }
@@ -61,7 +66,10 @@ function fixtures(): Record<string, Row[]> { return {
   studies: [{ id: OWNED_STUDY, patient_id: PATIENT_A, visit_id: VISIT_A, description: 'Owned' }, { id: FOREIGN_STUDY, patient_id: PATIENT_B, visit_id: VISIT_B, description: 'Foreign' }],
   cine_clips: [{ id: OWNED_CLIP, patient_id: PATIENT_A, study_id: OWNED_STUDY, frame_count: 1, default_fps: 12, poster_key: null }, { id: FOREIGN_CLIP, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, frame_count: 1, default_fps: 12, poster_key: null }], cine_frames: [], images: [{ id: FOREIGN_IMAGE, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, width: 10, height: 10, ordinal: 0, storage_key: 'foreign', thumb_key: null }],
   reports: [{ id: OWNED_REPORT, patient_id: PATIENT_A, study_id: OWNED_STUDY, status: 'signed', findings: 'owned', impression: 'owned', signed_at: '2026-01-01T13:00:00Z', studies: { description: 'Owned' }, patients: { patient_ref: 'PT-0001' }, providers: { full_name: 'Provider A' } }, { id: FOREIGN_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'signed', findings: 'private', impression: 'private', signed_at: '2026-01-02T13:00:00Z', studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: { full_name: 'Provider B' } }, { id: PRELIM_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'preliminary', findings: 'draft', impression: 'draft', signed_at: null, studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: null }],
-  appointments: [{ id: OWNED_APPT, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'requested' }, { id: FOREIGN_APPT, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'requested' }], share_links: [{ id: FOREIGN_SHARE, patient_id: PATIENT_B, image_id: FOREIGN_IMAGE, report_id: null, revoked_at: null }], identity_attempts: [], audit_events: [],
+  appointments: [
+    { id: OWNED_APPT, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'requested', out_of_hours: false, slots: { starts_at: '2026-08-21T12:00:00Z', ends_at: '2026-08-21T12:30:00Z' }, providers: { full_name: 'Provider A', time_zone: 'America/Chicago' }, services: { name: 'Imaging' } },
+    { id: FOREIGN_APPT, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'requested', out_of_hours: false, slots: { starts_at: '2026-08-22T12:00:00Z', ends_at: '2026-08-22T12:30:00Z' }, providers: { full_name: 'Provider B', time_zone: 'America/Chicago' }, services: { name: 'Imaging' } },
+  ], share_links: [{ id: FOREIGN_SHARE, patient_id: PATIENT_B, image_id: FOREIGN_IMAGE, report_id: null, revoked_at: null }], identity_attempts: [], audit_events: [],
 } }
 
 beforeAll(async () => { run = await startRun(await ensureContainer()); state.persist = async (row) => { psql(`insert into audit_events(actor_kind,actor_ref,action,target_kind,target_id,outcome) values(${lit(row.actor_kind)},${lit(row.actor_ref)},${lit(row.action)},${lit(row.target_kind)},${lit(row.target_id)},${lit(row.outcome)});`) } })
@@ -70,6 +78,7 @@ beforeEach(() => { state.tables = fixtures(); session(ACCOUNT_A); psql('truncate
 
 import { POST as register } from '../../app/api/auth/register/route'
 import { PATCH as patchAppointment } from '../../app/api/appointments/[id]/route'
+import { GET as appointments } from '../../app/api/appointments/route'
 import { POST as verify } from '../../app/api/identity/verify/route'
 import { GET as schedule } from '../../app/api/provider/schedule/route'
 import { GET as report } from '../../app/api/reports/[reportId]/route'
@@ -83,6 +92,13 @@ const ctx = <T extends Record<string, string>>(v: T): { params: Promise<T> } => 
 const json = (url: string, method: string, body: unknown) => new Request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
 describe('cross-patient public HTTP denials', () => {
+  test('verifiedPatientAppointmentCollectionExcludesForeignRowsAndAuditsOnce', async function verifiedPatientAppointmentCollectionExcludesForeignRowsAndAuditsOnce() {
+    const response = await appointments()
+    expect(response.status).toBe(200)
+    expect((await response.json() as { appointments: Array<{ id: string }> }).appointments.map(({ id }) => id)).toEqual([OWNED_APPT])
+    expect(audits()).toEqual(['appointment.view|granted|-'])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
+  })
   test('foreignStudyClipReportAndAppointmentIdsAtLeastTenIncrementsAwayReturn404', async function foreignStudyClipReportAndAppointmentIdsAtLeastTenIncrementsAwayReturn404() {
     const before = state.tables.appointments.find((appointment) => appointment.id === FOREIGN_APPT)?.status
     const responses = [
