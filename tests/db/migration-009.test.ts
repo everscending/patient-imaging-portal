@@ -67,6 +67,22 @@ afterAll(async () => {
 })
 
 describe('009 hosted PostgREST JWT claims', () => {
+  test('RLS identity helpers remain keyed to Supabase auth.uid()', () => {
+    expect(
+      psql(`
+        select bool_and(
+          pg_get_functiondef(signature) like '%auth.uid()%'
+          and pg_get_functiondef(signature) not like '%current_request_user_id()%'
+        )
+        from unnest(array[
+          'current_patient_id()'::regprocedure,
+          'current_provider_id()'::regprocedure,
+          'is_admin()'::regprocedure
+        ]) as signature;
+      `),
+    ).toBe('t')
+  })
+
   test('patient subject resolves through request.jwt.claims', () => {
     const claims = JSON.stringify({ sub: patientUserId })
     expect(psql(asAppUser(claims, `select coalesce(current_patient_id()::text, '');`))).toBe(patientId)

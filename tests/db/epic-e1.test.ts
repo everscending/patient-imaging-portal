@@ -96,19 +96,6 @@ function appUserScript(claimUserId: string | null, sql: string): string {
   return `set role app_user; ${claim} ${sql}`
 }
 
-// tests/setup/postgres.ts stubs auth.uid() to a hardcoded null for every run
-// in the shared container — this run's own throwaway database redefines it
-// once, session-scoped, to read the same request.jwt.claims setting
-// current_patient_id() already reads (tests/db/rls.test.ts's own pattern).
-function installSessionScopedAuthUid(dbName: string): void {
-  psql(
-    dbName,
-    `create or replace function auth.uid() returns uuid
-     language sql stable
-     as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`,
-  )
-}
-
 function createFakeStorageClient(): PhiStorageClient {
   return {
     storage: {
@@ -172,7 +159,6 @@ beforeAll(async () => {
 
   container = await ensureContainer()
   run = await startRun(container) // default dir: db/migrations — 001, 002, 003 applied in filename order
-  installSessionScopedAuthUid(run.dbName)
 
   await runSeed({
     storage: createFakeStorageClient(),

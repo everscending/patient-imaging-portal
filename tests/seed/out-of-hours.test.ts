@@ -31,14 +31,6 @@ function psqlScript(dbName: string, sql: string): void {
   })
 }
 
-function installSessionScopedAuthUid(dbName: string): void {
-  psql(
-    dbName,
-    `create or replace function auth.uid() returns uuid language sql stable
-     as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`,
-  )
-}
-
 function createStorage(): PhiStorageClient {
   return { storage: { from: () => ({ async list() { return { data: [], error: null } }, async upload() { return { data: {}, error: null } } }) } }
 }
@@ -76,7 +68,6 @@ const fixtureActor = rowSet.fixtures.demoProviderAuthId
 beforeAll(async () => {
   container = await ensureContainer()
   run = await startRun(container)
-  installSessionScopedAuthUid(run.dbName)
   await cleanSeed(run)
 }, DB_TIMEOUT_MS)
 
@@ -129,7 +120,6 @@ describe('mandatory adversarial: out-of-hours seed fixture', () => {
   test('repeatedCleanSeedsFlagSameAppointment', async function repeatedCleanSeedsFlagSameAppointment() {
     const second = await startRun(container)
     try {
-      installSessionScopedAuthUid(second.dbName)
       await cleanSeed(second)
       expect(psql(second.dbName, 'select id from appointments where out_of_hours order by id limit 1;')).toBe(fixtureAppointment)
     } finally {

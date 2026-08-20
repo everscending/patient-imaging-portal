@@ -1,6 +1,6 @@
--- Hosted PostgREST exposes the authenticated JWT as one JSON setting. Keep
--- malformed or absent subjects fail-closed instead of turning an RLS read or
--- transactional appointment call into a database error.
+-- Hosted PostgREST exposes the authenticated JWT as one JSON setting. The
+-- executor-owned appointment RPCs cannot call auth.uid() without broader auth
+-- schema privileges, so keep their narrow adapter here.
 create or replace function current_request_user_id() returns uuid
 language plpgsql stable security definer set search_path = public as $$
 begin
@@ -13,18 +13,30 @@ revoke all on function current_request_user_id() from public;
 grant execute on function current_request_user_id() to booking_executor;
 
 create or replace function current_patient_id() returns uuid
-language sql stable security definer set search_path = public as $$
-  select id from patients where user_id = current_request_user_id()
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select id from patients where user_id = auth.uid());
+exception when invalid_text_representation then
+  return null;
+end
 $$;
 
 create or replace function current_provider_id() returns uuid
-language sql stable security definer set search_path = public as $$
-  select id from providers where user_id = current_request_user_id()
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select id from providers where user_id = auth.uid());
+exception when invalid_text_representation then
+  return null;
+end
 $$;
 
 create or replace function is_admin() returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from staff_admins where user_id = current_request_user_id())
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from staff_admins where user_id = auth.uid());
+exception when invalid_text_representation then
+  return false;
+end
 $$;
 
 -- These functions are owned by their non-login executor. PostgreSQL requires

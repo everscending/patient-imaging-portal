@@ -15,8 +15,6 @@ let fixtureSequence = 0
 
 beforeAll(async () => {
   run = await startRun(await ensureContainer())
-  psql(run.dbName, `create or replace function auth.uid() returns uuid language sql stable
-    as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`)
 }, 60_000)
 
 afterAll(async () => {

@@ -290,9 +290,6 @@ async function waitUntilBookingIsPaused(): Promise<void> {
 beforeAll(async () => {
   container = await ensureContainer()
   run = await startRun(container)
-  psql(`create or replace function auth.uid() returns uuid
-        language sql stable
-        as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;`)
 }, 120_000)
 
 afterAll(async () => {
