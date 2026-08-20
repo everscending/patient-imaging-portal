@@ -20,14 +20,13 @@ function noTrustworthyBase(): Error {
   return new Error('No trustworthy Git comparison base is available')
 }
 
-export function resolveTicketDiffBase(
-  repository: string,
-  env: { GITHUB_BASE_REF?: string; GITHUB_REF?: string } = {
-    GITHUB_BASE_REF: process.env.GITHUB_BASE_REF,
-    GITHUB_REF: process.env.GITHUB_REF,
-  },
-): string {
-  if (/^refs\/pull\/\d+\/merge$/.test(env.GITHUB_REF ?? '')) {
+export function resolveTicketDiffBase(repository: string): string {
+  const pullMergeRefs = git(
+    repository,
+    'for-each-ref', '--format=%(refname)', '--points-at', 'HEAD', 'refs/remotes/pull',
+  ).split(/\s+/).filter((ref) => /^refs\/remotes\/pull\/\d+\/merge$/.test(ref))
+  if (pullMergeRefs.length > 1) throw noTrustworthyBase()
+  if (pullMergeRefs.length === 1) {
     const parents = git(repository, 'rev-list', '--parents', '-n', '1', 'HEAD').split(/\s+/).slice(1)
     if (parents.length !== 2 || parents.some((parent) => !commit(repository, parent))) {
       throw noTrustworthyBase()
@@ -35,8 +34,7 @@ export function resolveTicketDiffBase(
     return parents[0]
   }
 
-  const baseName = env.GITHUB_BASE_REF?.trim() || 'main'
-  for (const candidate of [`origin/${baseName}`, baseName]) {
+  for (const candidate of ['origin/main', 'main']) {
     const base = commit(repository, candidate)
     if (!base) continue
     const mergeBases = git(repository, 'merge-base', '--all', base, 'HEAD').split(/\s+/).filter(Boolean)

@@ -33,6 +33,7 @@ function makePullRequestCheckout(depth: number): { checkout: string; firstParent
   const checkout = mkdtempSync(path.join(tmpdir(), `pip-ticket-checkout-${depth}-`))
   fixtures.push(checkout)
   git(checkout, 'clone', '-q', `--depth=${depth}`, '--branch', 'pr-merge', `file://${source}`, '.')
+  git(checkout, 'update-ref', 'refs/remotes/pull/93/merge', 'HEAD')
   return { checkout, firstParent }
 }
 
@@ -48,28 +49,22 @@ test('local feature checkout resolves the ticket branch merge-base', () => {
   git(repository, 'commit', '-q', '--allow-empty', '-m', 'ticket one')
   git(repository, 'commit', '-q', '--allow-empty', '-m', 'ticket two')
 
-  expect(resolveTicketDiffBase(repository, {})).toBe(base)
+  expect(resolveTicketDiffBase(repository)).toBe(base)
   git(repository, 'update-ref', '-d', 'refs/remotes/origin/main')
-  expect(resolveTicketDiffBase(repository, {})).toBe(base)
+  expect(resolveTicketDiffBase(repository)).toBe(base)
 })
 
 test('GitHub pull-request merge checkout uses its first parent', () => {
   const { checkout, firstParent } = makePullRequestCheckout(2)
 
   expect(git(checkout, 'rev-parse', '--is-shallow-repository')).toBe('true')
-  expect(resolveTicketDiffBase(checkout, {
-    GITHUB_BASE_REF: 'main',
-    GITHUB_REF: 'refs/pull/93/merge',
-  })).toBe(firstParent)
+  expect(resolveTicketDiffBase(checkout)).toBe(firstParent)
 })
 
 test('pull-request checkout with unavailable parents fails closed', () => {
   const { checkout } = makePullRequestCheckout(1)
 
-  expect(() => resolveTicketDiffBase(checkout, {
-    GITHUB_BASE_REF: 'main',
-    GITHUB_REF: 'refs/pull/93/merge',
-  })).toThrow(/trustworthy Git comparison base/)
+  expect(() => resolveTicketDiffBase(checkout)).toThrow(/trustworthy Git comparison base/)
 })
 
 test('pull-request checkout with ambiguous parents fails closed', () => {
@@ -80,9 +75,7 @@ test('pull-request checkout with ambiguous parents fails closed', () => {
   git(repository, 'commit', '-q', '--allow-empty', '-m', 'feature b')
   git(repository, 'switch', '-q', 'main')
   git(repository, 'merge', '-q', '--no-ff', 'feature-a', 'feature-b', '-m', 'octopus')
+  git(repository, 'update-ref', 'refs/remotes/pull/93/merge', 'HEAD')
 
-  expect(() => resolveTicketDiffBase(repository, {
-    GITHUB_BASE_REF: 'main',
-    GITHUB_REF: 'refs/pull/93/merge',
-  })).toThrow(/trustworthy Git comparison base/)
+  expect(() => resolveTicketDiffBase(repository)).toThrow(/trustworthy Git comparison base/)
 })
