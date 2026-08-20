@@ -85,24 +85,48 @@ function needlesFor(rowSets: PhiRows[]): Needle[] {
 }
 
 function containsNeedle(line: string, needle: string): boolean {
+  return needleStart(line, needle) >= 0
+}
+
+function needleStart(line: string, needle: string): number {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'u').test(line)
+  const match = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'u').exec(line)
+  return match ? match.index + match[1]!.length : -1
+}
+
+function validAuditRecord(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value).sort()
+  const detail = value.detail
+  return JSON.stringify(keys) === JSON.stringify(['action', 'detail', 'outcome', 'targetId']) &&
+    typeof value.action === 'string' &&
+    (typeof value.targetId === 'string' || value.targetId === null) &&
+    (value.outcome === 'granted' || value.outcome === 'denied') &&
+    (detail === null || (
+      typeof detail === 'object' &&
+      !Array.isArray(detail) &&
+      Object.values(detail).every((item) => ['string', 'number', 'boolean'].includes(typeof item))
+    ))
 }
 
 function scanArtifact(text: string, rowSets: PhiRows[] = [seededRows(), E2_DEMO_PHI_ROWS]): ScanResult {
   const lines = text.split(/\r?\n/)
   const hits: ScanHit[] = []
   const needles = needlesFor(rowSets)
+  const longestNeedle = Math.max(...needles.map((needle) => needle.normalized.length))
   for (const [index, rawLine] of lines.entries()) {
     const line = normalize(rawLine)
+    const tail = line.slice(-(longestNeedle + 1))
+    let continuation = ''
+    for (let next = index + 1; next < lines.length && continuation.length < longestNeedle; next += 1) {
+      continuation = normalize(`${continuation}\n${lines[next]}`).slice(0, longestNeedle)
+    }
+    const window = normalize(`${tail}\n${continuation}`)
     for (const needle of needles) {
       if (containsNeedle(line, needle.normalized)) {
         hits.push({ file: 'tests/artifacts/demo-run.log', line: index + 1, needleClass: needle.className })
-      } else if (
-        lines[index + 1] !== undefined &&
-        !containsNeedle(normalize(lines[index + 1]!), needle.normalized) &&
-        containsNeedle(normalize(`${rawLine}\n${lines[index + 1]}`), needle.normalized)
-      ) {
+      } else {
+        const start = needleStart(window, needle.normalized)
+        if (start < 0 || start >= tail.length || start + needle.normalized.length <= tail.length) continue
         hits.push({ file: 'tests/artifacts/demo-run.log', line: index + 1, needleClass: needle.className })
       }
     }
@@ -122,52 +146,60 @@ function scanArtifact(text: string, rowSets: PhiRows[] = [seededRows(), E2_DEMO_
 
   const timingOperations = new Set<string>()
   for (const line of lines) {
-    const json = line.match(/(\{.*\})/)?.[1]
-    if (!json) continue
+    const auditTarget = line.startsWith('DEMO_AUDIT_DETAIL ')
+    const timingTarget = line.match(/"op"\s*:\s*"(share\.create|booking\.create)"/)?.[1]
+    const json = auditTarget ? line.slice('DEMO_AUDIT_DETAIL '.length) : line.match(/(\{.*\})/)?.[1]
+    if (!json) {
+      if (auditTarget) integrityErrors.push('audit detail line is malformed')
+      if (timingTarget) integrityErrors.push(`timing line is malformed: ${timingTarget}`)
+      continue
+    }
+    let value: Record<string, unknown>
     try {
-      const value = JSON.parse(json) as Record<string, unknown>
-      if (line.startsWith('DEMO_AUDIT_DETAIL ') && !Object.hasOwn(value, 'detail')) {
-        integrityErrors.push('audit detail field is missing')
-      }
-      if (
-        line.startsWith('DEMO_AUDIT_DETAIL ') &&
-        value.detail !== null &&
-        typeof value.detail === 'object' &&
-        !Array.isArray(value.detail)
-      ) hasAuditDetail = true
-      if (line.startsWith('DEMO_AUDIT_DETAIL ') && Object.hasOwn(value, 'detail') && typeof value.action === 'string') {
-        auditActions.add(value.action)
-      }
-      if (value.event === 'email.sent') {
-        const keys = Object.keys(value).sort()
-        if (
-          JSON.stringify(keys) !== JSON.stringify(['domain', 'event', 'id', 'transport']) ||
-          typeof value.id !== 'string' ||
-          typeof value.domain !== 'string' ||
-          value.transport !== 'log'
-        ) {
-          integrityErrors.push('reminder server log is invalid')
-        } else {
-          hasReminderServerLog = true
-        }
-      }
-      if (value.op === 'share.create' || value.op === 'booking.create') {
-        const keys = Object.keys(value).sort()
-        if (JSON.stringify(keys) !== JSON.stringify(['ms', 'op', 'outcome', 'requestId'])) {
-          integrityErrors.push(`timing line has an unapproved field: ${value.op}`)
-        } else if (
-          typeof value.ms !== 'number' ||
-          !Number.isFinite(value.ms) ||
-          (value.outcome !== 'ok' && value.outcome !== 'conflict' && value.outcome !== 'error') ||
-          typeof value.requestId !== 'string'
-        ) {
-          integrityErrors.push(`timing line is invalid: ${value.op}`)
-        } else {
-          timingOperations.add(value.op)
-        }
-      }
+      value = JSON.parse(json) as Record<string, unknown>
     } catch {
-      // Non-JSON application output is still scanned as text above.
+      if (auditTarget) integrityErrors.push('audit detail line is malformed')
+      if (timingTarget) integrityErrors.push(`timing line is malformed: ${timingTarget}`)
+      continue
+    }
+    if (auditTarget) {
+      if (!Object.hasOwn(value, 'detail')) {
+        integrityErrors.push('audit detail field is missing')
+      } else if (!validAuditRecord(value)) {
+        integrityErrors.push('audit detail line is invalid')
+      } else {
+        if (value.detail !== null) hasAuditDetail = true
+        auditActions.add(value.action as string)
+      }
+    }
+    if (value.event === 'email.sent') {
+      const keys = Object.keys(value).sort()
+      if (
+        JSON.stringify(keys) !== JSON.stringify(['domain', 'event', 'id', 'transport']) ||
+        typeof value.id !== 'string' ||
+        typeof value.domain !== 'string' ||
+        value.transport !== 'log'
+      ) {
+        integrityErrors.push('reminder server log is invalid')
+      } else {
+        hasReminderServerLog = true
+      }
+    }
+    if (timingTarget) {
+      const keys = Object.keys(value).sort()
+      if (JSON.stringify(keys) !== JSON.stringify(['ms', 'op', 'outcome', 'requestId'])) {
+        integrityErrors.push(`timing line has an unapproved field: ${timingTarget}`)
+      } else if (
+        value.op !== timingTarget ||
+        typeof value.ms !== 'number' ||
+        !Number.isFinite(value.ms) ||
+        (value.outcome !== 'ok' && value.outcome !== 'conflict' && value.outcome !== 'error') ||
+        typeof value.requestId !== 'string'
+      ) {
+        integrityErrors.push(`timing line is invalid: ${timingTarget}`)
+      } else {
+        timingOperations.add(timingTarget)
+      }
     }
   }
   if (!hasAuditDetail) integrityErrors.push('audit detail is missing')
@@ -188,7 +220,7 @@ function completeArtifact(...extraLines: string[]): string {
   return [
     ...REQUIRED_STEPS.map((step) => `DEMO_STEP_COMPLETE ${step}`),
     'DEMO_PORT_RELEASED',
-    'DEMO_AUDIT_DETAIL {"action":"study.view","detail":{}}',
+    'DEMO_AUDIT_DETAIL {"action":"study.view","targetId":"99669966-9966-4966-8966-996699669966","outcome":"granted","detail":{}}',
     'DEMO_AUDIT_DETAIL {"action":"booking.reschedule","targetId":"b9aa2bd7-0340-48e5-bda6-d9e15a6a75ed","outcome":"granted","detail":null}',
     'DEMO_AUDIT_DETAIL {"action":"booking.cancel","targetId":"b9aa2bd7-0340-48e5-bda6-d9e15a6a75ed","outcome":"granted","detail":null}',
     'DEMO_AUDIT_DETAIL {"action":"reminder.dispatch","targetId":"b9aa2bd7-0340-48e5-bda6-d9e15a6a75ed","outcome":"granted","detail":{"transport":"log","leadHours":24}}',
@@ -235,6 +267,10 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
     expectRejected(completeArtifact(`server: ${first}\n${rest.join(' ')}`), 'patient-name')
   })
 
+  test('patientNameSplitAcrossThreePhysicalLines_fails', () => {
+    expectRejected(completeArtifact('server: Dr.\nAvery\nChen'), 'provider-name')
+  })
+
   test('fakeDemoDatasetPatientName_fails', () => {
     expectRejected(completeArtifact(E2_DEMO_PHI_ROWS.patients[0]!.full_name), 'patient-name')
   })
@@ -272,6 +308,11 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
     expect(result.integrityErrors).toContain('timing line is invalid: share.create')
   })
 
+  test('truncatedTargetTimingLine_failsEvenWhenAnotherRecordIsValid', () => {
+    const result = scanArtifact(completeArtifact('{"op":"share.create","ms":12'))
+    expect(result.integrityErrors).toContain('timing line is malformed: share.create')
+  })
+
   test('emptyOrTruncatedArtifact_failsClosed', () => {
     expect(scanArtifact('').integrityErrors.length).toBeGreaterThan(0)
     expect(scanArtifact(completeArtifact().replace('DEMO_STEP_COMPLETE reminder\n', '')).integrityErrors).toContain(
@@ -281,6 +322,18 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
 })
 
 describe('JOR-212 public demo-run evidence', () => {
+  test('malformedAuditDetailLine_failsEvenWhenRequiredRecordsAreValid', () => {
+    const result = scanArtifact(completeArtifact('DEMO_AUDIT_DETAIL {"action":"study.view"'))
+    expect(result.integrityErrors).toContain('audit detail line is malformed')
+  })
+
+  test('structurallyInvalidAuditDetailLine_fails', () => {
+    const result = scanArtifact(
+      completeArtifact('DEMO_AUDIT_DETAIL {"action":"study.view","targetId":7,"outcome":"granted","detail":[]}'),
+    )
+    expect(result.integrityErrors).toContain('audit detail line is invalid')
+  })
+
   test('auditRecordWithoutDetail_failsClosed', () => {
     const withoutDetail = completeArtifact().replace(',"detail":{}', '')
     expect(scanArtifact(withoutDetail).integrityErrors).toContain('audit detail field is missing')
