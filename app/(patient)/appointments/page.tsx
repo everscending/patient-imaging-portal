@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { AppointmentCard, type Appointment } from '../../../components/scheduling/AppointmentCard'
+import { EmptyState } from '../../../components/system/EmptyState'
 
 function isAppointment(value: unknown): value is Appointment {
   if (!value || typeof value !== 'object') return false
@@ -48,16 +49,16 @@ export default function AppointmentsPage() {
     <main className="pip-appointments-page">
       <h1>Appointments</h1>
       {unavailable ? <p role="alert">Appointments are temporarily unavailable.</p> : null}
-      {appointments?.length === 0 ? <p data-testid="appointments-empty"><strong>No appointments yet</strong> — booked appointments appear here.</p> : null}
-      {appointments && appointments.length > 0 ? (
-        <section aria-label="Appointments" className="pip-appointment-list" data-testid="appointment-list">
+      <section aria-label="Appointments" className="pip-appointment-list" data-testid="appointment-list">
+        {appointments?.length === 0 ? <EmptyState message="No appointments yet — booked appointments appear here." testId="appointments-empty" /> : null}
+        {appointments && appointments.length > 0 ? (
           <table className="pip-appointment-table">
             <caption className="pip-visually-hidden">Appointments</caption>
             <thead><tr><th scope="col">Appointment</th><th scope="col">Annotation</th><th scope="col">Actions</th></tr></thead>
             <tbody>{appointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} onUpdated={replace} />)}</tbody>
           </table>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
       <style>{`
         .pip-appointments-page { max-width: 72rem; margin: 0 auto; overflow-wrap: anywhere; }
         .pip-appointment-list { max-width: 100%; overflow-x: auto; }

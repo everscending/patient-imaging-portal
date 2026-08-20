@@ -64,7 +64,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('11')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('12')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')
