@@ -44,6 +44,16 @@ describe('JOR-221 performance contract', () => {
     expect(source('booking')).not.toMatch(/Trend\([^)]*pf[46]|http_req_duration/i)
   })
 
+  test('bookingLoadIsBoundedAndRetrySafeAcrossRuns', () => {
+    const booking = source('booking')
+    expect(booking).toMatch(/const RUN_ID = __ENV\.RUN_ID/)
+    expect(booking).toMatch(/\^\[0-9a-f\]\{8\}\$/)
+    expect(booking).toMatch(/let completed = false[\s\S]*if \(completed\)[\s\S]*completed = true/)
+    expect(booking).toMatch(/booking\.status === 200 \|\| response\.status === 201|response\.status === 200 \|\| response\.status === 201/)
+    expect(booking).toMatch(/booking\.status === 201[\s\S]*http\.post\(`\$\{BASE_URL\}\/api\/shares`/)
+    expect(booking).toMatch(/recipientEmail:[^\n]*RUN_ID[^\n]*__VU/)
+  })
+
   test('imagingMetricsFetchSignedStorageBytesAfterTheManifest', () => {
     const imaging = source('imaging')
     expect(imaging).toMatch(/frames\.length === 100[\s\S]*frames\.every\([^\n]*frame\.available[^\n]*frame\.url/)
@@ -61,6 +71,10 @@ describe('JOR-221 performance contract', () => {
     expect(playback).toMatch(/cine-viewer/)
     expect(playback).toMatch(/cine-play/)
     expect(playback).toMatch(/cine-fps/)
+    expect(playback).toMatch(/PLAYBACK_LIVE/)
+    expect(playback).toMatch(/every\([^\n]*frame\.available[^\n]*frame\.url/)
+    expect(playback).toMatch(/naturalWidth[^\n]*> 0/)
+    expect(playback).toMatch(/data-playback-ready/)
     expect(playback).not.toMatch(/\b12\b/)
   })
 
@@ -80,6 +94,30 @@ describe('JOR-221 performance contract', () => {
     }
     expect(baseline).toMatch(/ADR-0009[\s\S]*warm[\s\S]*pool asset/i)
     expect(baseline).toMatch(/PF-1[\s\S]*PF-2[\s\S]*PF-3[\s\S]*PF-4[\s\S]*PF-5[\s\S]*PF-6/)
+  })
+
+  test('pendingOrOutOfTargetMeasurementsCannotPassAsABaseline', () => {
+    const baseline = source('baseline')
+    expect(baseline).not.toMatch(/\bPending\b/i)
+    expect(baseline).toMatch(/\| Commit \| [0-9a-f]{40} \|/)
+    expect(baseline).toMatch(/\| Date \| \d{4}-\d{2}-\d{2}T[^|]+Z \|/)
+
+    const limits = new Map([
+      ['PF-1', 1_000],
+      ['PF-2', 1_000],
+      ['PF-3', 5_000],
+      ['PF-4', 1_000],
+      ['PF-5', 1_000],
+      ['PF-6', 1_000],
+    ])
+    const rows = [...baseline.matchAll(/^\| (PF-[1-6])[^|]*\|[^|]*\|[^|]*\| ([\d.]+) ms p95(?:; samples: (\d+))? \|$/gm)]
+    expect(rows).toHaveLength(limits.size)
+    for (const [, requirement, milliseconds, samples] of rows) {
+      expect(Number(milliseconds), requirement).toBeLessThan(limits.get(requirement)!)
+      if (requirement === 'PF-4' || requirement === 'PF-6') {
+        expect(Number(samples), `${requirement} server-timing sample count`).toBeGreaterThanOrEqual(20)
+      }
+    }
   })
 
   test('gateNamesPerformanceContractAndPlaybackEvidence', () => {
