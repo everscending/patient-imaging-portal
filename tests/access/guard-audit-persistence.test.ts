@@ -26,6 +26,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
+vi.mock('../../lib/config', () => ({ config: {} }))
 
 type FakeRow = Record<string, unknown>
 type WriteScope = 'caller' | 'service'

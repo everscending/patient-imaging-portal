@@ -348,6 +348,19 @@ const IMAGES = [
     storage_key: 'full-2.png',
     thumb_key: null,
   },
+  ...Array.from({ length: 6 }, (_, index) => {
+    const ordinal = index + 3
+    return {
+      id: `10000000-0000-4000-8000-${String(ordinal).padStart(12, '0')}`,
+      patient_id: SEEDED_PATIENT.id,
+      study_id: E2_SEEDED_STUDY_ID,
+      width: 800,
+      height: 600,
+      ordinal,
+      storage_key: `full-${ordinal}.png`,
+      thumb_key: null,
+    }
+  }),
 ]
 const CINE_CLIPS = [
   {
@@ -576,7 +589,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     bookingGeneration += 1
     const start = new Date(Date.now() + 72 * 60 * 60 * 1_000)
     start.setUTCMinutes(0, 0, 0)
-    bookingSlots = [0, 1, 2].map((offset) => {
+    bookingSlots = [0, 1, 2, 3, 4].map((offset) => {
       const startsAt = new Date(start.getTime() + offset * 30 * 60 * 1_000)
       const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1_000)
       return { id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + offset + 1).padStart(12, '0')}`, provider_id: E2_OTHER_PROVIDER_ID, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: 'open' }

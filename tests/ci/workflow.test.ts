@@ -21,6 +21,7 @@ const REQUIRED_UI_GATE_PREFIX = [
   'npx vitest run --project unit',
   'npx vitest run --project unit tests/coverage-config.test.ts',
   'npx vitest run --coverage --project unit --project integration',
+  'npx vitest run --project unit tests/adversarial/cross-patient.test.ts',
   'npx vitest run --project unit tests/observability/timing.test.ts',
   'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
   'npx vitest run --project e8',
