@@ -48,6 +48,7 @@ export function Filmstrip({ images, selectedImageId, onSelect }: FilmstripProps)
           background: var(--pip-color-base-200);
         }
         .pip-filmstrip-item {
+          position: relative;
           display: grid;
           flex: 0 0 auto;
           place-items: center;
