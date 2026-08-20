@@ -999,8 +999,9 @@ export async function guardPhiAccess(
   action: AuditAction,
 ): Promise<GuardResult>
 
-// Manifest routes authenticate before parameter validation, then reuse this
-// opaque, runtime-branded guard context for authorization and awaited audit.
+// Study-detail and cine-manifest routes authenticate before parameter
+// validation, then reuse this opaque, runtime-branded guard context for
+// authorization and awaited audit.
 export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication>
 export async function guardAuthenticatedPhiAccess(
   actor: Actor,
@@ -1012,11 +1013,11 @@ export async function guardAuthenticatedPhiAccess(
 
 `PhiRequestAuthentication` is created and runtime-branded only inside
 `lib/access/guard.ts`; a route cannot construct it from decoded claims or a raw
-session JWT. The manifest route may read the authenticated session it contains
-to resolve the account role and fetch the already-authorized response, while
-the guard passes that same session internally to the awaited audit write. No
-second remote Auth call occurs, and the public guard accepts neither a raw
-session JWT nor a caller-built authentication context.
+session JWT. The study-detail or cine-manifest route may read the authenticated
+session it contains to resolve the account role and fetch the already-authorized
+response, while the guard passes that same session internally to the awaited
+audit write. No second remote Auth call occurs, and the public guard accepts
+neither a raw session JWT nor a caller-built authentication context.
 
 **Ownership means something different per actor kind, and the guard owns all
 five definitions** — no route handler writes its own:

@@ -98,13 +98,13 @@ function sessionJwt(payload: Record<string, unknown>): string {
   return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode(payload)}.not-a-valid-signature`
 }
 
-describe('JOR-301 manifest request authentication context', () => {
-  const manifests = [
-    ['study', () => study(new Request('https://x'), ctx({ studyId: OWNED_STUDY })), 'study.view'],
-    ['clip', () => clip(new Request('https://x'), ctx({ studyId: OWNED_STUDY, clipId: OWNED_CLIP })), 'clip.view'],
+describe('JOR-301 study-detail and cine-manifest access grant authentication', () => {
+  const accessGrantRequests = [
+    ['studyDetail', () => study(new Request('https://x'), ctx({ studyId: OWNED_STUDY })), 'study.view'],
+    ['cineManifest', () => clip(new Request('https://x'), ctx({ studyId: OWNED_STUDY, clipId: OWNED_CLIP })), 'clip.view'],
   ] as const
 
-  test.each(manifests)('%sManifestAuthenticatesRemotelyOnceAndPersistsExactlyOneGrant', async (kind, request, action) => {
+  test.each(accessGrantRequests)('%sAuthenticatesRemotelyOnceAndPersistsExactlyOneGrant', async (routeName, request, action) => {
     authGetUserMock
       .mockResolvedValueOnce({ data: { user: { id: ACCOUNT_A } }, error: null })
       .mockResolvedValue({ data: { user: { id: FRESH_ACCOUNT } }, error: null })
@@ -113,11 +113,11 @@ describe('JOR-301 manifest request authentication context', () => {
 
     expect(response.status).toBe(200)
     expect(authGetUserMock).toHaveBeenCalledTimes(1)
-    expect(audits()).toEqual([`${action}|granted|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+    expect(audits()).toEqual([`${action}|granted|${routeName === 'studyDetail' ? OWNED_STUDY : OWNED_CLIP}`])
     expect(signMock).toHaveBeenCalled()
   })
 
-  test.each(manifests)('%sManifestRejectsDecodableForgedSessionJwtBeforeOwnershipOrSignedUrls', async (kind, request, action) => {
+  test.each(accessGrantRequests)('%sRejectsDecodableForgedSessionJwtBeforeOwnershipOrSignedUrls', async (routeName, request, action) => {
     const token = sessionJwt({ sub: ACCOUNT_A, exp: 4_102_444_800 })
     session(ACCOUNT_A, token)
     authGetUserMock.mockResolvedValue({ data: { user: null }, error: { status: 401 } })
@@ -130,10 +130,10 @@ describe('JOR-301 manifest request authentication context', () => {
     expect(anonMock).not.toHaveBeenCalled()
     expect(state.reads).toEqual([])
     expect(signMock).not.toHaveBeenCalled()
-    expect(audits()).toEqual([`${action}|denied|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+    expect(audits()).toEqual([`${action}|denied|${routeName === 'studyDetail' ? OWNED_STUDY : OWNED_CLIP}`])
   })
 
-  test.each(manifests)('%sManifestRejectsExpiredSessionJwtBeforeOwnershipOrSignedUrls', async (kind, request, action) => {
+  test.each(accessGrantRequests)('%sRejectsExpiredSessionJwtBeforeOwnershipOrSignedUrls', async (routeName, request, action) => {
     const token = sessionJwt({ sub: ACCOUNT_A, exp: 1 })
     session(ACCOUNT_A, token)
     authGetUserMock.mockResolvedValue({ data: { user: null }, error: { status: 401 } })
@@ -145,13 +145,13 @@ describe('JOR-301 manifest request authentication context', () => {
     expect(authGetUserMock).toHaveBeenCalledTimes(1)
     expect(state.reads).toEqual([])
     expect(signMock).not.toHaveBeenCalled()
-    expect(audits()).toEqual([`${action}|denied|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+    expect(audits()).toEqual([`${action}|denied|${routeName === 'studyDetail' ? OWNED_STUDY : OWNED_CLIP}`])
   })
 
   test.each([
-    ['study', { kind: 'study', id: OWNED_STUDY }, 'study.view'],
-    ['clip', { kind: 'clip', id: OWNED_CLIP }, 'clip.view'],
-  ] as const)('%sManifestRejectsRouteActorIdentityMismatchThroughAuthenticatedRequest', async (kind, target, action) => {
+    ['studyDetail', { kind: 'study', id: OWNED_STUDY }, 'study.view'],
+    ['cineManifest', { kind: 'clip', id: OWNED_CLIP }, 'clip.view'],
+  ] as const)('%sRejectsRouteActorIdentityMismatchThroughAuthenticatedRequest', async (routeName, target, action) => {
     const authentication = await authenticatePhiRequest()
     const access = await guardAuthenticatedPhiAccess(
       { kind: 'patient', userId: FRESH_ACCOUNT },
@@ -164,7 +164,7 @@ describe('JOR-301 manifest request authentication context', () => {
     expect(authGetUserMock).toHaveBeenCalledTimes(1)
     expect(state.reads).toEqual([])
     expect(signMock).not.toHaveBeenCalled()
-    expect(audits()).toEqual([`${action}|denied|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+    expect(audits()).toEqual([`${action}|denied|${routeName === 'studyDetail' ? OWNED_STUDY : OWNED_CLIP}`])
   })
 
   test('callerBuiltAuthenticationContextCannotReachOwnershipOrSigning', async () => {
@@ -181,10 +181,10 @@ describe('JOR-301 manifest request authentication context', () => {
     expect(audits()).toEqual([])
   })
 
-  test.each(manifests.flatMap(([kind, request, action]) => [
-    [kind, 'returned-error', request, action, false],
-    [kind, 'thrown-error', request, action, true],
-  ] as const))('%sManifestAuth%sFailsClosedAfterOneRemoteCheck', async (kind, _failureKind, request, action, throws) => {
+  test.each(accessGrantRequests.flatMap(([routeName, request, action]) => [
+    [routeName, 'ReturnedError', request, action, false],
+    [routeName, 'ThrownError', request, action, true],
+  ] as const))('%sAuthentication%sFailsClosedAfterOneRemoteCheck', async (routeName, _failureKind, request, action, throws) => {
     if (throws) authGetUserMock.mockRejectedValue(new Error('SECRET_AUTH_FAILURE'))
     else authGetUserMock.mockResolvedValue({ data: { user: null }, error: { status: 503, message: 'SECRET_AUTH_FAILURE' } })
 
@@ -195,7 +195,7 @@ describe('JOR-301 manifest request authentication context', () => {
     expect(authGetUserMock).toHaveBeenCalledTimes(1)
     expect(anonMock).not.toHaveBeenCalled()
     expect(signMock).not.toHaveBeenCalled()
-    expect(audits()).toEqual([`${action}|denied|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+    expect(audits()).toEqual([`${action}|denied|${routeName === 'studyDetail' ? OWNED_STUDY : OWNED_CLIP}`])
   })
 })
 
