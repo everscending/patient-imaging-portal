@@ -1666,6 +1666,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'POST' && url.pathname === '/storage/v1/object/sign/phi') {
+      if (healthState.storage !== 'ok') {
+        answerAsDependency(req, res, healthState.storage)
+        return
+      }
       void readJsonBody(req).then((body) => {
         const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : []
         sendJson(res, 200, paths.map((path) => ({

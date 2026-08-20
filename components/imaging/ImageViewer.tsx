@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useRouter } from 'next/navigation'
 import { Filmstrip } from './Filmstrip'
 import { ShareDialog } from '../share/ShareDialog'
+import DependencyError from '../system/DependencyError'
 
 export type ImageViewerProps = {
   images: Array<{
@@ -64,6 +65,10 @@ export function ImageViewer({ images, initialImageId, shareLinkTtlHours, variant
     const refreshTimer = window.setTimeout(router.refresh, Math.max(0, millisecondsUntilRefresh))
     return () => window.clearTimeout(refreshTimer)
   }, [router, selected?.expiresAt])
+
+  if (variant === 'portal' && images.length > 0 && images.every((image) => !image.url && !image.thumbUrl)) {
+    return <DependencyError onRetry={router.refresh} />
+  }
 
   const changeSelection = (imageId: string) => {
     setSelectedImageId(imageId)

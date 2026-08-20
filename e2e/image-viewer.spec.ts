@@ -31,6 +31,11 @@ async function resetIdentity(request: APIRequestContext): Promise<void> {
   expect(response.ok()).toBe(true)
 }
 
+async function setStorageState(request: APIRequestContext, storage: 'ok' | 'down'): Promise<void> {
+  const response = await request.post(`${await fakeServerUrl()}/__test__/health-state`, { data: { storage } })
+  expect(response.ok()).toBe(true)
+}
+
 async function registerAndSignIn(request: APIRequestContext): Promise<void> {
   const email = `jor-211-${randomUUID()}@example.com`
   expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
@@ -87,6 +92,10 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
     await releaseIdentityFixtureLock(identityFixtureLockToken)
   })
 
+  test.afterEach(async ({ request }) => {
+    await setStorageState(request, 'ok')
+  })
+
   test('pinnedContract_preservesVariantsImageMetadataInitialImageAndZoomPanControls', async function pinnedContract_preservesVariantsImageMetadataInitialImageAndZoomPanControls() {
     const viewer = await source('components/imaging/ImageViewer.tsx')
     for (const field of ['id: string', 'width: number', 'height: number', 'ordinal: number', 'url: string', 'thumbUrl: string | null', 'expiresAt: string']) {
@@ -105,6 +114,21 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
     test.setTimeout(60_000)
     await openViewer(page, 6_000)
     await expect(page.getByTestId('image-viewer')).toHaveAttribute('data-hydrated', 'true')
+  })
+
+  test('batchSigningOutage_rendersRecoverableDegradedState', async function batchSigningOutage_rendersRecoverableDegradedState({ page }) {
+    await resetIdentity(page.request)
+    await registerAndSignIn(page.request)
+    await linkSeededPatient(page.request)
+    await setStorageState(page.request, 'down')
+
+    const response = await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`)
+
+    expect(response?.status()).toBe(200)
+    await expect(page.getByTestId('dependency-error')).toBeVisible()
+    await setStorageState(page.request, 'ok')
+    await page.getByRole('button', { name: 'Try again' }).click()
+    await expect(page.getByTestId('image-full')).toBeVisible()
   })
 
   test('throttledFullImage_keepsEveryControlInteractiveUntilReplacement', async function throttledFullImage_keepsEveryControlInteractiveUntilReplacement({ page }) {
