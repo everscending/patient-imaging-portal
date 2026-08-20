@@ -8,25 +8,26 @@ not added to the denominator.
 
 Command: `npx vitest run --coverage --project unit --project integration`
 Measured: 2026-08-20
-Source commit: `9b72d73b210695317db75ac80ac9dda54834fe6f`
+Source commit: `8d64c60e46b7c4cd9a35d673ce6cde92acb79d39`
 
 The initial measurement at `64db55fcec3da1f6561bbc266e01ea4867202528`
 passed all 839 tests but correctly failed CQ-1 with 76.36% aggregate branch
 coverage. JOR-227 adds public-behavior coverage for the share-link failure
-paths. The final run passes all 856 tests and all four CQ-1 thresholds.
+paths. The final reconciled run passes all 875 tests and all four CQ-1
+thresholds.
 
 | Named core module | Statements | Branches | Functions | Lines |
 | --- | ---: | ---: | ---: | ---: |
-| `lib/access/identity.ts` | 95.59% | 72.54% | 100% | 95.59% |
-| `lib/access/guard.ts` | 94.24% | 79.87% | 93.75% | 94.24% |
-| `lib/imaging/studies.ts` | 100% | 69.56% | 100% | 100% |
+| `lib/access/identity.ts` | 95.59% | 75% | 100% | 95.59% |
+| `lib/access/guard.ts` | 94.78% | 80.98% | 95% | 94.78% |
+| `lib/imaging/studies.ts` | 100% | 75% | 100% | 100% |
 | `lib/imaging/signing.ts` | 100% | 94.11% | 100% | 100% |
 | `lib/reports/reports.ts` | 98.46% | 86.20% | 100% | 98.46% |
 | `lib/scheduling/booking.ts` | 93.04% | 70.12% | 92.85% | 93.04% |
 | `lib/scheduling/lifecycle.ts` | 100% | 100% | 100% | 100% |
 | `lib/notify/reminders.ts` | 100% | 62.50% | 100% | 100% |
 | `lib/share/links.ts` | 100% | 96.49% | 100% | 100% |
-| **All named core logic** | **96.73%** | **80.67%** | **97.36%** | **96.73%** |
+| **All named core logic** | **96.81%** | **81.65%** | **97.50%** | **96.81%** |
 
 The allowlist itself excludes everything not named above. No coverage
 `exclude` glob is used, so a named module cannot be silently subtracted after
