@@ -7,11 +7,16 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT="$REPO_ROOT/tests/artifacts/demo-run.log"
 WORK_ARTIFACT="$REPO_ROOT/.local/demo-run.$$.log"
+PHI_STATE="$REPO_ROOT/.local/demo-run-phi.json"
+WORK_PHI="$REPO_ROOT/.local/demo-run-phi.$$.json"
 SERVER_PID=""
+RPC_DRIVER="$REPO_ROOT/.local/demo-rpc.ts"
 REMINDER_DRIVER="$REPO_ROOT/.local/demo-reminder.ts"
+PUBLISHED=0
 
 mkdir -p "$(dirname "$ARTIFACT")" "$REPO_ROOT/.local"
 : > "$WORK_ARTIFACT"
+rm -f "$ARTIFACT" "$PHI_STATE"
 
 stop_server() {
   if [[ -n "$SERVER_PID" ]]; then
@@ -23,8 +28,8 @@ stop_server() {
 
 cleanup() {
   stop_server
-  rm -f "$REMINDER_DRIVER"
-  rm -f "$WORK_ARTIFACT"
+  rm -f "$RPC_DRIVER" "$REMINDER_DRIVER" "$WORK_ARTIFACT" "$WORK_PHI"
+  if [[ "$PUBLISHED" != 1 ]]; then rm -f "$PHI_STATE"; fi
 }
 trap cleanup EXIT INT TERM
 
@@ -39,20 +44,29 @@ APP_URL="http://localhost:$APP_PORT"
 # The reminder fixture creates it when absent and performs this same lookup.
 if docker inspect pip-testpg >/dev/null 2>&1; then
   CONTAINER_PORT="$(docker inspect --format '{{range $port, $binding := .NetworkSettings.Ports}}{{$port}}{{end}}' pip-testpg | sed -n '1{s#/tcp##;p;}')"
-  PUBLISHED="$(docker port pip-testpg "$CONTAINER_PORT" | sed -n '1p')"
-  export TEST_PG_PORT="${PUBLISHED##*:}"
+  PORT_BINDING="$(docker port pip-testpg "$CONTAINER_PORT" | sed -n '1p')"
+  export TEST_PG_PORT="${PORT_BINDING##*:}"
 fi
 
 node e2e/fixtures/start-test-server.mjs >> "$WORK_ARTIFACT" 2>&1 &
 SERVER_PID=$!
 
-APP_URL="$APP_URL" node --input-type=module - >> "$WORK_ARTIFACT" 2>&1 <<'NODE'
+APP_URL="$APP_URL" PHI_PATH="$WORK_PHI" node --input-type=module - >> "$WORK_ARTIFACT" 2>&1 <<'NODE'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { request } from '@playwright/test'
+import {
+  E2_PROVIDER_EMAIL,
+  E2_PROVIDER_PASSWORD,
+  E2_SEEDED_CLIP_ID,
+  E2_SEEDED_IMAGE_ID,
+  E2_SEEDED_REPORT_ID,
+  E2_SEEDED_STUDY_ID,
+} from './e2e/fixtures/fake-auth-server.ts'
 
 const appUrl = process.env.APP_URL
-if (!appUrl) throw new Error('demo-run: configured app URL is unavailable')
+const phiPath = process.env.PHI_PATH
+if (!appUrl || !phiPath) throw new Error('demo-run: configured local state is unavailable')
 
 for (let attempt = 0; attempt < 240; attempt += 1) {
   try {
@@ -74,40 +88,46 @@ async function expectStatus(response, accepted, step) {
   return response
 }
 
-await expectStatus(await fixture.post(`${fakeUrl}/__test__/reset-identity`), [200], 'identity reset')
+const resetIdentity = await expectStatus(await fixture.post(`${fakeUrl}/__test__/reset-identity`), [200], 'identity reset')
+const { patientRef } = await resetIdentity.json()
+const patientRowsResponse = await expectStatus(
+  await fixture.get(`${fakeUrl}/rest/v1/patients?patient_ref=eq.${encodeURIComponent(patientRef)}`),
+  [200],
+  'driven patient rows',
+)
+const [drivenPatient] = await patientRowsResponse.json()
+if (!drivenPatient) throw new Error('demo-run: driven patient row is unavailable')
 const email = `demo-run-${randomUUID()}@example.test`
 const password = 'DemoRunPassword9'
 await expectStatus(await patient.post('/api/auth/register', { data: { email, password } }), [201], 'registration')
 await expectStatus(await patient.post('/api/auth/login', { data: { email, password } }), [200], 'login')
 await expectStatus(await patient.post('/api/identity/verify', {
-  data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
+  data: { patientRef: drivenPatient.patient_ref, dateOfBirth: drivenPatient.date_of_birth },
 }), [200], 'identity verification')
 console.log('DEMO_STEP_COMPLETE identity-verification')
 
-const studyId = '99669966-9966-4966-8966-996699669966'
-const clipId = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
-const imageId = '10000000-0000-4000-8000-000000000001'
-const reportId = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
-await expectStatus(await patient.get(`/api/studies/${studyId}`), [200], 'image viewing')
-await expectStatus(await patient.get(`/api/studies/${studyId}/clips/${clipId}`), [200], 'cine viewing')
+const studyResponse = await expectStatus(await patient.get(`/api/studies/${E2_SEEDED_STUDY_ID}`), [200], 'image viewing')
+const drivenStudy = await studyResponse.json()
+await expectStatus(await patient.get(`/api/studies/${E2_SEEDED_STUDY_ID}/clips/${E2_SEEDED_CLIP_ID}`), [200], 'cine viewing')
 console.log('DEMO_STEP_COMPLETE image-and-cine-viewing')
 
-for (const [resourceKind, resourceId] of [['image', imageId], ['report', reportId]]) {
+for (const [resourceKind, resourceId] of [['image', E2_SEEDED_IMAGE_ID], ['report', E2_SEEDED_REPORT_ID]]) {
   await expectStatus(await patient.post('/api/shares', {
     data: { resourceKind, resourceId, recipientEmail: `recipient-${randomUUID()}@example.test` },
   }), [201], `${resourceKind} sharing`)
   console.log(`DEMO_STEP_COMPLETE ${resourceKind}-sharing`)
 }
 
-await expectStatus(await patient.get(`/api/reports/${reportId}`), [200], 'report')
+const reportResponse = await expectStatus(await patient.get(`/api/reports/${E2_SEEDED_REPORT_ID}`), [200], 'report')
+const drivenReport = await reportResponse.json()
 console.log('DEMO_STEP_COMPLETE report')
 
-await expectStatus(await fixture.post(`${fakeUrl}/__test__/reset-availability`), [200], 'availability reset')
+const resetAvailability = await expectStatus(await fixture.post(`${fakeUrl}/__test__/reset-availability`), [200], 'availability reset')
+const { providerId } = await resetAvailability.json()
 const provider = await request.newContext({ baseURL: appUrl })
 await expectStatus(await provider.post('/api/auth/login', {
-  data: { email: 'avery.chen@example.test', password: 'ProviderFixturePassword9' },
+  data: { email: E2_PROVIDER_EMAIL, password: E2_PROVIDER_PASSWORD },
 }), [200], 'provider login')
-const providerId = '66336633-6633-4633-8633-663366336633'
 await expectStatus(await provider.patch(`/api/providers/${providerId}/availability`, {
   data: {
     slotMinutes: 20,
@@ -166,6 +186,18 @@ for (const event of auditBody.auditEvents) {
   console.log(`DEMO_AUDIT_DETAIL ${JSON.stringify({ action: event.action, targetId: event.target_id, outcome: event.outcome, detail: event.detail })}`)
 }
 
+await writeFile(phiPath, JSON.stringify({
+  patients: [{
+    date_of_birth: drivenPatient.date_of_birth,
+    email: drivenPatient.email,
+    full_name: drivenPatient.full_name,
+    phone: drivenPatient.phone,
+  }],
+  providers: [{ full_name: drivenReport.signedByName }],
+  reports: [{ findings: drivenReport.findings, impression: drivenReport.impression }],
+  studies: [{ description: drivenStudy.description }],
+}), { mode: 0o600 })
+
 await Promise.all([provider.dispose(), patient.dispose(), fixture.dispose()])
 NODE
 
@@ -185,15 +217,119 @@ console.log('DEMO_PORT_RELEASED')
 NODE
 
 # The fake HTTP boundary intentionally has no reschedule RPC. Drive the two
-# real migrated transactions and capture their persisted audit detail.
-npx vitest run --project integration tests/integration/reschedule-cancel-rpc.test.ts \
-  --disableConsoleIntercept -t 'demo run emits reschedule and cancel audit details' >> "$WORK_ARTIFACT" 2>&1
+# real migrated transactions through a temporary database and capture their
+# persisted audit detail without changing the shared integration fixture.
+cat > "$RPC_DRIVER" <<'TS'
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
+
+import { ensureContainer, startRun, stopRun } from '../tests/setup/postgres'
+
+const phiPath = process.env.PHI_PATH
+if (!phiPath) throw new Error('demo-run: PHI state path is unavailable')
+const containerName = 'pip-testpg'
+const pgUser = 'postgres'
+const run = await startRun(await ensureContainer())
+
+function literal(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+function psql(sql: string): string {
+  return execFileSync(
+    'docker',
+    ['exec', containerName, 'psql', '-U', pgUser, '-d', run.dbName, '-v', 'ON_ERROR_STOP=1', '-tAq', '-c', sql],
+    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+  ).trim()
+}
+
+const suffix = randomUUID().replaceAll('-', '')
+const digits = [...suffix.slice(0, 10)].map((value) => Number.parseInt(value, 16) % 10).join('')
+const patient = {
+  id: randomUUID(),
+  user_id: randomUUID(),
+  patient_ref: `PT-${digits.slice(0, 8)}`,
+  date_of_birth: `${1950 + Number.parseInt(suffix.slice(0, 2), 16) % 50}-${String(1 + Number.parseInt(suffix.slice(2, 4), 16) % 12).padStart(2, '0')}-${String(1 + Number.parseInt(suffix.slice(4, 6), 16) % 28).padStart(2, '0')}`,
+  full_name: `Patient-${suffix.slice(0, 8)} Record-${suffix.slice(8, 16)}`,
+  email: `${suffix}@example.test`,
+  phone: `+1 ${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 10)}`,
+}
+const provider = { id: randomUUID(), full_name: `Provider-${suffix.slice(16, 24)} Record-${suffix.slice(24, 32)}` }
+const serviceId = randomUUID()
+const slotIds = [randomUUID(), randomUUID()]
+
+try {
+  psql(`
+    insert into auth.users (id) values (${literal(patient.user_id)}::uuid);
+    insert into patients (id, user_id, patient_ref, date_of_birth, full_name, email, phone)
+      values (${literal(patient.id)}::uuid, ${literal(patient.user_id)}::uuid, ${literal(patient.patient_ref)},
+        ${literal(patient.date_of_birth)}::date, ${literal(patient.full_name)}, ${literal(patient.email)}, ${literal(patient.phone)});
+    insert into providers (id, full_name, time_zone) values (${literal(provider.id)}::uuid, ${literal(provider.full_name)}, 'America/Chicago');
+    insert into services (id, slug, name) values (${literal(serviceId)}::uuid, ${literal(`svc-${suffix}`)}, 'Demo service');
+    insert into provider_services (provider_id, service_id) values (${literal(provider.id)}::uuid, ${literal(serviceId)}::uuid);
+    insert into slots (id, provider_id, starts_at, ends_at) values
+      (${literal(slotIds[0]!)}::uuid, ${literal(provider.id)}::uuid, now() + interval '72 hours', now() + interval '73 hours'),
+      (${literal(slotIds[1]!)}::uuid, ${literal(provider.id)}::uuid, now() + interval '74 hours', now() + interval '75 hours');
+  `)
+  const appointmentId = psql(`insert into appointments
+      (slot_id, patient_id, provider_id, service_id, status, idempotency_key)
+    values (${literal(slotIds[0]!)}::uuid, ${literal(patient.id)}::uuid, ${literal(provider.id)}::uuid,
+      ${literal(serviceId)}::uuid, 'requested', ${literal(randomUUID())}) returning id;`)
+  const claims = literal(JSON.stringify({ sub: patient.user_id }))
+  const rescheduled = JSON.parse(psql(`set role app_user; set request.jwt.claims = ${claims};
+    select row_to_json(result) from reschedule_appointment(
+      ${literal(appointmentId)}::uuid, ${literal(slotIds[1]!)}::uuid, ${literal(patient.user_id)}::uuid, interval '24 hours'
+    ) result;`))
+  if (rescheduled.result_error !== null) throw new Error('demo-run: reschedule failed')
+  const cancelled = JSON.parse(psql(`set role app_user; set request.jwt.claims = ${claims};
+    select row_to_json(result) from cancel_appointment(
+      ${literal(appointmentId)}::uuid, ${literal(patient.user_id)}::uuid, interval '24 hours'
+    ) result;`))
+  if (cancelled.result_error !== null) throw new Error('demo-run: cancel failed')
+
+  const audits = JSON.parse(psql(`select coalesce(json_agg(json_build_object(
+      'action', action, 'targetId', target_id, 'outcome', outcome, 'detail', detail) order by id), '[]'::json)::text
+    from audit_events where target_id = ${literal(appointmentId)}::uuid;`))
+  for (const audit of audits) console.log(`DEMO_AUDIT_DETAIL ${JSON.stringify(audit)}`)
+
+  const rows = JSON.parse(await readFile(phiPath, 'utf8'))
+  rows.patients.push({
+    date_of_birth: patient.date_of_birth,
+    email: patient.email,
+    full_name: patient.full_name,
+    phone: patient.phone,
+  })
+  rows.providers.push({ full_name: provider.full_name })
+  await writeFile(phiPath, JSON.stringify(rows), { mode: 0o600 })
+} finally {
+  await stopRun(run)
+}
+TS
+PHI_PATH="$WORK_PHI" npx vite-node "$RPC_DRIVER" >> "$WORK_ARTIFACT" 2>&1
+rm -f "$RPC_DRIVER"
 printf '%s\n' 'DEMO_STEP_COMPLETE reschedule-and-cancel' >> "$WORK_ARTIFACT"
 
 # Drive one real reminder dispatch and print its persisted audit detail while
 # the exported E8 fixture still owns the isolated database.
 cat > "$REMINDER_DRIVER" <<'TS'
-import { startE8AcceptanceFixture } from '../tests/fixtures/e8-acceptance'
+import { readFile, writeFile } from 'node:fs/promises'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const childProcess = require('node:child_process') as typeof import('node:child_process')
+const originalSpawn = childProcess.spawn
+childProcess.spawn = ((...args: Parameters<typeof originalSpawn>) => {
+  const child = originalSpawn(...args)
+  child.stdout?.pipe(process.stdout)
+  child.stderr?.pipe(process.stderr)
+  return child
+}) as typeof originalSpawn
+syncBuiltinESMExports()
+
+const { startE8AcceptanceFixture } = await import('../tests/fixtures/e8-acceptance')
+const phiPath = process.env.PHI_PATH
+if (!phiPath) throw new Error('demo-run: PHI state path is unavailable')
 
 const fixture = await startE8AcceptanceFixture()
 const auditLines: string[] = []
@@ -209,17 +345,24 @@ try {
       detail: audit.detail,
     })}`)
   }
+  const [patientName, dateOfBirth, , providerName] = fixture.phiTerms()
+  const [mail] = await fixture.mailMessages()
+  if (!patientName || !dateOfBirth || !providerName || !mail) throw new Error('demo-run: reminder fixture rows are unavailable')
+  const rows = JSON.parse(await readFile(phiPath, 'utf8'))
+  rows.patients.push({ date_of_birth: dateOfBirth, email: mail.to, full_name: patientName, phone: null })
+  rows.providers.push({ full_name: providerName })
+  await writeFile(phiPath, JSON.stringify(rows), { mode: 0o600 })
 } finally {
   await fixture.close()
-  const output = fixture.appOutput()
-  process.stdout.write(output.endsWith('\n') ? output : `${output}\n`)
 }
 for (const line of auditLines) console.log(line)
 process.exit(0)
 TS
-npx vite-node "$REMINDER_DRIVER" >> "$WORK_ARTIFACT" 2>&1
+PHI_PATH="$WORK_PHI" npx vite-node "$REMINDER_DRIVER" >> "$WORK_ARTIFACT" 2>&1
 rm -f "$REMINDER_DRIVER"
 printf '%s\n' 'DEMO_STEP_COMPLETE reminder' >> "$WORK_ARTIFACT"
 
 printf '%s\n' 'DEMO_RUN_COMPLETE' >> "$WORK_ARTIFACT"
+mv "$WORK_PHI" "$PHI_STATE"
 mv "$WORK_ARTIFACT" "$ARTIFACT"
+PUBLISHED=1

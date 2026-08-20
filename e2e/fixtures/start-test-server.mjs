@@ -6,7 +6,6 @@
 // the same keyless-testing shape as lib/notify/email.ts's log transport
 // (GAP-3).
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,13 +52,18 @@ const child = spawn('node', ['scripts/run-next.mjs', 'dev'], {
 })
 
 let exiting = false
+async function stopChild() {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  await new Promise((resolve) => {
+    child.once('exit', resolve)
+    child.kill('SIGTERM')
+  })
+}
+
 async function cleanupAndExit(code) {
   if (exiting) return
   exiting = true
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill()
-    await once(child, 'exit')
-  }
+  await stopChild()
   await fakeAuthServer.close()
   process.exit(code)
 }

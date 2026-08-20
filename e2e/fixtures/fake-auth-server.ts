@@ -437,15 +437,6 @@ const REPORTS: FakeReport[] = [
   },
 ]
 
-// The demo log scanner consumes the same rows as this HTTP fixture. Exporting
-// the existing arrays keeps its PHI guard tied to the data the demo drives.
-export const E2_DEMO_PHI_ROWS = {
-  patients: [SEEDED_PATIENT, OTHER_PATIENT, EMPTY_PATIENT],
-  providers: PROVIDERS,
-  reports: REPORTS,
-  studies: STUDIES,
-}
-
 const FOREIGN_SHARE_LINK: FakeShareLink = {
   id: E2_FOREIGN_SHARE_ID,
   token_hash: 'f'.repeat(64),
@@ -577,7 +568,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   const callsByEmail = new Map<string, Record<string, number>>()
-  // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
+  // JOR-247/JOR-305: dependency reachability, toggled only by the committed
+  // degraded-state checks. Database outage applies to every PostgREST route,
+  // so an affected product flow cannot stay green behind a health-only fake.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
     storage: 'ok',
@@ -1579,6 +1572,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'POST' && url.pathname === '/__test__/health-state') {
       void handleHealthState(req, res)
+      return
+    }
+    if (url.pathname.startsWith('/rest/v1/') && healthState.database !== 'ok') {
+      answerAsDependency(req, res, healthState.database)
       return
     }
     if (

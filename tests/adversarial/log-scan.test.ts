@@ -1,20 +1,15 @@
-import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { readFileSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 
 import { describe, expect, test } from 'vitest'
 
 import { generateAssetPool } from '../../db/seed/assets'
 import { buildRowSet, type RowSet } from '../../db/seed/rows'
-import { E2_DEMO_PHI_ROWS } from '../../e2e/fixtures/fake-auth-server'
-import {
-  DEMO_AUXILIARY_PHI_ROWS,
-  DEMO_E8_PROVIDER,
-  DEMO_RPC_PATIENT,
-  DEMO_RPC_PROVIDER,
-} from '../fixtures/demo-run-phi'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'tests', 'artifacts', 'demo-run.log')
+const PHI_STATE_PATH = path.join(REPO_ROOT, '.local', 'demo-run-phi.json')
 const SCRIPT_PATH = path.join(REPO_ROOT, 'scripts', 'demo-run.sh')
 const SEED_RUN_PATH = path.join(REPO_ROOT, 'tests', 'seed', 'artifacts', 'rows-run.json')
 const REQUIRED_STEPS = [
@@ -54,6 +49,10 @@ const SEED_ROWS = buildRowSet({
 
 function seededRows(): RowSet {
   return SEED_ROWS
+}
+
+function drivenRows(): PhiRows {
+  return JSON.parse(readFileSync(PHI_STATE_PATH, 'utf8')) as PhiRows
 }
 
 function normalize(value: string): string {
@@ -122,7 +121,7 @@ function validAuditRecord(value: Record<string, unknown>): boolean {
 
 function scanArtifact(
   text: string,
-  rowSets: PhiRows[] = [seededRows(), E2_DEMO_PHI_ROWS, DEMO_AUXILIARY_PHI_ROWS],
+  rowSets: PhiRows[] = [seededRows()],
 ): ScanResult {
   const lines = text.split(/\r?\n/)
   const hits: ScanHit[] = []
@@ -162,7 +161,7 @@ function scanArtifact(
   const timingOperations = new Set<string>()
   for (const line of lines) {
     const auditTarget = line.startsWith('DEMO_AUDIT_DETAIL')
-    const timingToken = line.match(/"op"\s*:\s*"(share\.create|booking\.create)(?=$|["\s,}])/)?.[1]
+    const malformedTimingTarget = !auditTarget && line.trimStart().startsWith('{') && /"op"\s*:\s*"/.test(line)
     const json = auditTarget && line.startsWith('DEMO_AUDIT_DETAIL ')
       ? line.slice('DEMO_AUDIT_DETAIL '.length)
       : auditTarget ? undefined : line
@@ -175,9 +174,7 @@ function scanArtifact(
       parsed = JSON.parse(json)
     } catch {
       if (auditTarget) integrityErrors.push('audit detail line is malformed')
-      if (!auditTarget && line.trimStart().startsWith('{') && timingToken) {
-        integrityErrors.push(`timing line is malformed: ${timingToken}`)
-      }
+      if (malformedTimingTarget) integrityErrors.push('timing line is malformed')
       continue
     }
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -185,7 +182,11 @@ function scanArtifact(
       continue
     }
     const value = parsed as Record<string, unknown>
-    const timingTarget = value.op === 'share.create' || value.op === 'booking.create' ? value.op : undefined
+    const timingTarget = !auditTarget && (
+      Object.hasOwn(value, 'ms') ||
+      Object.hasOwn(value, 'requestId') ||
+      (typeof value.op === 'string' && (value.outcome === 'ok' || value.outcome === 'conflict' || value.outcome === 'error'))
+    )
     if (auditTarget) {
       if (!Object.hasOwn(value, 'detail')) {
         integrityErrors.push('audit detail field is missing')
@@ -212,17 +213,17 @@ function scanArtifact(
     if (timingTarget) {
       const keys = Object.keys(value).sort()
       if (JSON.stringify(keys) !== JSON.stringify(['ms', 'op', 'outcome', 'requestId'])) {
-        integrityErrors.push(`timing line has an unapproved field: ${timingTarget}`)
+        integrityErrors.push('timing line does not have the exact approved fields')
       } else if (
-        value.op !== timingTarget ||
+        typeof value.op !== 'string' ||
         typeof value.ms !== 'number' ||
         !Number.isFinite(value.ms) ||
         (value.outcome !== 'ok' && value.outcome !== 'conflict' && value.outcome !== 'error') ||
         typeof value.requestId !== 'string'
       ) {
-        integrityErrors.push(`timing line is invalid: ${timingTarget}`)
+        integrityErrors.push('timing line is invalid')
       } else {
-        timingOperations.add(timingTarget)
+        timingOperations.add(value.op)
       }
     }
   }
@@ -280,8 +281,9 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
   })
 
   test('usAndLongDateOfBirth_fail', () => {
-    const variants = dateVariants(E2_DEMO_PHI_ROWS.patients[0]!.date_of_birth)
-    expect(variants).toEqual(expect.arrayContaining(['03/14/1988', '14 March 1988']))
+    const variants = dateVariants(seededRows().patients[0]!.date_of_birth)
+    expect(variants[1]).toMatch(/^\d{2}\/\d{2}\/\d{4}$/)
+    expect(variants[2]).toMatch(/^\d{1,2} [A-Z][a-z]+ \d{4}$/)
     expectRejected(completeArtifact(variants[1]!), 'patient-date-of-birth')
     expectRejected(completeArtifact(variants[2]!), 'patient-date-of-birth')
   })
@@ -292,19 +294,8 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
   })
 
   test('patientNameSplitAcrossThreePhysicalLines_fails', () => {
-    expectRejected(completeArtifact('server: Dr.\nAvery\nChen'), 'provider-name')
-  })
-
-  test('fakeDemoDatasetPatientName_fails', () => {
-    expectRejected(completeArtifact(E2_DEMO_PHI_ROWS.patients[0]!.full_name), 'patient-name')
-  })
-
-  test('auxiliaryDemoFixturePhi_fails', () => {
-    expectRejected(completeArtifact(DEMO_RPC_PATIENT.full_name), 'patient-name')
-    expectRejected(completeArtifact(DEMO_RPC_PATIENT.email), 'patient-email')
-    expectRejected(completeArtifact(DEMO_RPC_PATIENT.date_of_birth), 'patient-date-of-birth')
-    expectRejected(completeArtifact(DEMO_RPC_PROVIDER.full_name), 'provider-name')
-    expectRejected(completeArtifact(DEMO_E8_PROVIDER.full_name), 'provider-name')
+    const name = seededRows().providers[0]!.full_name.split(' ').join('\n')
+    expectRejected(completeArtifact(`server: ${name}`), 'provider-name')
   })
 
   test('patientEmailAndPhone_fail', () => {
@@ -332,22 +323,22 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
       completeArtifact(`{"op":"share.create","ms":12,"outcome":"ok","requestId":"86bacc1a-b193-4fc5-bab0-3d8c4f131751","recipient":"${email}"}`),
     )
     expect(result.hits).toEqual(expect.arrayContaining([expect.objectContaining({ needleClass: 'patient-email' })]))
-    expect(result.integrityErrors).toContain('timing line has an unapproved field: share.create')
+    expect(result.integrityErrors).toContain('timing line does not have the exact approved fields')
   })
 
   test('invalidTargetTimingLine_failsEvenWhenAnotherRecordIsValid', () => {
     const result = scanArtifact(completeArtifact('{"op":"share.create","ms":"12","outcome":"ok","requestId":"invalid"}'))
-    expect(result.integrityErrors).toContain('timing line is invalid: share.create')
+    expect(result.integrityErrors).toContain('timing line is invalid')
   })
 
   test('truncatedTargetTimingLine_failsEvenWhenAnotherRecordIsValid', () => {
     const result = scanArtifact(completeArtifact('{"op":"share.create","ms":12'))
-    expect(result.integrityErrors).toContain('timing line is malformed: share.create')
+    expect(result.integrityErrors).toContain('timing line is malformed')
   })
 
   test('timingCandidateTruncatedAfterOperation_failsEvenWhenAnotherRecordIsValid', () => {
     const result = scanArtifact(completeArtifact('{"op":"share.create'))
-    expect(result.integrityErrors).toContain('timing line is malformed: share.create')
+    expect(result.integrityErrors).toContain('timing line is malformed')
   })
 
   test('unrelatedTimingProse_passes', () => {
@@ -359,7 +350,33 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
     const result = scanArtifact(
       completeArtifact('{"context":{},"op":"share.create","ms":12,"outcome":"ok","requestId":"valid","recipient":"safe@example.test"}'),
     )
-    expect(result.integrityErrors).toContain('timing line has an unapproved field: share.create')
+    expect(result.integrityErrors).toContain('timing line does not have the exact approved fields')
+  })
+
+  test('everyOperationWithTheExactTimingShape_passes', () => {
+    const result = scanArtifact(completeArtifact('{"op":"study.fetch","ms":4,"outcome":"ok","requestId":"request-id"}'))
+    expect(result).toEqual({ hits: [], integrityErrors: [] })
+  })
+
+  test('everyOperationWithAnExtraTimingField_fails', () => {
+    const result = scanArtifact(completeArtifact('{"op":"study.fetch","ms":4,"outcome":"ok","requestId":"request-id","recipient":"safe@example.test"}'))
+    expect(result.integrityErrors).toContain('timing line does not have the exact approved fields')
+  })
+
+  test('arbitraryOperationWithMissingTimingEvidence_failsClosed', () => {
+    const result = scanArtifact(completeArtifact('{"op":"study.fetch","outcome":"ok"}'))
+    expect(result.integrityErrors).toContain('timing line does not have the exact approved fields')
+  })
+
+  test('truncatedArbitraryOperation_failsWhileBenignProsePasses', () => {
+    expect(scanArtifact(completeArtifact('{"op":"study.fetch')).integrityErrors).toContain('timing line is malformed')
+    expect(scanArtifact(completeArtifact('documentation mentions "op":"study.fetch" as an example')))
+      .toEqual({ hits: [], integrityErrors: [] })
+  })
+
+  test('nonTimingOperationJson_passes', () => {
+    const result = scanArtifact(completeArtifact('{"op":"health.probe","dependency":"database","outcome":"down"}'))
+    expect(result).toEqual({ hits: [], integrityErrors: [] })
   })
 
   test('unrelatedTimingProseWithBrace_passes', () => {
@@ -413,13 +430,31 @@ describe('JOR-212 public demo-run evidence', () => {
       .toContain('reminder server log is missing')
   })
 
-  test('committedArtifact_hasAllStepsAndNoSeededPhi', () => {
+  test('producerPublishesOneCompleteArtifactAndScansEveryDrivenRow', () => {
+    execFileSync(SCRIPT_PATH, { cwd: REPO_ROOT, env: process.env, stdio: 'pipe', timeout: 300_000 })
     const artifact = readFileSync(ARTIFACT_PATH, 'utf8')
-    const result = scanArtifact(artifact)
-    expect(result).toEqual({ hits: [], integrityErrors: [] })
-    expect(artifact.match(/▲ Next\.js/g)).toHaveLength(2)
-    expect(artifact).toContain('POST /api/jobs/reminders 200')
-  })
+    const rows = drivenRows()
+    try {
+      expect(scanArtifact(artifact, [rows])).toEqual({ hits: [], integrityErrors: [] })
+      expect(artifact.match(/▲ Next\.js/g)).toHaveLength(2)
+      expect(artifact).toContain('POST /api/jobs/reminders 200')
+
+      for (const patient of rows.patients) {
+        expectRejected(completeArtifact(patient.full_name), 'patient-name', rows)
+        expectRejected(completeArtifact(patient.email), 'patient-email', rows)
+        expectRejected(completeArtifact(patient.date_of_birth), 'patient-date-of-birth', rows)
+        if (patient.phone) expectRejected(completeArtifact(patient.phone), 'patient-phone', rows)
+      }
+      for (const provider of rows.providers) expectRejected(completeArtifact(provider.full_name), 'provider-name', rows)
+      for (const report of rows.reports) {
+        expectRejected(completeArtifact(report.findings), 'report-findings', rows)
+        expectRejected(completeArtifact(report.impression), 'report-impression', rows)
+      }
+      for (const study of rows.studies) expectRejected(completeArtifact(study.description), 'study-description', rows)
+    } finally {
+      unlinkSync(PHI_STATE_PATH)
+    }
+  }, 300_000)
 
   test('producerUsesConfiguredPortsAndTheLocalDatabaseFixture', () => {
     const script = readFileSync(SCRIPT_PATH, 'utf8')
@@ -430,6 +465,8 @@ describe('JOR-212 public demo-run evidence', () => {
 
   test('producerCapturesRawRpcAuditLinesWithoutVitestInterception', () => {
     const script = readFileSync(SCRIPT_PATH, 'utf8')
-    expect(script).toContain('--disableConsoleIntercept')
+    expect(script).toContain("from audit_events where target_id")
+    expect(script).toContain('console.log(`DEMO_AUDIT_DETAIL')
+    expect(script).not.toContain('npx vitest')
   })
 })

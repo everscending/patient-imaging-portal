@@ -10,7 +10,6 @@ import { generateAssetPool } from '../../db/seed/assets'
 import { runSeed, type AuthAdminClient, type SeedDbClient } from '../../db/seed/index'
 import { buildRowSet, type RowSet } from '../../db/seed/rows'
 import type { PhiStorageClient } from '../../db/seed/storage'
-import { DEMO_E8_PROVIDER } from './demo-run-phi'
 import { ensureContainer, startRun, stopRun, type Run } from '../setup/postgres'
 
 const execFileAsync = promisify(execFile)
@@ -74,7 +73,6 @@ export type E8AcceptanceFixture = {
   mailMessages(): Promise<MailMessage[]>
   dispatchLogs(): DispatchLog[]
   dispatchAudits(): Promise<DispatchAudit[]>
-  appOutput(): string
   appBaseUrl(): string
   phiTerms(): string[]
   close(): Promise<void>
@@ -539,7 +537,7 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
           const email = emailOverride ?? patient.email
           statements.push(
             `update patients set email = ${sqlLiteral(email)} where id = ${sqlLiteral(patient.id)}::uuid;`,
-            `insert into providers (id, full_name, time_zone) values (${sqlLiteral(scenarioProviderIds[index])}::uuid, ${sqlLiteral(DEMO_E8_PROVIDER.full_name)}, 'America/Chicago');`,
+            `insert into providers (id, full_name, time_zone) values (${sqlLiteral(scenarioProviderIds[index])}::uuid, 'E8 Provider', 'America/Chicago');`,
             `insert into provider_services (provider_id, service_id) values (${sqlLiteral(scenarioProviderIds[index])}::uuid, ${sqlLiteral(serviceId)}::uuid);`,
             `insert into slots (id, provider_id, starts_at, ends_at) values (${sqlLiteral(scenarioSlotIds[index])}::uuid, ${sqlLiteral(scenarioProviderIds[index])}::uuid, ${sqlLiteral(scenarioStartsAt)}::timestamptz, ${sqlLiteral(endsAt)}::timestamptz);`,
             `insert into appointments (id, slot_id, patient_id, provider_id, service_id, status) values (${sqlLiteral(scenarioAppointmentIds[index])}::uuid, ${sqlLiteral(scenarioSlotIds[index])}::uuid, ${sqlLiteral(patient.id)}::uuid, ${sqlLiteral(scenarioProviderIds[index])}::uuid, ${sqlLiteral(serviceId)}::uuid, 'confirmed');`,
@@ -656,9 +654,6 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
         )
         return JSON.parse(raw) as DispatchAudit[]
       },
-      appOutput() {
-        return appOutput
-      },
       appBaseUrl() {
         return baseUrl
       },
@@ -666,7 +661,7 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
         const patients = rowSet.patients.slice(0, scenarioAppointmentIds.length)
         return [
           ...patients.flatMap((patient) => [patient.full_name, patient.date_of_birth, patient.patient_ref]),
-          DEMO_E8_PROVIDER.full_name,
+          'E8 Provider',
           rowSet.services[0].name,
           ...scenarioAppointmentIds,
           scenarioStartsAt,

@@ -26,6 +26,6 @@ const child = spawn(process.execPath, [NEXT_CLI, mode, REPO_ROOT, '-p', String(c
   stdio: 'inherit',
 })
 
+process.once('SIGINT', () => child.kill('SIGINT'))
+process.once('SIGTERM', () => child.kill('SIGTERM'))
 child.on('exit', (code) => process.exit(code ?? 0))
-process.on('SIGINT', () => child.kill('SIGINT'))
-process.on('SIGTERM', () => child.kill('SIGTERM'))

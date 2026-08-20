@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
-import { DEMO_RPC_PATIENT, DEMO_RPC_PROVIDER } from '../fixtures/demo-run-phi'
 import { ensureContainer, startRun, stopRun, type Container, type Run } from '../setup/postgres'
 
 const CONTAINER_NAME = 'pip-testpg'
@@ -53,7 +52,7 @@ type Fixture = {
   slotIds: string[]
 }
 
-function fixture(options: { startsInHours?: number; slots?: number; demoPhi?: boolean } = {}): Fixture {
+function fixture(options: { startsInHours?: number; slots?: number } = {}): Fixture {
   const providerId = randomUUID()
   const serviceId = randomUUID()
   const patientId = randomUUID()
@@ -61,15 +60,11 @@ function fixture(options: { startsInHours?: number; slots?: number; demoPhi?: bo
   const slotIds = Array.from({ length: options.slots ?? 2 }, () => randomUUID())
   const suffix = randomUUID().replaceAll('-', '')
   const startsInHours = options.startsInHours ?? 72
-  const patient = options.demoPhi
-    ? DEMO_RPC_PATIENT
-    : { date_of_birth: '1990-01-01', full_name: 'RPC Patient', email: `${suffix}@example.test` }
-  const provider = options.demoPhi ? DEMO_RPC_PROVIDER : { full_name: 'Dr. RPC' }
   psql(`
     insert into auth.users (id) values ('${actorUserId}');
     insert into patients (id, user_id, patient_ref, date_of_birth, full_name, email)
-      values ('${patientId}', '${actorUserId}', 'PT-${suffix.slice(0, 8)}', ${literal(patient.date_of_birth)}, ${literal(patient.full_name)}, ${literal(patient.email)});
-    insert into providers (id, full_name, time_zone) values ('${providerId}', ${literal(provider.full_name)}, 'America/Chicago');
+      values ('${patientId}', '${actorUserId}', 'PT-${suffix.slice(0, 8)}', '1990-01-01', 'RPC Patient', '${suffix}@example.test');
+    insert into providers (id, full_name, time_zone) values ('${providerId}', 'Dr. RPC', 'America/Chicago');
     insert into services (id, slug, name) values ('${serviceId}', 'svc-${suffix}', 'RPC Service');
     insert into provider_services (provider_id, service_id) values ('${providerId}', '${serviceId}');
     ${slotIds.map((id, index) => `insert into slots (id, provider_id, starts_at, ends_at)
@@ -377,19 +372,6 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     expect(psql(`select status::text from slots where id = '${f.slotIds[0]}';`)).toBe('open')
     expect(psql(`insert into appointments (slot_id, patient_id, provider_id, service_id, idempotency_key)
       values ('${f.slotIds[0]}', '${f.patientId}', '${f.providerId}', '${f.serviceId}', '${randomUUID()}') returning id;`)).toMatch(/[0-9a-f-]{36}/)
-  })
-
-  test('demo run emits reschedule and cancel audit details', () => {
-    const f = fixture({ demoPhi: true })
-    const id = appointment(f)
-    expect(JSON.parse(psql(rescheduleCall(f, id, f.slotIds[1]!))).result_error).toBeNull()
-    expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
-
-    const audits = psql(`select json_build_object(
-      'action', action, 'targetId', target_id, 'outcome', outcome, 'detail', detail
-    )::text from audit_events where target_id = '${id}' order by id;`).split('\n')
-    expect(audits.map((audit) => JSON.parse(audit).action)).toEqual(['booking.reschedule', 'booking.cancel'])
-    for (const audit of audits) console.log(`DEMO_AUDIT_DETAIL ${audit}`)
   })
 
   test('cancel_minimumNoticeAndTransitionFailure_rollBackEveryChange', () => {
