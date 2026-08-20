@@ -5,10 +5,10 @@ worktree. It links to each document; it does not restate a policy, a
 parameter, or a number that document already states — see that document for
 the fact itself.
 
-The retention/deletion policy, the coverage report, the EL-1 benchmark, and
-the recorded demo each belong here once their own ticket lands and creates
-the file. None of those files exist in this worktree yet, so none is linked
-below — a link with nothing behind it is worse than no link.
+The retention/deletion policy, the EL-1 benchmark, and the recorded demo each
+belong here once their own ticket lands and creates the file. None of those
+files exist in this worktree yet, so none is linked below — a link with
+nothing behind it is worse than no link.
 
 ## Architecture Decision Records (`docs/adr/`)
 
@@ -32,6 +32,10 @@ below — a link with nothing behind it is worse than no link.
 - [Deploy record](deploy.md) — the Supabase and Vercel projects, where §8's
   variables and the `phi` bucket are set, and the run record for every
   deploy.
+
+## Quality evidence
+
+- [Core logic coverage](coverage.md)
 
 ## Agent operating docs (`docs/agents/`)
 
