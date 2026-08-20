@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterAll, describe, expect, test } from 'vitest'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const CI_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml')
@@ -9,6 +10,7 @@ const CERTIFICATION_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'certifi
 const GATE_PATH = path.join(REPO_ROOT, 'scripts', 'gate.sh')
 const CERTIFY_PATH = path.join(REPO_ROOT, 'scripts', 'certify.sh')
 const PLAYWRIGHT_CONFIG_PATH = path.join(REPO_ROOT, 'playwright.config.ts')
+const REPORT_VALIDATOR_PATH = path.join(REPO_ROOT, 'scripts', 'validate-playwright-report.mjs')
 
 const ci = readFileSync(CI_PATH, 'utf8')
 const certification = readFileSync(CERTIFICATION_PATH, 'utf8')
@@ -63,13 +65,19 @@ function executableInvocations(source: string, pattern: RegExp): string[] {
     .filter((line) => pattern.test(line))
 }
 
+function pushBranches(workflow: string): string[] {
+  const pushBlock = workflow.match(/^  push:\n((?: {4}.*\n)*)/m)?.[1] ?? ''
+  return [...pushBlock.matchAll(/^ {6}-\s+(.+)$/gm)].map((match) => match[1])
+}
+
 const gateInvocations = executableInvocations(ci, /scripts\/gate\.sh/)
 
 describe('per-change triggers and concurrency', () => {
   const triggerBlock = ci.match(/^on:\n([\s\S]*?)^concurrency:/m)?.[1] ?? ''
 
-  test('pull requests and integrated main pushes trigger the product workflow', () => {
-    expect(triggerBlock).toMatch(/push:\s*\n\s+branches:\s*\n\s+- main/)
+  test('adversarial: product workflow push branches are exactly main', () => {
+    expect(pushBranches(ci)).toEqual(['main'])
+    expect(pushBranches(ci.replace('      - main', "      - main\n      - '**'"))).not.toEqual(['main'])
     expect(triggerBlock).toMatch(/^\s*pull_request:\s*$/m)
   })
 
@@ -81,6 +89,29 @@ describe('per-change triggers and concurrency', () => {
   test('the gate is not conditional on event type', () => {
     const gateStep = ci.slice(ci.indexOf('- name: Product UI gate'))
     expect(gateStep).not.toMatch(/^\s*if:/m)
+  })
+})
+
+describe('Playwright report validation', () => {
+  const fixtureDir = mkdtempSync(path.join(tmpdir(), 'pip-playwright-report-'))
+  const reportPath = path.join(fixtureDir, 'report.json')
+  const validate = (tests: unknown[]) => {
+    writeFileSync(reportPath, JSON.stringify({
+      stats: {},
+      suites: [{ file: 'required.spec.ts', specs: [{ tests }] }],
+    }))
+    return spawnSync('node', [REPORT_VALIDATOR_PATH, reportPath, 'e2e/required.spec.ts'])
+  }
+
+  afterAll(() => rmSync(fixtureDir, { recursive: true }))
+
+  test('required suites with a completed test are accepted', () => {
+    expect(validate([{ status: 'expected' }]).status).toBe(0)
+  })
+
+  test('adversarial: required suites with no tests or only skipped tests are rejected', () => {
+    expect(validate([]).status).not.toBe(0)
+    expect(validate([{ status: 'skipped' }]).status).not.toBe(0)
   })
 })
 

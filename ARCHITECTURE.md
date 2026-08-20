@@ -2076,9 +2076,10 @@ the installed Playwright version.
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8
-asks that the linter and the tests run on every push, not that documents be
-linted — so ADR-0012 removed it. A document-only ticket takes `logic`, and the
-reviewer walkthrough (DEL-5) is what judges the documentation.
+asks that the linter and tests run once per branch through its pull request and
+on pushes to `main`, not that documents be linted — so ADR-0012 removed it. A
+document-only ticket takes `logic`, and the reviewer walkthrough (DEL-5) is what
+judges the documentation.
 
 `scripts/gate.sh` is a **repo-bootstrap-epic deliverable** and must merge before
 any ticket carrying a tier that invokes it.
