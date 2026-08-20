@@ -1,11 +1,10 @@
 import { defineConfig } from 'vitest/config'
 
-// Two projects (ARCHITECTURE.md §15): `unit` is everything tests/** except
-// tests/integration/**, run by the `logic` tier; `integration` is
-// tests/integration/** plus the named booking concurrency proof, run by the
-// `api` tier against a migrated
-// pip_run_<random> database via tests/setup/postgres.ts's globalSetup
-// (ADR-0013). CQ-1 measures only its named core logic, over both projects.
+// CQ-1 coverage runs the `unit` and `integration` Vitest projects in `logic`
+// (ARCHITECTURE.md §15). `integration` includes tests/integration/** plus the
+// named booking concurrency proof and uses a migrated pip_run_<random>
+// database via tests/setup/postgres.ts's globalSetup (ADR-0013). `api` also
+// runs `integration` without coverage. CQ-1 measures only its named core logic.
 export default defineConfig({
   test: {
     coverage: {
