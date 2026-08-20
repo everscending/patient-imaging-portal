@@ -72,6 +72,7 @@ run_logic() {
 
 run_api() {
   run_logic
+  step VITEST_ACCESS_GRANT_AUTH npx vitest run --project unit tests/adversarial/cross-patient.test.ts
   step VITEST_TIMING npx vitest run --project unit tests/observability/timing.test.ts
   step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts
   step VITEST_E8 npx vitest run --project e8
