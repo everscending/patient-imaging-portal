@@ -159,8 +159,9 @@ test.describe.serial('JOR-236 sharing', () => {
     await registerAndLink(page)
     await page.route('**/api/shares', (route) => route.fulfill({ contentType: 'application/json', body: '{"shares":[]}' }))
     await page.goto('/shares')
-    await expect(page.getByTestId('share-empty')).toHaveText('You have not shared any secure links.')
-    await expect(page.getByTestId('share-list')).toHaveCount(0)
+    await expect(page.getByTestId('share-empty')).toHaveText("You haven't shared anything yet — sharing an image or a report creates a link here.")
+    await expect(page.getByTestId('share-list')).toHaveCount(1)
+    await expect(page.getByTestId('share-row')).toHaveCount(0)
   })
 
   test('shareStatesUseTextAndActiveRevokeUpdatesWithoutReload', async ({ page }) => {

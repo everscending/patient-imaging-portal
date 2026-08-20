@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { EmptyState } from '../../../components/system/EmptyState'
 
 type ReportListItem = {
   id: string
@@ -39,19 +40,21 @@ export default function ReportsPage() {
     <main>
       <h1>Reports</h1>
       {unavailable ? <p role="alert">Reports are temporarily unavailable.</p> : null}
-      {reports?.length === 0 ? <p data-testid="reports-empty">No reports yet — a report appears here once your clinician has signed it.</p> : null}
-      {reports && reports.length > 0 ? (
-        <ul aria-label="Signed reports">
-          {reports.map((report) => (
-            <li key={report.id}>
-              <Link href={`/reports/${report.id}`}>
-                <strong>{report.studyDescription}</strong>
-                <span> — {signedDate(report.signedAt)}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <section aria-label="Signed reports" data-testid="report-list">
+        {reports?.length === 0 ? <EmptyState message="No reports yet — a report appears here once your clinician has signed it." testId="reports-empty" /> : null}
+        {reports && reports.length > 0 ? (
+          <ul>
+            {reports.map((report) => (
+              <li data-testid="report-item" key={report.id}>
+                <Link href={`/reports/${report.id}`}>
+                  <strong>{report.studyDescription}</strong>
+                  <span> — {signedDate(report.signedAt)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
     </main>
   )
 }

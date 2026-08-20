@@ -160,6 +160,14 @@ type FakeIdentityAttempt = {
   attempted_at: string
 }
 
+type FakeDeletionRequest = {
+  id: string
+  patient_id: string
+  requested_by: string
+  requested_at: string
+  status: 'received' | 'in_review' | 'completed' | 'declined'
+}
+
 type FakeShareLink = {
   id: string
   token_hash: string
@@ -202,6 +210,16 @@ const OTHER_PATIENT: FakePatient = {
   date_of_birth: '1979-08-25',
   full_name: 'Casey Vale',
   email: 'casey.vale@example.test',
+  phone: null,
+}
+
+const EMPTY_PATIENT: FakePatient = {
+  id: '66006600-6600-4600-8600-660066006600',
+  user_id: null,
+  patient_ref: 'PT-6600',
+  date_of_birth: '1990-01-02',
+  full_name: 'Empty Fixture Patient',
+  email: 'empty.fixture@example.test',
   phone: null,
 }
 
@@ -496,8 +514,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   ])
   const sessionsByToken = new Map<string, FakeSession>()
   const staffAdminUserIds = new Set<string>()
-  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
+  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
+  let deletionRequests: FakeDeletionRequest[] = []
   let shareLinks: FakeShareLink[] = []
   let emailOutbox: FakeEmailOutbox[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
@@ -925,6 +944,33 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 405, { message: 'method not allowed' })
   }
 
+  async function handleDeletionRequests(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const body = await readJsonBody(req)
+    if (!caller || !patient || body.patient_id !== patient.id || body.requested_by !== caller.id) {
+      sendJson(res, 403, { code: '42501', message: 'deletion request is not accessible' })
+      return
+    }
+    if (deletionRequests.some((request) => request.patient_id === patient.id && request.status === 'received')) {
+      sendJson(res, 409, { code: '23505', message: 'duplicate deletion request' })
+      return
+    }
+    const row: FakeDeletionRequest = {
+      id: randomUUID(),
+      patient_id: patient.id,
+      requested_by: caller.id,
+      requested_at: new Date().toISOString(),
+      status: 'received',
+    }
+    deletionRequests.push(row)
+    sendJson(res, 201, String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json') ? row : [row])
+  }
+
   function filteredOutbox(url: URL): FakeEmailOutbox[] {
     return emailOutbox.filter((row) => {
       const id = queryValue(url, 'id')
@@ -1344,8 +1390,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   function resetIdentityState(res: ServerResponse): void {
-    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
+    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
     identityAttempts = []
+    deletionRequests = []
     shareLinks = []
     emailOutbox = []
     auditEvents.length = 0
@@ -1430,7 +1477,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
-      sendJson(res, 200, { patients, identityAttempts, auditEvents })
+      sendJson(res, 200, { patients, identityAttempts, deletionRequests, auditEvents })
       return
     }
     if (req.method === 'POST' && url.pathname === '/__test__/clock') {
@@ -1472,6 +1519,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/share_links') {
       void handleShareLinks(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/deletion_requests') {
+      void handleDeletionRequests(req, res)
       return
     }
     if (url.pathname === '/rest/v1/email_outbox') {
