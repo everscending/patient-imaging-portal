@@ -146,9 +146,11 @@ function scanArtifact(text: string, rowSets: PhiRows[] = [seededRows(), E2_DEMO_
 
   const timingOperations = new Set<string>()
   for (const line of lines) {
-    const auditTarget = line.startsWith('DEMO_AUDIT_DETAIL ')
-    const timingTarget = line.match(/"op"\s*:\s*"(share\.create|booking\.create)"/)?.[1]
-    const json = auditTarget ? line.slice('DEMO_AUDIT_DETAIL '.length) : line.match(/(\{.*\})/)?.[1]
+    const auditTarget = /^DEMO_AUDIT_DETAIL(?=$|[\s{])/.test(line)
+    const timingTarget = line.match(/"op"\s*:\s*"(share\.create|booking\.create)(?=$|["\s,}])/)?.[1]
+    const json = auditTarget
+      ? line.startsWith('DEMO_AUDIT_DETAIL ') ? line.slice('DEMO_AUDIT_DETAIL '.length) : undefined
+      : line.match(/(\{.*\})/)?.[1]
     if (!json) {
       if (auditTarget) integrityErrors.push('audit detail line is malformed')
       if (timingTarget) integrityErrors.push(`timing line is malformed: ${timingTarget}`)
@@ -313,6 +315,11 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
     expect(result.integrityErrors).toContain('timing line is malformed: share.create')
   })
 
+  test('timingCandidateTruncatedAfterOperation_failsEvenWhenAnotherRecordIsValid', () => {
+    const result = scanArtifact(completeArtifact('{"op":"share.create'))
+    expect(result.integrityErrors).toContain('timing line is malformed: share.create')
+  })
+
   test('emptyOrTruncatedArtifact_failsClosed', () => {
     expect(scanArtifact('').integrityErrors.length).toBeGreaterThan(0)
     expect(scanArtifact(completeArtifact().replace('DEMO_STEP_COMPLETE reminder\n', '')).integrityErrors).toContain(
@@ -324,6 +331,11 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
 describe('JOR-212 public demo-run evidence', () => {
   test('malformedAuditDetailLine_failsEvenWhenRequiredRecordsAreValid', () => {
     const result = scanArtifact(completeArtifact('DEMO_AUDIT_DETAIL {"action":"study.view"'))
+    expect(result.integrityErrors).toContain('audit detail line is malformed')
+  })
+
+  test('auditDetailWithoutDelimiter_failsEvenWhenRequiredRecordsAreValid', () => {
+    const result = scanArtifact(completeArtifact('DEMO_AUDIT_DETAIL{"action":"study.view"}'))
     expect(result.integrityErrors).toContain('audit detail line is malformed')
   })
 
