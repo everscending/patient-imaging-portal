@@ -188,6 +188,7 @@ export const profilePatchSchema = z.object({
   fullName: z.string().trim().min(1).max(200),
   phone: z.union([z.string().trim().min(1).max(64), z.null()]),
 }).strict()
+export const deletionRequestSchema = z.object({}).strict()
 
 /** Remaining API request schemas; route handlers never declare schemas. */
 export const servicesQuerySchema = z.object({}).strict()

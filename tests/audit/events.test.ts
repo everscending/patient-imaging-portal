@@ -165,7 +165,7 @@ vi.mock('next/headers', () => ({
 }))
 
 import type { AuditAction, RecordAuditEventInput } from '../../lib/audit/events'
-import { recordAuditEvent, recordPhiAccessDecision } from '../../lib/audit/events'
+import { recordAuditEvent, recordPhiAccessDecision, recordRequiredPhiAccessDecision } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
@@ -404,6 +404,20 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
     await expect(recordAuditEvent(baseInput())).resolves.toBeUndefined()
     expectRedactedWriteFailureLog(errorSpy.mock.calls)
   })
+
+  test.each(['pg-error', 'throw'] as const)(
+    'requiredPhiDecisionFailsClosedWhenAuditCannotPersist: %s',
+    async function requiredPhiDecisionFailsClosedWhenAuditCannotPersist(behavior) {
+      setInsertBehavior(behavior)
+      setInsertFailureMessage(sensitiveFailureMessage())
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      await expect(recordRequiredPhiAccessDecision(baseInput({ outcome: 'denied' })))
+        .rejects.toThrow('required audit event could not be recorded')
+      expect(auditRows).toHaveLength(0)
+      expectRedactedWriteFailureLog(errorSpy.mock.calls)
+    },
+  )
 
   test('missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole', async function missingSessionDeniedEventPersistsExactlyOnceThroughServiceRole() {
     setCallerHasSession(false)

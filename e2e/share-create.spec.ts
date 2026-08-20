@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 
 import { config } from '../lib/config'
-import { E2_SEEDED_REPORT_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
+import { E2_FOREIGN_SHARE_ID, E2_SEEDED_REPORT_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
 import {
   acquireIdentityFixtureLock,
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
@@ -159,8 +159,34 @@ test.describe.serial('JOR-236 sharing', () => {
     await registerAndLink(page)
     await page.route('**/api/shares', (route) => route.fulfill({ contentType: 'application/json', body: '{"shares":[]}' }))
     await page.goto('/shares')
-    await expect(page.getByTestId('share-empty')).toHaveText('You have not shared any secure links.')
-    await expect(page.getByTestId('share-list')).toHaveCount(0)
+    await expect(page.getByTestId('share-empty')).toHaveText("You haven't shared anything yet — sharing an image or a report creates a link here.")
+    const list = page.getByRole('list', { name: 'Secure share links' })
+    await expect(list).toHaveCount(1)
+    await expect(list.getByRole('listitem')).toHaveCount(0)
+    await expect(list).toHaveAttribute('aria-describedby', 'shares-empty-message')
+  })
+
+  test('crossPatientRevokeReturnsOpaque404AndOneDeniedAudit', async ({ page }) => {
+    await registerAndLink(page)
+    const response = await page.request.delete(`/api/shares/${E2_FOREIGN_SHARE_ID}`)
+    expect(response.status()).toBe(404)
+    expect(await response.json()).toEqual({
+      error: 'not_found',
+      message: 'The requested resource was not found.',
+    })
+
+    const state = await (await page.request.get(`${await fakeServerUrl()}/__test__/identity-state`)).json() as {
+      auditEvents: Array<Record<string, unknown>>
+    }
+    expect(state.auditEvents.filter((event) => event.action === 'share.revoke')).toEqual([
+      expect.objectContaining({
+        action: 'share.revoke',
+        target_kind: 'share_link',
+        target_id: E2_FOREIGN_SHARE_ID,
+        outcome: 'denied',
+        detail: null,
+      }),
+    ])
   })
 
   test('shareStatesUseTextAndActiveRevokeUpdatesWithoutReload', async ({ page }) => {
