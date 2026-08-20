@@ -342,7 +342,7 @@ input {
 .pip-slot-list, .pip-slot-day, .pip-book-confirmation { display: grid; gap: 0.75rem; }
 .pip-slot-day { margin: 1rem 0; }
 .pip-slot-day h2 { margin: 0; font-size: 1.1rem; }
-.pip-slot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem; }
+.pip-slot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem; max-width: 100%; overflow-x: auto; }
 .pip-slot-button { min-height: var(--pip-tap-target); padding: 0.5rem; border: 1px solid var(--pip-color-primary); border-radius: 0.5rem; color: var(--pip-color-primary); background: var(--pip-color-base-100); font: inherit; cursor: pointer; }
 .pip-slot-button[aria-pressed='true'] { color: var(--pip-color-base-100); background: var(--pip-color-primary); }
 .pip-slot-button:disabled { border-color: var(--pip-color-base-300); color: var(--pip-color-secondary); background: var(--pip-color-base-200); cursor: not-allowed; }

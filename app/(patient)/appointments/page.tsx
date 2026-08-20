@@ -50,7 +50,7 @@ export default function AppointmentsPage() {
       {unavailable ? <p role="alert">Appointments are temporarily unavailable.</p> : null}
       {appointments?.length === 0 ? <p data-testid="appointments-empty"><strong>No appointments yet</strong> — booked appointments appear here.</p> : null}
       {appointments && appointments.length > 0 ? (
-        <section aria-label="Appointments" data-testid="appointment-list">
+        <section aria-label="Appointments" className="pip-appointment-list" data-testid="appointment-list">
           <table className="pip-appointment-table">
             <caption className="pip-visually-hidden">Appointments</caption>
             <thead><tr><th scope="col">Appointment</th><th scope="col">Annotation</th><th scope="col">Actions</th></tr></thead>
@@ -60,6 +60,7 @@ export default function AppointmentsPage() {
       ) : null}
       <style>{`
         .pip-appointments-page { max-width: 72rem; margin: 0 auto; overflow-wrap: anywhere; }
+        .pip-appointment-list { max-width: 100%; overflow-x: auto; }
         .pip-appointment-card { display: grid; gap: 0.5rem; min-width: 0; padding: 1rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.75rem; background: var(--pip-color-base-100); }
         .pip-appointment-card td { display: block; padding: 0; border: 0; }
         .pip-appointment-card td:first-child > span, .pip-appointment-card td:first-child > time { display: block; margin-bottom: 0.25rem; }
