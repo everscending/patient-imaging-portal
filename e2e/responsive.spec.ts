@@ -268,7 +268,10 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await page.goto('/book')
     await page.getByTestId('service-select').selectOption(E2_BOOK_SERVICE_ID)
     await page.getByTestId('provider-select').selectOption({ label: 'Dr. Riley Patel' })
-    await expectHorizontalOverflowOwnedBy(page.getByTestId('slot-grid').first())
+    await expect(page.getByTestId('slot-grid').first()).toBeVisible()
+    const slotGrids = await page.getByTestId('slot-grid').all()
+    const slotCounts = await Promise.all(slotGrids.map((grid) => grid.getByTestId('slot-item').count()))
+    await expectHorizontalOverflowOwnedBy(slotGrids[slotCounts.indexOf(Math.max(...slotCounts))]!)
     await expectNoPageOverflow(page)
 
     await page.goto('/appointments')
@@ -325,6 +328,7 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Reports' })).toBeVisible()
     await expect(page.getByRole('link', { name: /Seeded abdominal ultrasound/ })).toBeVisible()
     await expectNoPageOverflow(page)
+    await expectNoForbiddenTextColour(page)
     await page.getByRole('link', { name: /Seeded abdominal ultrasound/ }).click()
     await expectPhoneSurface(page, ['report-view', 'report-findings', 'report-impression', 'share-create'])
 
@@ -360,6 +364,7 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await expectTapTarget(page.getByTestId('book-submit'))
     await page.getByTestId('book-submit').click()
     await expect(page.getByTestId('booking-success')).toBeVisible()
+    await expectNoForbiddenTextColour(page)
 
     await page.goto('/appointments')
     await expectPhoneSurface(page, ['appointment-list', 'appointment-item'])
