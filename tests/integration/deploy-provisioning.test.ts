@@ -84,6 +84,13 @@ describe('deployed provisioning program', () => {
   }, 60_000)
 
   test('retries a partial seed, stays idempotent, and rejects row-shaping input drift', async () => {
+    let workerTaskUpdateCompleted = false
+    setTimeout(() => {
+      setImmediate(() => { workerTaskUpdateCompleted = true })
+    }, 0)
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(workerTaskUpdateCompleted).toBe(true)
     const objects = new Map<string, Buffer>()
     const storage: PhiStorageClient = {
       storage: {
@@ -145,8 +152,6 @@ describe('deployed provisioning program', () => {
     await provisionSeed(config, storage, authAdmin, sql)
     const patientCount = psql(run.dbName, 'select count(*) from patients;')
     const objectCount = objects.size
-    // Let Vitest finish the prior case's worker RPC before this long synchronous proof.
-    await new Promise<void>((resolve) => setImmediate(resolve))
 
     const rowSet = buildRowSet({
       pool: generateAssetPool(config.seedSourceSeed),
