@@ -743,6 +743,18 @@ describe('resolveCallerId', () => {
     expect(session).toEqual({ accessToken: FAKE_ACCESS_TOKEN, userId: 'caller-42' })
   })
 
+  test('nonCredentialAuthErrorRetainsNullableSessionCompatibility', async function nonCredentialAuthErrorRetainsNullableSessionCompatibility() {
+    authClientMock.mockReturnValueOnce({
+      auth: {
+        async getUser() {
+          return { data: { user: null }, error: { status: 503 } }
+        },
+      },
+    } as never)
+
+    await expect(resolveAuthenticatedSession()).resolves.toBeNull()
+  })
+
   test('resolvesTheAuthenticatedCallerId', async function resolvesTheAuthenticatedCallerId() {
     setCallerHasSession(true)
     setCallerUserId('caller-42')

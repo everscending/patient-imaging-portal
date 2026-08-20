@@ -1,5 +1,4 @@
-import { guardPhiAccess } from '../../../../../../lib/access/guard'
-import { resolveAuthenticatedSession } from '../../../../../../lib/access/identity'
+import { authenticatePhiRequest, guardAuthenticatedPhiAccess } from '../../../../../../lib/access/guard'
 import { anonClient } from '../../../../../../lib/db/client'
 import { clipManifest } from '../../../../../../lib/imaging/studies'
 import { parseParams, studyClipParamsSchema } from '../../../../../../lib/validation'
@@ -11,10 +10,21 @@ function denied(status: 401 | 403 | 404): Response {
   return errorResponse(404, 'not_found', 'The requested resource was not found.')
 }
 export async function GET(_: Request, context: { params: Promise<Record<string, string>> }): Promise<Response> {
-  const session = await resolveAuthenticatedSession()
+  const authentication = await authenticatePhiRequest()
+  const session = authentication.status === 'authenticated' ? authentication.session : null
   const parsed = parseParams(studyClipParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
-  const access = await guardPhiAccess({ kind: 'patient', userId: session?.userId ?? '' }, { kind: 'clip', id: parsed.value.clipId }, 'clip.view')
+  let access
+  try {
+    access = await guardAuthenticatedPhiAccess(
+      { kind: 'patient', userId: session?.userId ?? '' },
+      { kind: 'clip', id: parsed.value.clipId },
+      'clip.view',
+      authentication,
+    )
+  } catch {
+    return errorResponse(503, 'imaging_unavailable', 'Imaging is temporarily unavailable.')
+  }
   if (!access.ok) return denied(access.status)
   if (!session) return denied(401)
   const manifest = await clipManifest(anonClient(session.accessToken), parsed.value.studyId, parsed.value.clipId)

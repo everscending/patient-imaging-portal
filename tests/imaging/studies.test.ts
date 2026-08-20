@@ -38,7 +38,16 @@ const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.h
   }
 })
 
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
+vi.mock('../../lib/access/guard', () => ({
+  guardPhiAccess: guardMock,
+  guardAuthenticatedPhiAccess: guardMock,
+  authenticatePhiRequest: async () => {
+    const userId = await callerMock()
+    return userId
+      ? { status: 'authenticated', session: { accessToken: 'caller-token', userId } }
+      : { status: 'unauthenticated' }
+  },
+}))
 vi.mock('../../lib/access/identity', () => ({
   resolveCallerId: callerMock,
   resolveAuthenticatedSession: async () => {
@@ -83,6 +92,8 @@ function client(data: Data): never {
 
 const studyId = '11111111-1111-4111-8111-111111111111'
 const clipId = '22222222-2222-4222-8222-222222222222'
+const authenticated = { status: 'authenticated', session: { accessToken: 'caller-token', userId: 'account-1' } }
+const unauthenticated = { status: 'unauthenticated' }
 
 beforeEach(() => reset())
 
@@ -97,7 +108,7 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
 
     await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
 
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'admin', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'admin', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
   })
 
   test('studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision', async function studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision() {
@@ -110,7 +121,7 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
     expect(guardMock).toHaveBeenCalledTimes(1)
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'provider', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'provider', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
   })
 
   test('studyDetailKeepsPatientUnlinkedAndAnonymousDenials', async function studyDetailKeepsPatientUnlinkedAndAnonymousDenials() {
@@ -127,8 +138,8 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(await unlinked.json()).toEqual({ error: 'identity_verification_required', message: 'Verify your identity to continue.' })
     expect(anonymous.status).toBe(401)
     expect(await anonymous.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
-    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
-    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view', unauthenticated)
   })
 
   test('listGuardsOnceWithCollectionTarget', async function listGuardsOnceWithCollectionTarget() {
@@ -148,12 +159,12 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     const { GET } = await import('../../app/api/studies/[studyId]/route')
     const response = await GET(new Request('http://test/api/studies/x'), { params: Promise.resolve({ studyId }) })
     expect(response.status).toBe(404)
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
     expect(anonMock).toHaveBeenCalledOnce()
     expect(signingMock).not.toHaveBeenCalled()
   })
 
-  test('owningVerifiedPatientReadsStudyDetail', async function owningVerifiedPatientReadsStudyDetail() {
+  test('owningAuthenticatedPatientReadsStudyDetail', async function owningAuthenticatedPatientReadsStudyDetail() {
     anonMock.mockReturnValue(client({
       studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
       visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
@@ -167,7 +178,7 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
 
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ id: studyId, description: 'Owned study', images: [], clips: [] })
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view')
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
   })
 
   test('unauthenticatedDetailAndClipReadsReachTheirAuditedGuards', async function unauthenticatedDetailAndClipReadsReachTheirAuditedGuards() {
@@ -179,8 +190,8 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     const clipResponse = await clipGet(new Request(`http://test/api/studies/${studyId}/clips/${clipId}`), { params: Promise.resolve({ studyId, clipId }) })
 
     expect([studyResponse.status, clipResponse.status]).toEqual([401, 401])
-    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view')
-    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'clip', id: clipId }, 'clip.view')
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view', unauthenticated)
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'clip', id: clipId }, 'clip.view', unauthenticated)
     expect(JSON.stringify([await studyResponse.json(), await clipResponse.json()])).not.toMatch(new RegExp(`${studyId}|${clipId}`))
   })
 })
