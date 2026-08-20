@@ -453,12 +453,6 @@ export async function startE8AcceptanceFixture(): Promise<E8AcceptanceFixture> {
   let boundary: RunningBoundary | undefined
   let child: ChildProcess | undefined
   try {
-    await dockerPsql(
-      run,
-      `create or replace function auth.uid() returns uuid
-       language sql stable
-       as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`,
-    )
     const rowSet = await seedDatabase(run, new Date())
     boundary = await startSupabaseBoundary(run)
     const port = await unusedPort()

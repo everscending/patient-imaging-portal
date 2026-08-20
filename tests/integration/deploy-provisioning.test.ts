@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import {
   buildMigrationProgram,
+  buildSeedChecksum,
   provisionSeed,
   readMigrationFiles,
   type DeploymentConfig,
@@ -28,8 +29,6 @@ function psql(dbName: string, sql: string): string {
 const PLATFORM_STUB = `
 create schema storage;
 create table storage.buckets (id text primary key, name text not null, public boolean not null default false);
-create or replace function auth.uid() returns uuid language sql stable
-as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     create role anon nologin noinherit;
@@ -62,7 +61,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('10')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('11')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')
@@ -149,8 +148,20 @@ describe('deployed provisioning program', () => {
     expect(objects.size).toBe(objectCount)
     expect(users.size).toBe(3)
 
+    psql(
+      run.dbName,
+      "update app_deploy.seed_runs set checksum = '0131eb052fffffec6b7c757d8b0df5269840856a431309a6cd132dcafa26794f' where singleton;",
+    )
+    await provisionSeed(config, storage, authAdmin, sql)
+    expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
+      buildSeedChecksum(config),
+    )
+
     await expect(
       provisionSeed({ ...config, minChangeNoticeHours: 48 }, storage, authAdmin, sql),
+    ).rejects.toThrow('applied seed does not match this checkout')
+    await expect(
+      provisionSeed({ ...config, seedSourceSeed: 'changed-source' }, storage, authAdmin, sql),
     ).rejects.toThrow('applied seed does not match this checkout')
   }, 60_000)
 })

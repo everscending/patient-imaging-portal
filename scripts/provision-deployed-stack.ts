@@ -17,6 +17,16 @@ const MIGRATIONS_DIR = path.join(REPO_ROOT, 'db', 'migrations')
 const DEPLOY_DIR = path.join(REPO_ROOT, 'db', 'deploy')
 const STORAGE_SQL = path.join(REPO_ROOT, 'db', 'storage', 'bucket.sql')
 const SEED_DIR = path.join(REPO_ROOT, 'db', 'seed')
+const SEED_IDENTITY_FILES = ['assets.ts', 'rows.ts'] as const
+// The live seed predates the identity-only checksum. Accept exactly that
+// marker for exactly its unchanged row/asset identity, then replace it with
+// the narrower checksum. Either side drifting keeps the provisioner closed.
+const LEGACY_SEED_CHECKSUM_UPGRADES = new Map([
+  [
+    '0131eb052fffffec6b7c757d8b0df5269840856a431309a6cd132dcafa26794f',
+    '39ee3a9e535584d7d8386ecdb4b6ec248151f43becf99558644cabc7cc75b837',
+  ],
+])
 const MIGRATION_LOCK = 7_402_021
 const READY_TIMEOUT_MS = 30_000
 
@@ -115,13 +125,29 @@ function runPsql(sql: string, tuplesOnly = false): string {
   }
 }
 
-function seedChecksum(config: DeploymentConfig): string {
+export function buildSeedChecksum(config: DeploymentConfig, seedDir = SEED_DIR): string {
   const hash = createHash('sha256')
-  for (const name of readdirSync(SEED_DIR).filter((file) => file.endsWith('.ts')).sort()) {
-    hash.update(name).update('\0').update(readFileSync(path.join(SEED_DIR, name))).update('\0')
+  for (const name of SEED_IDENTITY_FILES) {
+    hash.update(name).update('\0').update(readFileSync(path.join(seedDir, name))).update('\0')
   }
   hash.update('minChangeNoticeHours\0').update(String(config.minChangeNoticeHours))
   return hash.digest('hex')
+}
+
+function upgradeLegacySeedChecksum(sql: typeof runPsql, markerChecksum: string, checksum: string): boolean {
+  if (LEGACY_SEED_CHECKSUM_UPGRADES.get(markerChecksum) !== checksum) return false
+  sql(`do $$
+begin
+  update app_deploy.seed_runs
+     set checksum = ${sqlLiteral(checksum)}
+   where singleton and checksum = ${sqlLiteral(markerChecksum)};
+  if not found and not exists (
+    select 1 from app_deploy.seed_runs where singleton and checksum = ${sqlLiteral(checksum)}
+  ) then
+    raise exception 'seed marker changed while its checksum contract was upgraded';
+  end if;
+end $$;`)
+  return true
 }
 
 function readSeedMarker(sql: typeof runPsql): SeedMarker {
@@ -158,10 +184,13 @@ export async function provisionSeed(
   authAdmin: AuthAdminClient,
   sql: typeof runPsql = runPsql,
 ): Promise<void> {
-  const checksum = seedChecksum(config)
+  const checksum = buildSeedChecksum(config)
   const marker = readSeedMarker(sql)
   if (marker) {
-    if (marker.sourceSeed !== config.seedSourceSeed || marker.checksum !== checksum) {
+    if (marker.sourceSeed !== config.seedSourceSeed) {
+      throw new Error('provision-deployed-stack: applied seed does not match this checkout')
+    }
+    if (marker.checksum !== checksum && !upgradeLegacySeedChecksum(sql, marker.checksum, checksum)) {
       throw new Error('provision-deployed-stack: applied seed does not match this checkout')
     }
     await uploadPool(storage, generateAssetPool(config.seedSourceSeed))

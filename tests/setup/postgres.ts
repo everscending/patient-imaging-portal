@@ -187,7 +187,7 @@ create table if not exists auth.users (
 );
 create or replace function auth.uid() returns uuid
 language sql stable
-as $$ select null::uuid $$;
+as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
 `
 
 // Arbitrary fixed key identifying "first-time app_user provisioning" as a

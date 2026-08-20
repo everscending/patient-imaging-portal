@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 
-import { buildMigrationProgram, readMigrationFiles } from '../../scripts/provision-deployed-stack'
+import { buildMigrationProgram, buildSeedChecksum, readMigrationFiles } from '../../scripts/provision-deployed-stack'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const GRANTS = readFileSync(path.join(REPO_ROOT, 'db', 'deploy', 'postgrest-grants.sql'), 'utf8')
@@ -24,6 +25,7 @@ describe('deployed schema provisioning', () => {
       '007_reschedule_cancel_appointments.sql',
       '008_transition_appointment.sql',
       '009_anonymous_audit_actor.sql',
+      '009_hosted_jwt_claims.sql',
     ])
 
     const program = buildMigrationProgram(files)
@@ -85,5 +87,36 @@ describe('deployed schema provisioning', () => {
     expect(VITE_CONFIG).toContain("conditions: ['react-server']")
     expect(VITE_CONFIG).toContain("externalConditions: ['react-server']")
     expect(SHELL).not.toMatch(/--password|--db-url|echo.*!required/)
+  })
+
+  test('seed identity ignores execution helpers but detects persisted-data and configuration drift', () => {
+    const seedDir = mkdtempSync(path.join(tmpdir(), 'pip-seed-identity-'))
+    const config = {
+      supabaseUrl: 'http://127.0.0.1',
+      supabaseAnonKey: 'anon',
+      supabaseServiceRoleKey: 'service',
+      seedSourceSeed: 'fixture-seed',
+      minChangeNoticeHours: 24,
+    }
+
+    try {
+      writeFileSync(path.join(seedDir, 'assets.ts'), 'export const assets = ["one"]\n')
+      writeFileSync(path.join(seedDir, 'rows.ts'), 'export const rows = ["one"]\n')
+      writeFileSync(path.join(seedDir, 'fixtures-out-of-hours.ts'), 'old execution helper\n')
+      const baseline = buildSeedChecksum(config, seedDir)
+
+      writeFileSync(path.join(seedDir, 'fixtures-out-of-hours.ts'), 'hosted JWT execution helper\n')
+      expect(buildSeedChecksum(config, seedDir)).toBe(baseline)
+
+      writeFileSync(path.join(seedDir, 'rows.ts'), 'export const rows = ["two"]\n')
+      expect(buildSeedChecksum(config, seedDir)).not.toBe(baseline)
+      writeFileSync(path.join(seedDir, 'rows.ts'), 'export const rows = ["one"]\n')
+      writeFileSync(path.join(seedDir, 'assets.ts'), 'export const assets = ["two"]\n')
+      expect(buildSeedChecksum(config, seedDir)).not.toBe(baseline)
+      writeFileSync(path.join(seedDir, 'assets.ts'), 'export const assets = ["one"]\n')
+      expect(buildSeedChecksum({ ...config, minChangeNoticeHours: 48 }, seedDir)).not.toBe(baseline)
+    } finally {
+      rmSync(seedDir, { recursive: true, force: true })
+    }
   })
 })
