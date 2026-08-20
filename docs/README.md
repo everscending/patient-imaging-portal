@@ -5,10 +5,13 @@ worktree. It links to each document; it does not restate a policy, a
 parameter, or a number that document already states — see that document for
 the fact itself.
 
-The retention/deletion policy, the coverage report, the EL-1 benchmark, and
-the recorded demo each belong here once their own ticket lands and creates
-the file. None of those files exist in this worktree yet, so none is linked
-below — a link with nothing behind it is worse than no link.
+The coverage report, EL-1 benchmark, and recorded demo each belong here once
+their own ticket lands and creates the file. None exists in this worktree yet,
+so none is linked below — a link with nothing behind it is worse than no link.
+
+## Policies
+
+- [Retention and deletion](retention-and-deletion.md)
 
 ## Architecture Decision Records (`docs/adr/`)
 

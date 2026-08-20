@@ -223,8 +223,8 @@ afterAll(async () => {
   if (mainRun) await stopRun(mainRun)
 })
 
-describe('AC: 003 applies clean on top of 002', () => {
-  test('migrationAppliesCleanOnTopOf002', function migrationAppliesCleanOnTopOf002() {
+describe('AC: the complete forward migration chain applies cleanly', () => {
+  test('migrationChainAppliesCleanly', function migrationChainAppliesCleanly() {
     const functionCount = psql(
       mainRun.dbName,
       `select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -240,7 +240,13 @@ describe('AC: 003 applies clean on top of 002', () => {
 
     expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.email_outbox', 'INSERT');`)).toBe('t')
     expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.email_outbox', 'UPDATE');`)).toBe('t')
-    expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.deletion_requests', 'INSERT');`)).toBe('t')
+    expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.deletion_requests', 'INSERT');`)).toBe('f')
+    expect(
+      psql(
+        mainRun.dbName,
+        `select has_function_privilege('app_user', 'request_profile_deletion(boolean)', 'EXECUTE');`,
+      ),
+    ).toBe('t')
     expect(
       psql(
         mainRun.dbName,
@@ -629,19 +635,39 @@ describe('AC + adversarial: a patient shares their own image; naming another pat
   })
 })
 
-describe('AC + adversarial: a patient inserts a deletion request for themselves and reads it back', () => {
-  test('patientInsertsOwnDeletionRequestAndReadsItBack', function patientInsertsOwnDeletionRequestAndReadsItBack() {
+describe('AC + adversarial: a patient requests deletion only through the server-derived RPC and reads it back', () => {
+  test('patientDirectInsertRefusedRpcCreatesOwnRequestAndAudit', function patientDirectInsertRefusedRpcCreatesOwnRequestAndAudit() {
     const userA = insertAuthUser(mainRun.dbName)
     const patientA = insertPatient(mainRun.dbName, userA)
 
-    const insertedId = psql(
+    expectRawFailure(
       mainRun.dbName,
       appUserScript(userA, `insert into deletion_requests (patient_id, requested_by) values ('${patientA}', '${userA}') returning id;`),
+      '42501',
     )
-    expect(insertedId).toMatch(/^[0-9a-f-]{36}$/)
 
-    const readBack = psql(mainRun.dbName, appUserScript(userA, `select id from deletion_requests where id = '${insertedId}';`))
-    expect(readBack).toBe(insertedId)
+    const rpcResult = psql(
+      mainRun.dbName,
+      appUserScript(userA, `select request_status || '|' || (requested_at is not null)::text from request_profile_deletion(true);`),
+    )
+    expect(rpcResult).toBe('received|true')
+
+    const readBack = psql(
+      mainRun.dbName,
+      appUserScript(
+        userA,
+        `select patient_id::text || '|' || requested_by::text || '|' || status
+         from deletion_requests where patient_id = '${patientA}';`,
+      ),
+    )
+    expect(readBack).toBe(`${patientA}|${userA}|received`)
+
+    const auditCount = psql(
+      mainRun.dbName,
+      `select count(*) from audit_events
+       where actor_ref = '${userA}' and action = 'profile.deletion_request' and outcome = 'granted';`,
+    )
+    expect(auditCount).toBe('1')
   })
 })
 
