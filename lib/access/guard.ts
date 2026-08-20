@@ -3,7 +3,7 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 import type { AuditAction } from '../audit/events'
-import { recordPhiAccessDecision } from '../audit/events'
+import { recordPhiAccessDecision, recordRequiredPhiAccessDecision } from '../audit/events'
 import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
@@ -20,6 +20,7 @@ export type PhiTarget =
   | { kind: 'clip'; id: string }
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
+  | { kind: 'patient'; id: string | null }
   | { kind: 'schedule'; id: string } // id = provider id
   | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
@@ -70,6 +71,7 @@ function targetAuditFields(target: PhiTarget): { targetKind: string; targetId: s
     case 'clip':
     case 'report':
     case 'appointment':
+    case 'patient':
     case 'schedule':
     case 'share_link':
       return { targetKind: target.kind, targetId: target.id }
@@ -165,6 +167,10 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
   const patientId = patient.id
 
   switch (target.kind) {
+    case 'patient':
+      return target.id === null || target.id === patientId
+        ? { ok: true, patientId }
+        : { ok: false, status: 404 }
     case 'collection':
       // §5/ADR-0012: no per-item check — there is no named item. Rows
       // themselves stay scoped by RLS; this grant never widens what returns.
@@ -236,6 +242,7 @@ async function decideProvider(client: Client, userId: string, target: PhiTarget)
       return { ok: true, patientId: null }
     case 'audit_log':
     case 'share_link':
+    case 'patient':
       return { ok: false, status: 404 }
     case 'image':
     case 'clip':
@@ -275,6 +282,7 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
       // audit write happens unconditionally in guardPhiAccess below.
       return { ok: true, patientId: null }
     case 'share_link':
+    case 'patient':
       return { ok: false, status: 404 }
     case 'schedule': {
       const provider = await fetchRow<ProviderRow>(client, 'providers', 'id', [['id', target.id]])
@@ -381,28 +389,39 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
 }
 
 /**
- * Verifies session, identity link, and ownership; writes exactly one
- * audit event either way. Never throws for an authorization failure —
- * the caller maps `status` straight to a response.
+ * Verifies session, identity link, and ownership. By default it writes exactly
+ * one audit event either way. An ADR-0014 transaction may own the granted row;
+ * denials still persist here and fail closed.
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
  */
-export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
+export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+): Promise<GuardResult> {
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
 
   const accessDecision = await decide(actor, target)
   const decision = accessDecision.result
 
-  await recordPhiAccessDecision({
+  const audit = {
     actorKind,
     actorRef: accessDecision.authenticatedUserId ?? actorRef,
     action: recordedAction(target, action),
     targetKind,
     targetId,
     outcome: decision.ok ? 'granted' : 'denied',
-  })
+  } as const
+
+  if (options?.grantedAudit === 'transactional-rpc') {
+    if (!decision.ok) await recordRequiredPhiAccessDecision(audit)
+  } else {
+    await recordPhiAccessDecision(audit)
+  }
 
   if (accessDecision.dependencyFailed) {
     throw new Error('guardPhiAccess: authorization dependency unavailable')

@@ -40,12 +40,10 @@ export default function ReportsPage() {
     <main>
       <h1>Reports</h1>
       {unavailable ? <p role="alert">Reports are temporarily unavailable.</p> : null}
-      <ul aria-label="Signed reports" data-testid="report-list">
-        {reports?.length === 0 ? (
-          <li>
-            <EmptyState message="No reports yet — a report appears here once your clinician has signed it." testId="reports-empty" />
-          </li>
-        ) : null}
+      {reports?.length === 0 ? (
+        <EmptyState id="reports-empty-message" message="No reports yet — a report appears here once your clinician has signed it." testId="reports-empty" />
+      ) : null}
+      <ul aria-describedby={reports?.length === 0 ? 'reports-empty-message' : undefined} aria-label="Signed reports" data-testid="report-list">
         {reports?.map((report) => (
           <li data-testid="report-item" key={report.id}>
             <Link href={`/reports/${report.id}`}>

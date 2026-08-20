@@ -125,9 +125,11 @@ test.describe.serial('JOR-218 reports', () => {
     await page.goto('/reports')
     await expect(page.getByRole('heading', { level: 1, name: 'Reports' })).toHaveCount(1)
     const signedReports = page.getByRole('list', { name: 'Signed reports' })
-    await expect(signedReports.getByTestId('reports-empty')).toHaveText(
+    await expect(page.getByTestId('reports-empty')).toHaveText(
       'No reports yet — a report appears here once your clinician has signed it.',
     )
+    await expect(signedReports.getByRole('listitem')).toHaveCount(0)
+    await expect(signedReports).toHaveAttribute('aria-describedby', 'reports-empty-message')
   })
 
   test('reportLayoutAt390pxHasNoHorizontalPageScroll', async ({ page }) => {

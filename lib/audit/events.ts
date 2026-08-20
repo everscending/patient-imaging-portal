@@ -137,13 +137,14 @@ async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean):
  * An unapproved `detail` key or value is a caller bug, not a write failure,
  * so it throws synchronously instead of being logged and dropped.
  */
-async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<void> {
+async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: boolean, required = false): Promise<void> {
   if (!detailIsApproved(input.detail)) {
     // Do not echo the rejected key or value: either can itself contain PHI or
     // a credential and this exception may be captured by an outer logger.
     throw new Error('recordAuditEvent: detail contains an unapproved key or value — SEC-6/SEC-7')
   }
 
+  let failed = false
   try {
     const client = await writeClient(input, fromPhiGuard)
     const { error } = await client.from('audit_events').insert({
@@ -155,9 +156,14 @@ async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: bool
       outcome: input.outcome,
       detail: input.detail ?? null,
     })
-    if (error) logWriteFailure(input.action)
+    failed = error !== null
   } catch {
+    failed = true
+  }
+
+  if (failed) {
     logWriteFailure(input.action)
+    if (required) throw new Error('required audit event could not be recorded')
   }
 }
 
@@ -172,6 +178,11 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
  */
 export async function recordPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
   return appendAuditEvent(input, true)
+}
+
+/** Refusal paths that cannot truthfully respond without their audit row. */
+export async function recordRequiredPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
+  return appendAuditEvent(input, true, true)
 }
 
 /** Reads the append-only audit log through the caller-scoped admin RLS policy. */

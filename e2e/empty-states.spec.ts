@@ -57,9 +57,21 @@ test('zero-row lists keep their containers and render the pinned empty-state cop
   for (const [path, listHook, rowHook, copy] of cases) {
     await page.goto(path)
     const list = page.getByTestId(listHook)
-    await expect(list).toBeVisible()
-    await expect(list.getByText(copy, { exact: true })).toBeVisible()
+    await expect(list).toHaveCount(1)
+    await expect(page.getByText(copy, { exact: true })).toBeVisible()
     await expect(page.getByTestId(rowHook)).toHaveCount(0)
+  }
+
+  for (const [path, name, hook, messageId] of [
+    ['/reports', 'Signed reports', 'report-list', 'reports-empty-message'],
+    ['/shares', 'Secure share links', 'share-list', 'shares-empty-message'],
+  ] as const) {
+    await page.goto(path)
+    const list = page.getByTestId(hook)
+    await expect(list).toHaveRole('list')
+    await expect(list).toHaveAttribute('aria-label', name)
+    await expect(list.getByRole('listitem')).toHaveCount(0)
+    await expect(list).toHaveAttribute('aria-describedby', messageId)
   }
 })
 
@@ -67,7 +79,16 @@ test('deletion request validates the caller and body, records one row, audits bo
   const route = '/api/profile/deletion-request'
   expect((await page.request.post(route, { data: {} })).status()).toBe(401)
 
-  const callerId = await registerAndLink(page)
+  const email = `empty-${Date.now()}-${Math.random()}@example.test`
+  expect((await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
+  const login = await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })
+  expect(login.status()).toBe(200)
+  const callerId = ((await login.json()) as { userId: string }).userId
+  expect((await page.request.post(route, { data: {} })).status()).toBe(403)
+  expect((await page.request.post('/api/identity/verify', {
+    data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
+    headers: { 'x-forwarded-for': `192.0.2.${Math.floor(Math.random() * 200) + 1}` },
+  })).status()).toBe(200)
   expect((await page.request.post(route, { data: { patientId: '55825582-5582-4582-8582-558255825582' } })).status()).toBe(422)
   expect((await page.request.post(route, {
     data: '{',
@@ -87,7 +108,7 @@ test('deletion request validates the caller and body, records one row, audits bo
 
   const state = await (await page.request.get(`${await fakeAuthServerUrl()}/__test__/identity-state`)).json() as {
     deletionRequests: Array<{ patient_id: string; requested_by: string; status: string }>
-    auditEvents: Array<{ action: string; outcome: string }>
+    auditEvents: Array<{ action: string; target_kind: string; target_id: string | null; outcome: string; detail: unknown }>
   }
   expect(state.deletionRequests).toHaveLength(1)
   expect(state.deletionRequests[0]).toMatchObject({
@@ -96,6 +117,10 @@ test('deletion request validates the caller and body, records one row, audits bo
   })
   expect(state.deletionRequests[0]?.requested_by).toBe(callerId)
   expect(state.auditEvents.filter((event) => event.action === 'profile.deletion_request')).toEqual([
+    expect.objectContaining({ outcome: 'denied', target_kind: 'patient', target_id: null }),
+    expect.objectContaining({ outcome: 'denied', target_kind: 'patient', target_id: null }),
+    expect.objectContaining({ outcome: 'denied', target_kind: 'patient', target_id: '44714471-4471-4471-8471-447144714471', detail: null }),
+    expect.objectContaining({ outcome: 'denied', target_kind: 'patient', target_id: '44714471-4471-4471-8471-447144714471', detail: null }),
     expect.objectContaining({ outcome: 'granted' }),
     expect.objectContaining({ outcome: 'denied' }),
   ])
@@ -175,6 +200,10 @@ test('retention policy names every required record class and deletion residue', 
 
 test('deletion request is insert-only and cannot erase or revoke patient data', async () => {
   const route = await readFile(path.join(REPO_ROOT, 'app/api/profile/deletion-request/route.ts'), 'utf8')
-  expect(route).not.toMatch(/\.delete\s*\(|\.update\s*\(|serviceClient/)
-  expect(route).toContain(".from('deletion_requests')")
+  const domain = await readFile(path.join(REPO_ROOT, 'lib/profile/deletion-requests.ts'), 'utf8')
+  const migration = await readFile(path.join(REPO_ROOT, 'db/migrations/010_profile_deletion_requests.sql'), 'utf8')
+  expect(`${route}\n${domain}`).not.toMatch(/\.delete\s*\(|\.update\s*\(|serviceClient/)
+  expect(route).not.toContain(".from('deletion_requests')")
+  expect(domain).toContain(".rpc('request_profile_deletion'")
+  expect(migration).not.toMatch(/\b(?:delete\s+from|update)\s+deletion_requests\b/i)
 })

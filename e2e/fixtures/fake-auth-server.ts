@@ -239,6 +239,7 @@ export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
+export const E2_FOREIGN_SHARE_ID = 'dd00dd00-dd00-4d00-8d00-dd00dd00dd00'
 export const E2_BOOK_SERVICE_ID = '77667766-7766-4766-8766-776677667766'
 export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
 export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
@@ -423,6 +424,19 @@ const REPORTS: FakeReport[] = [
   },
 ]
 
+const FOREIGN_SHARE_LINK: FakeShareLink = {
+  id: E2_FOREIGN_SHARE_ID,
+  token_hash: 'f'.repeat(64),
+  patient_id: OTHER_PATIENT.id,
+  created_by: '55995599-5599-4599-8599-559955995599',
+  recipient_email: 'foreign-recipient@example.test',
+  expires_at: '2099-01-01T00:00:00.000Z',
+  revoked_at: null,
+  image_id: null,
+  report_id: E2_FOREIGN_REPORT_ID,
+  created_at: '2026-08-19T00:00:00.000Z',
+}
+
 const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
   ['/rest/v1/appointments', APPOINTMENTS],
   ['/rest/v1/visits', VISITS],
@@ -437,6 +451,7 @@ const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
 // name it directly.
 const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
 const APPLY_AVAILABILITY_RPC_PATH = ['/rest/v1/rpc/apply', 'provider', 'availability'].join('_')
+const PROFILE_DELETION_RPC_PATH = '/rest/v1/rpc/request_profile_deletion'
 
 export type FakeAuthServer = {
   url: string
@@ -517,7 +532,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
   let deletionRequests: FakeDeletionRequest[] = []
-  let shareLinks: FakeShareLink[] = []
+  let shareLinks: FakeShareLink[] = [{ ...FOREIGN_SHARE_LINK }]
   let emailOutbox: FakeEmailOutbox[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
@@ -945,30 +960,70 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   async function handleDeletionRequests(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    sendJson(res, req.method === 'POST' ? 403 : 405, {
+      code: req.method === 'POST' ? '42501' : undefined,
+      message: req.method === 'POST' ? 'permission denied for deletion_requests' : 'method not allowed',
+    })
+  }
+
+  async function handleProfileDeletionRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       sendJson(res, 405, { message: 'method not allowed' })
       return
     }
     const caller = authenticatedUser(req)
-    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    if (!caller) {
+      sendJson(res, 403, { code: '42501', message: 'deletion request caller is unavailable' })
+      return
+    }
+    const patient = patients.find((candidate) => candidate.user_id === caller.id)
     const body = await readJsonBody(req)
-    if (!caller || !patient || body.patient_id !== patient.id || body.requested_by !== caller.id) {
-      sendJson(res, 403, { code: '42501', message: 'deletion request is not accessible' })
+    const denied = (result_error: string) => {
+      auditEvents.push({
+        id: nextAuditEventId++,
+        occurred_at: new Date().toISOString(),
+        actor_kind: 'account',
+        actor_ref: caller.id,
+        action: 'profile.deletion_request',
+        target_kind: 'patient',
+        target_id: patient?.id ?? null,
+        outcome: 'denied',
+        detail: null,
+      })
+      sendJson(res, 200, [{ result_error, request_status: null, requested_at: null }])
+    }
+    if (body.p_request_valid !== true) {
+      denied('validation_failed')
       return
     }
-    if (deletionRequests.some((request) => request.patient_id === patient.id && request.status === 'received')) {
-      sendJson(res, 409, { code: '23505', message: 'duplicate deletion request' })
+    if (!patient) {
+      denied('identity_verification_required')
       return
     }
-    const row: FakeDeletionRequest = {
+    if (deletionRequests.some((request) => request.patient_id === patient.id && (request.status === 'received' || request.status === 'in_review'))) {
+      denied('request_already_open')
+      return
+    }
+    const requestedAt = new Date().toISOString()
+    deletionRequests.push({
       id: randomUUID(),
       patient_id: patient.id,
       requested_by: caller.id,
-      requested_at: new Date().toISOString(),
+      requested_at: requestedAt,
       status: 'received',
-    }
-    deletionRequests.push(row)
-    sendJson(res, 201, String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json') ? row : [row])
+    })
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: requestedAt,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: 'profile.deletion_request',
+      target_kind: 'patient',
+      target_id: patient.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{ result_error: null, request_status: 'received', requested_at: requestedAt }])
   }
 
   function filteredOutbox(url: URL): FakeEmailOutbox[] {
@@ -1393,7 +1448,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
     identityAttempts = []
     deletionRequests = []
-    shareLinks = []
+    shareLinks = [{ ...FOREIGN_SHARE_LINK }]
     emailOutbox = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
@@ -1569,6 +1624,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
       void handleApplyAvailability(req, res)
+      return
+    }
+    if (url.pathname === PROFILE_DELETION_RPC_PATH) {
+      void handleProfileDeletionRequest(req, res)
       return
     }
     if (url.pathname === '/rest/v1/rpc/book_appointment') {
