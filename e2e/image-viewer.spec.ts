@@ -122,6 +122,10 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
     await linkSeededPatient(page.request)
     await setStorageState(page.request, 'down')
 
+    const apiResponse = await page.request.get(`/api/studies/${E2_SEEDED_STUDY_ID}`)
+    expect(apiResponse.status()).toBe(200)
+    expect(await apiResponse.json()).not.toHaveProperty('imageSigningFailed')
+
     const response = await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`)
 
     expect(response?.status()).toBe(200)
