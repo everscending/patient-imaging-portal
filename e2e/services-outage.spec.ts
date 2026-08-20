@@ -31,6 +31,7 @@ test('database outage returns a degraded services envelope instead of 500', asyn
     await setDatabase(request, 'down')
     const response = await request.get('/api/services')
     expect(response.status()).toBe(503)
+    expect(response.headers()['content-type']).toContain('application/json')
     expect(await response.json()).toEqual({
       error: 'services_unavailable',
       message: 'Services are temporarily unavailable.',

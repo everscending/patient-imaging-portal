@@ -179,6 +179,7 @@ describe('FR-11 discovery endpoints', () => {
       outcome: 'down',
     }))
     expect(error.mock.calls.flat().join(' ')).not.toMatch(/host|credential|stack|patient/i)
+    error.mockRestore()
   })
 
   test('endpointWireShapesExposeOnlyDiscoveryFields', async () => {
