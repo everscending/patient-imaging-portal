@@ -63,13 +63,26 @@ type PinnedReportViewProps = {
 )
 
 type CompatibleWithOptionalAdditions<Current, Pinned> =
-  [Pinned] extends [Current] ? [Current] extends [Pinned] ? true : false : false
+  [keyof Pinned] extends [keyof Current]
+    ? [Pinned] extends [Current]
+      ? [Current] extends [Pinned] ? true : false
+      : false
+    : false
 
 const PINNED_PROP_CONTRACTS: {
   imageViewer: CompatibleWithOptionalAdditions<ImageViewerProps, PinnedImageViewerProps>
   cineViewer: CompatibleWithOptionalAdditions<CineViewerProps, PinnedCineViewerProps>
   reportView: CompatibleWithOptionalAdditions<ReportViewProps, PinnedReportViewProps>
-} = { imageViewer: true, cineViewer: true, reportView: true }
+  imageViewerWithoutExistingOptionalProp: CompatibleWithOptionalAdditions<
+    Omit<PinnedImageViewerProps, 'initialImageId'>,
+    PinnedImageViewerProps
+  >
+} = {
+  imageViewer: true,
+  cineViewer: true,
+  reportView: true,
+  imageViewerWithoutExistingOptionalProp: false,
+}
 
 async function fixtureUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -97,26 +110,18 @@ async function registerAndLink(request: APIRequestContext): Promise<void> {
 async function expectHorizontalOverflowOwnedBy(locator: Locator): Promise<void> {
   await expect(locator).toBeVisible()
   const metrics = await locator.evaluate((element) => {
-    const probe = document.createElement('span')
-    const probeWidth = element.clientWidth + 160
-    probe.setAttribute('aria-hidden', 'true')
-    probe.style.cssText = `display:block;flex:0 0 ${probeWidth}px;grid-column:1/-1;height:1px;min-width:${probeWidth}px;width:${probeWidth}px`
-    element.append(probe)
-    try {
-      element.scrollLeft = 0
-      const clientWidth = element.clientWidth
-      const scrollWidth = element.scrollWidth
-      element.scrollLeft = scrollWidth - clientWidth
-      return {
-        clientWidth,
-        overflowX: getComputedStyle(element).overflowX,
-        scrollLeft: element.scrollLeft,
-        scrollWidth,
-      }
-    } finally {
-      element.scrollLeft = 0
-      probe.remove()
+    element.scrollLeft = 0
+    const clientWidth = element.clientWidth
+    const scrollWidth = element.scrollWidth
+    element.scrollLeft = scrollWidth - clientWidth
+    const result = {
+      clientWidth,
+      overflowX: getComputedStyle(element).overflowX,
+      scrollLeft: element.scrollLeft,
+      scrollWidth,
     }
+    element.scrollLeft = 0
+    return result
   })
   expect(metrics.overflowX).toMatch(/^(auto|scroll)$/)
   expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth)
@@ -124,10 +129,15 @@ async function expectHorizontalOverflowOwnedBy(locator: Locator): Promise<void> 
 }
 
 async function expectNoPageOverflow(page: Page): Promise<void> {
-  expect(await page.evaluate(() =>
-    document.body.scrollWidth <= document.documentElement.clientWidth &&
-    document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-  )).toBe(true)
+  const scrollLeft = await page.evaluate(() => {
+    const root = document.scrollingElement ?? document.documentElement
+    root.scrollLeft = 0
+    root.scrollLeft = root.scrollWidth - root.clientWidth
+    const result = root.scrollLeft
+    root.scrollLeft = 0
+    return result
+  })
+  expect(scrollLeft).toBe(0)
 }
 
 async function expectTapTarget(locator: Locator): Promise<void> {
@@ -138,13 +148,17 @@ async function expectTapTarget(locator: Locator): Promise<void> {
 }
 
 async function expectNoForbiddenTextColour(page: Page): Promise<void> {
-  const offenders = await page.locator('body').evaluate((body) => {
+  const offenders = await page.evaluate(() => {
     const forbidden = new Set(['rgb(135, 63, 224)', 'rgb(0, 192, 221)'])
-    const textOwners = new Set<Element>(body.querySelectorAll('input, select, textarea'))
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
+    const textOwners = new Set<Element>()
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT)
     while (walker.nextNode()) {
       const node = walker.currentNode
-      if (node.textContent?.trim() && node.parentElement) textOwners.add(node.parentElement)
+      if (node instanceof HTMLInputElement || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) {
+        textOwners.add(node)
+      } else if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim() && node.parentElement) {
+        textOwners.add(node.parentElement)
+      }
     }
     return [...textOwners]
       .filter((element) => element.getClientRects().length > 0 && forbidden.has(getComputedStyle(element).color))
@@ -244,7 +258,7 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await registerAndLink(page.request)
   })
 
-  test('mandatory adversarial: genuinely wide content scrolls in its own container, never the 390px page body', async ({ page }) => {
+  test('mandatory adversarial: genuinely wide seeded content scrolls in each owning container, never the 390px page body', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
 
     await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`)
@@ -258,7 +272,19 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await expectNoPageOverflow(page)
 
     await page.goto('/appointments')
-    await expectHorizontalOverflowOwnedBy(page.getByTestId('appointment-list'))
+    const appointmentList = page.getByTestId('appointment-list')
+    const reschedule = page.getByTestId('appointment-reschedule')
+    const cancel = page.getByTestId('appointment-cancel')
+    await expectTapTarget(reschedule)
+    await expectTapTarget(cancel)
+    await reschedule.click()
+    const slotInput = page.getByLabel('New appointment slot ID')
+    const confirm = page.getByRole('button', { name: 'Confirm reschedule' })
+    await expectTapTarget(slotInput)
+    await expectTapTarget(confirm)
+    await expectHorizontalOverflowOwnedBy(appointmentList)
+    await confirm.scrollIntoViewIfNeeded()
+    await expect(confirm).toBeInViewport()
     await expectNoPageOverflow(page)
   })
 
@@ -372,6 +398,18 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
 })
 
 test.describe('JOR-224 responsive source contracts', () => {
+  test('mandatory adversarial: responsive proof contains no raw selector calls', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'e2e/responsive.spec.ts'), 'utf8')
+    const rawSelectorCall = new RegExp(String.raw`\.(${['locator', 'querySelector', 'querySelectorAll'].join('|')})\s*\(`)
+    expect(source.match(rawSelectorCall)?.[0]).toBeUndefined()
+  })
+
+  test('mandatory adversarial: overflow proof never manufactures wide DOM content', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'e2e/responsive.spec.ts'), 'utf8')
+    const manufacturingCall = new RegExp(String.raw`\.(${['createElement', 'append', 'appendChild'].join('|')})\s*\(`)
+    expect(source.match(manufacturingCall)?.[0]).toBeUndefined()
+  })
+
   test('mandatory adversarial: no new component is introduced by a responsive fix', async () => {
     expect(await componentsAddedByThisTicket()).toEqual([])
   })
@@ -380,6 +418,11 @@ test.describe('JOR-224 responsive source contracts', () => {
     const files = await productionComponentFiles()
     const sources = new Map(await Promise.all(files.map(async (file) => [file, await readFile(path.join(REPO_ROOT, file), 'utf8')] as const)))
     for (const [file, source] of sources) expect(source, file).not.toMatch(/#[0-9a-f]{3,8}\b/i)
-    expect(PINNED_PROP_CONTRACTS).toEqual({ imageViewer: true, cineViewer: true, reportView: true })
+    expect(PINNED_PROP_CONTRACTS).toEqual({
+      imageViewer: true,
+      cineViewer: true,
+      reportView: true,
+      imageViewerWithoutExistingOptionalProp: false,
+    })
   })
 })

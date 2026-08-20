@@ -348,6 +348,19 @@ const IMAGES = [
     storage_key: 'full-2.png',
     thumb_key: null,
   },
+  ...Array.from({ length: 6 }, (_, index) => {
+    const ordinal = index + 3
+    return {
+      id: `10000000-0000-4000-8000-${String(ordinal).padStart(12, '0')}`,
+      patient_id: SEEDED_PATIENT.id,
+      study_id: E2_SEEDED_STUDY_ID,
+      width: 800,
+      height: 600,
+      ordinal,
+      storage_key: `full-${ordinal}.png`,
+      thumb_key: null,
+    }
+  }),
 ]
 const CINE_CLIPS = [
   {
