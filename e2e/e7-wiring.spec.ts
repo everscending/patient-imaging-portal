@@ -79,11 +79,31 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     const beforeResponse = await page.request.get('/api/appointments')
     expect(beforeResponse.status()).toBe(200)
     const before = (await beforeResponse.json()) as {
-      appointments: Array<{ id: string; startsAt: string }>
+      appointments: Array<{ id: string; startsAt: string; providerName: string }>
     }
     const source = before.appointments.find(({ id }) => id === OUTSIDE_NOTICE_APPOINTMENT_ID)!
-    const slotsResponse = await page.request.get('/api/slots', {
+    const crossProviderResponse = await page.request.get('/api/slots', {
       params: { providerId: E2_OTHER_PROVIDER_ID, serviceId: E2_BOOK_SERVICE_ID, from, to },
+    })
+    const crossProviderSlots = (await crossProviderResponse.json()) as { slots: Array<{ id: string }> }
+    const bookingState = (await (await page.request.get(`${await fakeServerUrl()}/__test__/booking-state`)).json()) as {
+      slots: Array<{ id: string; provider_id: string; starts_at: string }>
+    }
+    const pastSameProviderSlot = bookingState.slots.find(({ provider_id, starts_at }) =>
+      provider_id === E2_PROVIDER_ID && Date.parse(starts_at) <= Date.now(),
+    )!
+    for (const slotId of [crossProviderSlots.slots[0]!.id, pastSameProviderSlot.id]) {
+      const rejected = await page.request.patch(`/api/appointments/${OUTSIDE_NOTICE_APPOINTMENT_ID}`, {
+        data: { action: 'reschedule', slotId },
+      })
+      expect(rejected.status()).toBe(409)
+      expect(await rejected.json()).toEqual({
+        error: 'slot_unavailable',
+        message: 'That slot is no longer available.',
+      })
+    }
+    const slotsResponse = await page.request.get('/api/slots', {
+      params: { providerId: E2_PROVIDER_ID, serviceId: E2_BOOK_SERVICE_ID, from, to },
     })
     expect(slotsResponse.status()).toBe(200)
     const { slots } = (await slotsResponse.json()) as { slots: Array<{ id: string; startsAt: string }> }
@@ -94,9 +114,10 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
       data: { action: 'reschedule', slotId: target.id },
     })
     expect(response.status(), await response.text()).toBe(200)
-    const moved = (await response.json()) as { id: string; startsAt: string }
+    const moved = (await response.json()) as { id: string; startsAt: string; providerName: string }
     expect(moved.id).toBe(OUTSIDE_NOTICE_APPOINTMENT_ID)
     expect(Date.parse(moved.startsAt)).toBe(Date.parse(target.startsAt))
+    expect(moved.providerName).toBe(source.providerName)
 
     const appointmentsResponse = await page.request.get('/api/appointments')
     expect(appointmentsResponse.status()).toBe(200)
@@ -106,7 +127,7 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     expect(Date.parse(appointments.find(({ id }) => id === moved.id)!.startsAt)).toBe(Date.parse(target.startsAt))
 
     const openSlotsAfter = await page.request.get('/api/slots', {
-      params: { providerId: E2_OTHER_PROVIDER_ID, serviceId: E2_BOOK_SERVICE_ID, from, to },
+      params: { providerId: E2_PROVIDER_ID, serviceId: E2_BOOK_SERVICE_ID, from, to },
     })
     expect((await openSlotsAfter.json()) as { slots: Array<{ id: string }> }).toEqual({
       slots: expect.not.arrayContaining([expect.objectContaining({ id: target.id })]),
@@ -127,7 +148,7 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     expect(cancelResponse.status(), await cancelResponse.text()).toBe(200)
     expect((await cancelResponse.json()) as { status: string }).toEqual(expect.objectContaining({ status: 'cancelled' }))
     const openAfterCancelResponse = await page.request.get('/api/slots', {
-      params: { providerId: E2_OTHER_PROVIDER_ID, serviceId: E2_BOOK_SERVICE_ID, from, to },
+      params: { providerId: E2_PROVIDER_ID, serviceId: E2_BOOK_SERVICE_ID, from, to },
     })
     const openAfterCancel = (await openAfterCancelResponse.json()) as { slots: Array<{ id: string }> }
     expect(openAfterCancel.slots).toContainEqual(expect.objectContaining({ id: target.id }))
@@ -386,12 +407,13 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     }
     const patientActor = initialState.patients.find(({ patient_ref }) => patient_ref === 'PT-4471')!.user_id!
     const bookingState = (await (await page.request.get(`${fixture}/__test__/booking-state`)).json()) as {
-      slots: Array<{ id: string }>
+      slots: Array<{ id: string; provider_id: string }>
     }
-    const [bookingSlot, moveSlot] = bookingState.slots
+    const bookingSlot = bookingState.slots[0]!
+    const moveSlot = bookingState.slots.find(({ provider_id }) => provider_id === E2_PROVIDER_ID)!
     const bookingResponse = await page.request.post('/api/appointments', {
       data: {
-        slotId: bookingSlot!.id,
+        slotId: bookingSlot.id,
         serviceId: E2_BOOK_SERVICE_ID,
         idempotencyKey: randomUUID(),
       },
@@ -400,7 +422,7 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     const booked = (await bookingResponse.json()) as { id: string }
 
     const moved = await page.request.patch(`/api/appointments/${OUTSIDE_NOTICE_APPOINTMENT_ID}`, {
-      data: { action: 'reschedule', slotId: moveSlot!.id },
+      data: { action: 'reschedule', slotId: moveSlot.id },
     })
     expect(moved.status()).toBe(200)
     expect((await page.request.patch(`/api/appointments/${OUTSIDE_NOTICE_APPOINTMENT_ID}`, {

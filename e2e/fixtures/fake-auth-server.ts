@@ -638,6 +638,22 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1_000)
       return { id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + offset + 1).padStart(12, '0')}`, provider_id: E2_OTHER_PROVIDER_ID, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: 'open' }
     })
+    const sameProviderStart = new Date(start.getTime() + 5 * 30 * 60 * 1_000)
+    bookingSlots.push({
+      id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + 6).padStart(12, '0')}`,
+      provider_id: E2_PROVIDER_ID,
+      starts_at: sameProviderStart.toISOString(),
+      ends_at: new Date(sameProviderStart.getTime() + 30 * 60 * 1_000).toISOString(),
+      status: 'open',
+    })
+    const pastSameProviderStart = new Date(Date.now() - 60 * 60 * 1_000)
+    bookingSlots.push({
+      id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + 7).padStart(12, '0')}`,
+      provider_id: E2_PROVIDER_ID,
+      starts_at: pastSameProviderStart.toISOString(),
+      ends_at: new Date(pastSameProviderStart.getTime() + 30 * 60 * 1_000).toISOString(),
+      status: 'open',
+    })
     bookingAppointments = []
   }
 
@@ -882,20 +898,26 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       candidate.id === body.p_appointment_id && candidate.patient_id === patient?.id,
     )
     const slot = bookingSlots.find((candidate) => candidate.id === body.p_slot_id)
+    const provider = providers.find((candidate) => candidate.full_name === appointment?.providers.full_name)
     if (!appointment || (appointment.status !== 'requested' && appointment.status !== 'confirmed')) {
       sendJson(res, 200, [{ result_error: 'not_reschedulable' }])
       return
     }
-    if (new Date(appointment.slots.starts_at).getTime() - Date.now() < 24 * 60 * 60 * 1_000) {
+    if (new Date(appointment.slots.starts_at).getTime() - Date.now() <= 24 * 60 * 60 * 1_000) {
       sendJson(res, 200, [{ result_error: 'minimum_notice' }])
       return
     }
-    if (!slot || slot.status !== 'open') {
+    if (
+      !slot ||
+      !provider ||
+      slot.provider_id !== provider.id ||
+      slot.status !== 'open' ||
+      !(Date.parse(slot.starts_at) > Date.now())
+    ) {
       sendJson(res, 200, [{ result_error: 'slot_unavailable' }])
       return
     }
 
-    const provider = providers.find((candidate) => candidate.id === slot.provider_id)!
     const previousSlotId = patientAppointmentSlotIds.get(appointment.id)
     const previousSlot = previousSlotId
       ? bookingSlots.find((candidate) => candidate.id === previousSlotId)
@@ -915,7 +937,6 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     slot.status = 'booked'
     patientAppointmentSlotIds.set(appointment.id, slot.id)
     appointment.slots = { starts_at: slot.starts_at, ends_at: slot.ends_at }
-    appointment.providers = { full_name: provider.full_name, time_zone: provider.time_zone }
     appointment.out_of_hours = false
     auditEvents.push({
       id: nextAuditEventId++,
@@ -953,7 +974,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       sendJson(res, 200, [{ result_error: 'not_reschedulable' }])
       return
     }
-    if (new Date(appointment.slots.starts_at).getTime() - Date.now() < 24 * 60 * 60 * 1_000) {
+    if (new Date(appointment.slots.starts_at).getTime() - Date.now() <= 24 * 60 * 60 * 1_000) {
       sendJson(res, 200, [{ result_error: 'minimum_notice' }])
       return
     }
@@ -1011,7 +1032,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/slots') {
       const providerId = queryValue(url, 'provider_id')
-      const rows = bookingSlots.filter((slot) => slot.provider_id === providerId && slot.status === 'open')
+      const rows = bookingSlots.filter((slot) =>
+        slot.provider_id === providerId && slot.status === 'open' && Date.parse(slot.starts_at) > Date.now(),
+      )
       sendPostgrestRows(req, res, rows)
       return
     }
