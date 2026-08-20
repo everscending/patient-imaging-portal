@@ -1,5 +1,5 @@
 import { guardPhiAccess, type Actor } from '../../../../lib/access/guard'
-import { resolveAuthenticatedSession } from '../../../../lib/access/identity'
+import { resolveAuthentication } from '../../../../lib/access/identity'
 import { anonClient } from '../../../../lib/db/client'
 import { studyDetail } from '../../../../lib/imaging/studies'
 import { parseParams, studyParamsSchema } from '../../../../lib/validation'
@@ -23,11 +23,12 @@ async function resolveActor(accessToken: string, userId: string): Promise<Actor>
 }
 
 export async function GET(_: Request, context: { params: Promise<Record<string, string>> }): Promise<Response> {
-  const session = await resolveAuthenticatedSession()
+  const authentication = await resolveAuthentication()
+  const session = authentication.status === 'authenticated' ? authentication.session : null
   const parsed = parseParams(studyParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
   const actor = session ? await resolveActor(session.accessToken, session.userId) : { kind: 'patient' as const, userId: '' }
-  const access = await guardPhiAccess(actor, { kind: 'study', id: parsed.value.studyId }, 'study.view')
+  const access = await guardPhiAccess(actor, { kind: 'study', id: parsed.value.studyId }, 'study.view', authentication)
   if (!access.ok) return denied(access.status)
   if (!session) return denied(401)
   const detail = await studyDetail(anonClient(session.accessToken), parsed.value.studyId)

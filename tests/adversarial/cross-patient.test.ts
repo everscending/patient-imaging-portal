@@ -4,14 +4,14 @@ import { ensureContainer, startRun, stopRun, type Run } from '../setup/postgres'
 
 vi.mock('server-only', () => ({}))
 type Row = Record<string, unknown>
-const { state, anonMock, authMock, serviceMock, cookieMock } = vi.hoisted(() => ({
+const { state, anonMock, authMock, authGetUserMock, serviceMock, cookieMock, signMock } = vi.hoisted(() => ({
   state: { token: '', userId: '', tables: {} as Record<string, Row[]>, persist: (async () => {}) as (row: Row) => Promise<void> },
-  anonMock: vi.fn(), authMock: vi.fn(), serviceMock: vi.fn(), cookieMock: vi.fn(),
+  anonMock: vi.fn(), authMock: vi.fn(), authGetUserMock: vi.fn(), serviceMock: vi.fn(), cookieMock: vi.fn(), signMock: vi.fn(),
 }))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonMock, authClient: authMock, serviceClient: serviceMock }))
 vi.mock('next/headers', () => ({ cookies: cookieMock }))
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
-vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: vi.fn(async (keys: string[]) => keys.map((key) => ({ key, url: `https://signed.example/${key}`, available: true }))) }))
+vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('../../lib/config', () => ({ config: { appBaseUrl: 'https://portal.example', identityLockoutMinutes: 5, identityMaxAttempts: 3, maxRequestBodyBytes: 65_536, minChangeNoticeHours: 24, shareLinkTtlHours: 48, signedUrlTtlSeconds: 300, sourceRefSalt: 'test-salt' } }))
 
 const ACCOUNT_A = '11111111-1111-4111-8111-111111111111', PATIENT_A = '22222222-2222-4222-8222-222222222222'
@@ -74,7 +74,7 @@ function fixtures(): Record<string, Row[]> { return {
 
 beforeAll(async () => { run = await startRun(await ensureContainer()); state.persist = async (row) => { psql(`insert into audit_events(actor_kind,actor_ref,action,target_kind,target_id,outcome) values(${lit(row.actor_kind)},${lit(row.actor_ref)},${lit(row.action)},${lit(row.target_kind)},${lit(row.target_id)},${lit(row.outcome)});`) } })
 afterAll(async () => stopRun(run))
-beforeEach(() => { state.tables = fixtures(); session(ACCOUNT_A); psql('truncate audit_events restart identity;'); anonMock.mockReset().mockImplementation(client); serviceMock.mockReset().mockImplementation(client); authMock.mockReset().mockImplementation(() => ({ auth: { async getUser(token: string) { return token === state.token && state.userId ? { data: { user: { id: state.userId } }, error: null } : { data: { user: null }, error: { status: 401 } } }, async signUp() { return { data: { user: { id: FRESH_ACCOUNT, identities: [{}] }, session: null }, error: null } } } })); cookieMock.mockReset().mockImplementation(async () => ({ get: () => state.token ? { value: state.token } : undefined })) })
+beforeEach(() => { state.tables = fixtures(); session(ACCOUNT_A); psql('truncate audit_events restart identity;'); anonMock.mockReset().mockImplementation(client); serviceMock.mockReset().mockImplementation(client); authGetUserMock.mockReset().mockImplementation(async (token: string) => token === state.token && state.userId ? { data: { user: { id: state.userId } }, error: null } : { data: { user: null }, error: { status: 401 } }); authMock.mockReset().mockImplementation(() => ({ auth: { getUser: authGetUserMock, async signUp() { return { data: { user: { id: FRESH_ACCOUNT, identities: [{}] }, session: null }, error: null } } } })); cookieMock.mockReset().mockImplementation(async () => ({ get: () => state.token ? { value: state.token } : undefined })); signMock.mockReset().mockImplementation(async (keys: string[]) => keys.map((key) => ({ key, url: `https://signed.example/${key}`, available: true }))) })
 
 import { POST as register } from '../../app/api/auth/register/route'
 import { PATCH as patchAppointment } from '../../app/api/appointments/[id]/route'
@@ -90,6 +90,56 @@ import { GET as study } from '../../app/api/studies/[studyId]/route'
 import { GET as studies } from '../../app/api/studies/route'
 const ctx = <T extends Record<string, string>>(v: T): { params: Promise<T> } => ({ params: Promise.resolve(v) })
 const json = (url: string, method: string, body: unknown) => new Request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+describe('JOR-301 manifest request authentication context', () => {
+  const manifests = [
+    ['study', () => study(new Request('https://x'), ctx({ studyId: OWNED_STUDY })), 'study.view'],
+    ['clip', () => clip(new Request('https://x'), ctx({ studyId: OWNED_STUDY, clipId: OWNED_CLIP })), 'clip.view'],
+  ] as const
+
+  test.each(manifests)('%sManifestAuthenticatesRemotelyOnceAndPersistsExactlyOneGrant', async (kind, request, action) => {
+    authGetUserMock
+      .mockResolvedValueOnce({ data: { user: { id: ACCOUNT_A } }, error: null })
+      .mockResolvedValue({ data: { user: { id: FRESH_ACCOUNT } }, error: null })
+
+    const response = await request()
+
+    expect(response.status).toBe(200)
+    expect(authGetUserMock).toHaveBeenCalledTimes(1)
+    expect(audits()).toEqual([`${action}|granted|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+    expect(signMock).toHaveBeenCalled()
+  })
+
+  test.each(manifests.flatMap(([kind, request, action]) => [
+    [kind, 'decoded-but-unverified', request, action],
+    [kind, 'forged', request, action],
+    [kind, 'expired', request, action],
+  ] as const))('%sManifestRejects%sJwtBeforeOwnershipOrSignedUrls', async (kind, _jwtKind, request, action) => {
+    authGetUserMock.mockResolvedValue({ data: { user: null }, error: { status: 401 } })
+
+    const response = await request()
+
+    expect(response.status).toBe(401)
+    expect(authGetUserMock).toHaveBeenCalledTimes(1)
+    expect(anonMock).not.toHaveBeenCalled()
+    expect(signMock).not.toHaveBeenCalled()
+    expect(audits()).toEqual([`${action}|denied|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+  })
+
+  test.each(manifests.flatMap(([kind, request, action]) => [
+    [kind, 'returned-error', request, action, false],
+    [kind, 'thrown-error', request, action, true],
+  ] as const))('%sManifestAuth%sFailsClosedAfterOneRemoteCheck', async (kind, _failureKind, request, action, throws) => {
+    if (throws) authGetUserMock.mockRejectedValue(new Error('SECRET_AUTH_FAILURE'))
+    else authGetUserMock.mockResolvedValue({ data: { user: null }, error: { status: 503, message: 'SECRET_AUTH_FAILURE' } })
+
+    await expect(request()).rejects.toThrow('guardPhiAccess: authorization dependency unavailable')
+    expect(authGetUserMock).toHaveBeenCalledTimes(1)
+    expect(anonMock).not.toHaveBeenCalled()
+    expect(signMock).not.toHaveBeenCalled()
+    expect(audits()).toEqual([`${action}|denied|${kind === 'study' ? OWNED_STUDY : OWNED_CLIP}`])
+  })
+})
 
 describe('cross-patient public HTTP denials', () => {
   test('verifiedPatientAppointmentCollectionExcludesForeignRowsAndAuditsOnce', async function verifiedPatientAppointmentCollectionExcludesForeignRowsAndAuditsOnce() {

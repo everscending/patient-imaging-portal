@@ -4,8 +4,9 @@ import 'server-only'
 import { cookies } from 'next/headers'
 import type { AuditAction } from '../audit/events'
 import { recordPhiAccessDecision } from '../audit/events'
-import { anonClient, authClient, serviceClient } from '../db/client'
+import { anonClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
+import { resolveAuthentication, type AuthenticatedSession, type AuthenticationResult } from './identity'
 
 export type Actor =
   | { kind: 'patient'; userId: string }
@@ -321,10 +322,11 @@ async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Pro
 type AccessDecision = {
   result: GuardResult
   authenticatedUserId?: string
+  session?: AuthenticatedSession
   dependencyFailed?: boolean
 }
 
-async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> {
+async function decide(actor: Actor, target: PhiTarget, resolvedAuthentication?: AuthenticationResult): Promise<AccessDecision> {
   if (actor.kind === 'anonymous') return { result: { ok: false, status: 404 } }
 
   if (actor.kind === 'share_recipient') {
@@ -335,31 +337,15 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
     }
   }
 
-  let token: string | null
-  try {
-    token = await callerAccessToken()
-  } catch {
+  const authentication = resolvedAuthentication ?? await resolveAuthentication()
+  if (authentication.status === 'unavailable') {
     return { result: { ok: false, status: 404 }, dependencyFailed: true }
   }
-  if (!token) return { result: { ok: false, status: 401 } }
+  if (authentication.status === 'unauthenticated') return { result: { ok: false, status: 401 } }
 
-  let authentication: Awaited<ReturnType<ReturnType<typeof authClient>['auth']['getUser']>>
-  try {
-    authentication = await authClient().auth.getUser(token)
-  } catch {
-    return { result: { ok: false, status: 404 }, dependencyFailed: true }
-  }
-
-  const { data, error } = authentication
-  if (error) {
-    if (error.status === 401 || error.status === 403) return { result: { ok: false, status: 401 } }
-    return { result: { ok: false, status: 404 }, dependencyFailed: true }
-  }
-  if (!data.user) return { result: { ok: false, status: 401 } }
-
-  const authenticatedUserId = data.user.id
+  const { accessToken: token, userId: authenticatedUserId } = authentication.session
   if (actor.userId !== authenticatedUserId) {
-    return { result: { ok: false, status: 401 }, authenticatedUserId }
+    return { result: { ok: false, status: 401 }, authenticatedUserId, session: authentication.session }
   }
 
   const client = anonClient(token)
@@ -367,16 +353,16 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
   try {
     switch (actor.kind) {
       case 'patient':
-        return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId }
+        return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId, session: authentication.session }
       case 'provider':
-        return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId }
+        return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId, session: authentication.session }
       case 'admin':
-        return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId }
+        return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId, session: authentication.session }
       default:
         return assertNever(actor)
     }
   } catch {
-    return { result: { ok: false, status: 404 }, authenticatedUserId, dependencyFailed: true }
+    return { result: { ok: false, status: 404 }, authenticatedUserId, session: authentication.session, dependencyFailed: true }
   }
 }
 
@@ -388,11 +374,16 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
  */
-export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
+export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication?: AuthenticationResult,
+): Promise<GuardResult> {
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
 
-  const accessDecision = await decide(actor, target)
+  const accessDecision = await decide(actor, target, authentication)
   const decision = accessDecision.result
 
   await recordPhiAccessDecision({
@@ -402,7 +393,7 @@ export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: Au
     targetKind,
     targetId,
     outcome: decision.ok ? 'granted' : 'denied',
-  })
+  }, accessDecision.session)
 
   if (accessDecision.dependencyFailed) {
     throw new Error('guardPhiAccess: authorization dependency unavailable')

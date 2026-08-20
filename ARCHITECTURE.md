@@ -992,11 +992,14 @@ export type GuardResult =
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
+ * A route that already resolved AuthenticationResult passes it through so
+ * the guard and audit writer reuse that one cryptographically verified JWT.
  */
 export async function guardPhiAccess(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
+  authentication?: AuthenticationResult,
 ): Promise<GuardResult>
 ```
 
