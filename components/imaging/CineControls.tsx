@@ -7,6 +7,7 @@ type CineControlsProps = {
   frameCount: number
   fps: number
   isPlaying: boolean
+  playbackReady: boolean
   unavailableFrames: number[]
   onFrameChange: (frame: number) => void
   onFpsChange: (fps: number) => void
@@ -20,6 +21,7 @@ export function CineControls({
   frameCount,
   fps,
   isPlaying,
+  playbackReady,
   unavailableFrames,
   onFrameChange,
   onFpsChange,
@@ -40,6 +42,7 @@ export function CineControls({
           data-testid="cine-play"
           type="button"
           onClick={onTogglePlayback}
+          disabled={!playbackReady}
           aria-label={isPlaying ? 'Pause playback' : 'Play playback'}
         >
           {isPlaying ? 'Pause' : 'Play'}
@@ -106,6 +109,7 @@ export function CineControls({
         button, select, input { font: inherit; }
         button, select { min-height: var(--pip-tap-target); min-width: var(--pip-tap-target); }
         button { padding: 0.5rem 0.75rem; border: 1px solid var(--pip-color-primary); border-radius: 0.5rem; color: var(--pip-color-primary); background: var(--pip-color-base-100); font-weight: 600; }
+        button:disabled { cursor: wait; opacity: 0.55; }
         button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
         .cine-controls__scrub, .cine-controls__rate { display: grid; gap: 0.25rem; font-weight: 600; }
         .cine-controls__track-wrap { position: relative; display: block; min-height: var(--pip-tap-target); }

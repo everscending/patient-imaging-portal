@@ -5,6 +5,13 @@ const BASE_URL = __ENV.BASE_URL || `http://localhost:${__ENV.PORT || '4310'}`
 const EMAIL = __ENV.PATIENT_EMAIL || 'patient@demo.pip.test'
 const PASSWORD = __ENV.PATIENT_PASSWORD || 'DemoPass!2026'
 const HOLD_SECONDS = Number(__ENV.HOLD_SECONDS || '60')
+const RUN_ID = __ENV.RUN_ID
+
+if (!/^[0-9a-f]{8}$/.test(RUN_ID)) {
+  throw new Error('RUN_ID must be a unique eight-character lowercase hex value')
+}
+
+let completed = false
 
 export const options = {
   stages: [
@@ -54,24 +61,34 @@ export function setup() {
 }
 
 function idempotencyKey() {
-  return `00000000-0000-4000-8000-${String(__VU).padStart(12, '0')}`
+  return `${RUN_ID}-0000-4000-8000-${String(__VU).padStart(12, '0')}`
 }
 
 export default function run(data) {
+  if (completed) {
+    sleep(1)
+    return
+  }
+  completed = true
+
   const slot = data.slots[__VU - 1]
   const booking = http.post(`${BASE_URL}/api/appointments`, JSON.stringify({
     slotId: slot.id,
     serviceId: data.serviceId,
     idempotencyKey: idempotencyKey(),
   }), { headers: data.headers, tags: { operation: 'booking.create' } })
-  check(booking, { 'booking write reaches persisted result': (response) => response.status === 201 })
+  check(booking, { 'booking write reaches persisted result': (response) => response.status === 200 || response.status === 201 })
 
-  const share = http.post(`${BASE_URL}/api/shares`, JSON.stringify({
-    resourceKind: 'image',
-    resourceId: data.imageId,
-    recipientEmail: `performance-vu-${__VU}@example.test`,
-  }), { headers: data.headers, tags: { operation: 'share.create' } })
-  check(share, { 'share write reaches persisted result': (response) => response.status === 201 })
+  // A repeated RUN_ID reuses the booking and deliberately skips a duplicate
+  // share. A fresh run creates exactly one share per newly created booking.
+  if (booking.status === 201) {
+    const share = http.post(`${BASE_URL}/api/shares`, JSON.stringify({
+      resourceKind: 'image',
+      resourceId: data.imageId,
+      recipientEmail: `performance-${RUN_ID}-${__VU}@example.test`,
+    }), { headers: data.headers, tags: { operation: 'share.create' } })
+    check(share, { 'share write reaches persisted result': (response) => response.status === 201 })
+  }
 
   // One write pair per VU gives both server-timing operations 50 samples
   // without creating thousands of durable appointments and share links.

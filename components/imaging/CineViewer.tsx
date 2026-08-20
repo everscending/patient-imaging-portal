@@ -18,15 +18,34 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
   const [currentFrame, setCurrentFrame] = useState(0)
   const [fps, setFps] = useState(clip.defaultFps)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [loadedFrameIndex, setLoadedFrameIndex] = useState<number | null>(null)
+  const [loadedFrames, setLoadedFrames] = useState<Set<number>>(() => new Set())
+  const [settledFrames, setSettledFrames] = useState<Set<number>>(() => new Set())
   const framesByIndex = useMemo(() => new Map(clip.frames.map((frame) => [frame.index, frame])), [clip.frames])
+  const availableFrames = useMemo(() => clip.frames.filter((frame) => frame.available && frame.url), [clip.frames])
   const unavailableFrames = useMemo(
     () => Array.from({ length: clip.frameCount }, (_, index) => index).filter((index) => framesByIndex.get(index)?.available === false),
     [clip.frameCount, framesByIndex],
   )
   const frame = framesByIndex.get(currentFrame)
   const unavailable = frame?.available === false
-  const imageLoading = !unavailable && loadedFrameIndex !== currentFrame
+  const imageLoading = !unavailable && !loadedFrames.has(currentFrame)
+  const playbackReady = availableFrames.every((candidate) => settledFrames.has(candidate.index))
+
+  function withFrame(current: Set<number>, index: number): Set<number> {
+    if (current.has(index)) return current
+    const next = new Set(current)
+    next.add(index)
+    return next
+  }
+
+  function markLoaded(index: number): void {
+    setLoadedFrames((current) => withFrame(current, index))
+    setSettledFrames((current) => withFrame(current, index))
+  }
+
+  function markSettled(index: number): void {
+    setSettledFrames((current) => withFrame(current, index))
+  }
 
   function advance(direction: 1 | -1): void {
     setCurrentFrame((index) => (index + direction + clip.frameCount) % clip.frameCount)
@@ -41,7 +60,19 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
   }, [clip.frameCount, fps, isPlaying])
 
   return (
-    <div className="cine-viewer" data-testid="cine-viewer">
+    <div className="cine-viewer" data-testid="cine-viewer" data-playback-ready={playbackReady}>
+      <div className="cine-viewer__preload" aria-hidden="true">
+        {availableFrames.map((candidate) => (
+          <img
+            key={candidate.index}
+            src={candidate.url!}
+            alt=""
+            data-preload-frame={candidate.index}
+            onLoad={() => markLoaded(candidate.index)}
+            onError={() => markSettled(candidate.index)}
+          />
+        ))}
+      </div>
       <div className="cine-viewer__frame" aria-busy={!unavailable && imageLoading}>
         {unavailable ? (
           <p data-testid="cine-frame-gap" role="status">
@@ -53,7 +84,9 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
               key={currentFrame}
               src={frame.url}
               alt={`Cine frame ${currentFrame + 1}`}
-              onLoad={() => setLoadedFrameIndex(currentFrame)}
+              data-frame-index={currentFrame}
+              onLoad={() => markLoaded(currentFrame)}
+              onError={() => markSettled(currentFrame)}
             />
             {imageLoading ? (
               <p className="cine-viewer__loading" role="status" aria-label="Loading frame…">
@@ -70,6 +103,7 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
         frameCount={clip.frameCount}
         fps={fps}
         isPlaying={isPlaying}
+        playbackReady={playbackReady}
         unavailableFrames={unavailableFrames}
         onFrameChange={setCurrentFrame}
         onFpsChange={setFps}
@@ -79,6 +113,7 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
       />
       <style jsx>{`
         .cine-viewer { width: min(100%, 58rem); margin: 0 auto; }
+        .cine-viewer__preload { display: none; }
         .cine-viewer__frame { position: relative; display: grid; place-items: center; min-height: min(56vw, 32rem); overflow: hidden; border: 1px solid var(--pip-color-base-300); border-radius: 0.75rem 0.75rem 0 0; background: var(--pip-color-base-200); }
         img { display: block; width: 100%; max-height: 32rem; object-fit: contain; }
         .cine-viewer__loading { position: absolute; inset: auto 0 0; margin: 0; padding: 0.5rem 0.75rem; color: var(--pip-color-base-100); background: var(--pip-color-secondary); }

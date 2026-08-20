@@ -42,6 +42,7 @@ function seededFrameStorageKeys(count: number): string[] {
 }
 
 const E3_CINE_FRAME_STORAGE_KEYS = seededFrameStorageKeys(100)
+const PERFORMANCE_CINE_FRAME_STORAGE_KEYS = seededFrameStorageKeys(200).slice(100)
 
 type FakeUser = {
   id: string
@@ -217,6 +218,7 @@ export const E2_NON_PROVIDER_ACCOUNT_ID = '11551155-1155-4155-8155-115511551155'
 export const E2_SEEDED_STUDY_ID = '99669966-9966-4966-8966-996699669966'
 export const E2_SEEDED_REPORT_ID = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 export const E2_SEEDED_CLIP_ID = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
+export const E2_PERFORMANCE_CLIP_ID = 'ee33ee33-ee33-4e33-8e33-ee33ee33ee33'
 export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
@@ -359,6 +361,14 @@ const CINE_CLIPS = [
     poster_key: null,
   },
   {
+    id: E2_PERFORMANCE_CLIP_ID,
+    patient_id: SEEDED_PATIENT.id,
+    study_id: E2_SEEDED_STUDY_ID,
+    frame_count: 100,
+    default_fps: 12,
+    poster_key: null,
+  },
+  {
     id: E2_FOREIGN_CLIP_ID,
     patient_id: OTHER_PATIENT.id,
     study_id: E2_FOREIGN_STUDY_ID,
@@ -367,11 +377,18 @@ const CINE_CLIPS = [
     poster_key: null,
   },
 ]
-const CINE_FRAMES: FakeCineFrame[] = Array.from({ length: 100 }, (_, frame_index) => ({
-  clip_id: E2_SEEDED_CLIP_ID,
-  frame_index,
-  storage_key: E3_CINE_FRAME_STORAGE_KEYS[frame_index]!,
-}))
+const CINE_FRAMES: FakeCineFrame[] = [
+  ...Array.from({ length: 100 }, (_, frame_index) => ({
+    clip_id: E2_SEEDED_CLIP_ID,
+    frame_index,
+    storage_key: E3_CINE_FRAME_STORAGE_KEYS[frame_index]!,
+  })),
+  ...Array.from({ length: 100 }, (_, frame_index) => ({
+    clip_id: E2_PERFORMANCE_CLIP_ID,
+    frame_index,
+    storage_key: PERFORMANCE_CINE_FRAME_STORAGE_KEYS[frame_index]!,
+  })),
+]
 const REPORTS: FakeReport[] = [
   {
     id: E2_SEEDED_REPORT_ID,
