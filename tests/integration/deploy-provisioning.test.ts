@@ -145,6 +145,8 @@ describe('deployed provisioning program', () => {
     await provisionSeed(config, storage, authAdmin, sql)
     const patientCount = psql(run.dbName, 'select count(*) from patients;')
     const objectCount = objects.size
+    // Let Vitest finish the prior case's worker RPC before this long synchronous proof.
+    await new Promise<void>((resolve) => setImmediate(resolve))
 
     const rowSet = buildRowSet({
       pool: generateAssetPool(config.seedSourceSeed),
