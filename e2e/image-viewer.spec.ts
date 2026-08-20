@@ -98,7 +98,7 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
 
   test('pinnedContract_preservesVariantsImageMetadataInitialImageAndZoomPanControls', async function pinnedContract_preservesVariantsImageMetadataInitialImageAndZoomPanControls() {
     const viewer = await source('components/imaging/ImageViewer.tsx')
-    for (const field of ['id: string', 'width: number', 'height: number', 'ordinal: number', 'url: string', 'thumbUrl: string | null', 'expiresAt: string']) {
+    for (const field of ['id: string', 'width: number', 'height: number', 'ordinal: number', 'url: string | null', 'thumbUrl: string | null', 'expiresAt: string']) {
       expect(viewer).toContain(field)
     }
     expect(viewer).toContain('initialImageId?: string')
