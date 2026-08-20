@@ -40,21 +40,21 @@ export default function ReportsPage() {
     <main>
       <h1>Reports</h1>
       {unavailable ? <p role="alert">Reports are temporarily unavailable.</p> : null}
-      <section aria-label="Signed reports" data-testid="report-list">
-        {reports?.length === 0 ? <EmptyState message="No reports yet — a report appears here once your clinician has signed it." testId="reports-empty" /> : null}
-        {reports && reports.length > 0 ? (
-          <ul>
-            {reports.map((report) => (
-              <li data-testid="report-item" key={report.id}>
-                <Link href={`/reports/${report.id}`}>
-                  <strong>{report.studyDescription}</strong>
-                  <span> — {signedDate(report.signedAt)}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+      <ul aria-label="Signed reports" data-testid="report-list">
+        {reports?.length === 0 ? (
+          <li>
+            <EmptyState message="No reports yet — a report appears here once your clinician has signed it." testId="reports-empty" />
+          </li>
         ) : null}
-      </section>
+        {reports?.map((report) => (
+          <li data-testid="report-item" key={report.id}>
+            <Link href={`/reports/${report.id}`}>
+              <strong>{report.studyDescription}</strong>
+              <span> — {signedDate(report.signedAt)}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
     </main>
   )
 }
