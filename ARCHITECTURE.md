@@ -2000,12 +2000,12 @@ tests a flow both touch them. Pinned names, `data-testid`:
 ```
 identity-form · identity-error
 profile-form · profile-save · profile-patient-ref
-study-list · study-card · image-viewer · image-zoom
+patient-tabbar · study-list · study-card · image-viewer · image-zoom · image-filmstrip
 cine-viewer · cine-play · cine-next · cine-prev · cine-fps · cine-frame-gap
 report-view · report-findings · report-impression · reports-empty
-share-create · share-list · share-revoke · share-unavailable · share-empty
+share-create · share-list · share-revoke · share-unavailable · share-empty · shared-resource
 service-select · provider-select
-slot-list · slot-item · book-submit · booking-conflict
+slot-list · slot-grid · slot-item · book-submit · booking-conflict · booking-success
 appointment-list · appointment-item · appointment-out-of-hours
 appointment-reschedule · appointment-cancel · appointment-notice-locked
 availability-form · availability-collision-list
@@ -2035,17 +2035,19 @@ specification file:
 3. `e2e/book.spec.ts --project=product`
 4. `e2e/provider-schedule.spec.ts --project=product`
 5. `e2e/empty-states.spec.ts --project=product`
-6. `--project=e2-wiring` with report evidence for `e2e/e2-wiring.spec.ts`
-7. `--project=e3-wiring` with report evidence for `e2e/e3-wiring.spec.ts`
-8. `e2e/e4-wiring.spec.ts --project=e4-wiring`
+6. `e2e/responsive.spec.ts --project=product`
+7. `--project=e2-wiring` with report evidence for `e2e/e2-wiring.spec.ts`
+8. `--project=e3-wiring` with report evidence for `e2e/e3-wiring.spec.ts`
+9. `e2e/e4-wiring.spec.ts --project=e4-wiring`
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
 `e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
 separately by the `ui` gate;
-`book.spec.ts`, `provider-schedule.spec.ts`, and `empty-states.spec.ts` are
-focused `product` entries.
+`book.spec.ts`, `provider-schedule.spec.ts`, `empty-states.spec.ts`, and
+`responsive.spec.ts` are focused `product` entries, each immediately followed
+by its matching JSON report validator.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
 dispatch. E0 invokes the cumulative `ui` gate once

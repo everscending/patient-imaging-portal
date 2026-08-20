@@ -49,7 +49,7 @@ export default function AppointmentsPage() {
     <main className="pip-appointments-page">
       <h1>Appointments</h1>
       {unavailable ? <p role="alert">Appointments are temporarily unavailable.</p> : null}
-      <section aria-label="Appointments" data-testid="appointment-list">
+      <section aria-label="Appointments" className="pip-appointment-list" data-testid="appointment-list">
         {appointments?.length === 0 ? <EmptyState message="No appointments yet — booked appointments appear here." testId="appointments-empty" /> : null}
         {appointments && appointments.length > 0 ? (
           <table className="pip-appointment-table">
@@ -61,6 +61,7 @@ export default function AppointmentsPage() {
       </section>
       <style>{`
         .pip-appointments-page { max-width: 72rem; margin: 0 auto; overflow-wrap: anywhere; }
+        .pip-appointment-list { max-width: 100%; overflow-x: auto; }
         .pip-appointment-card { display: grid; gap: 0.5rem; min-width: 0; padding: 1rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.75rem; background: var(--pip-color-base-100); }
         .pip-appointment-card td { display: block; padding: 0; border: 0; }
         .pip-appointment-card td:first-child > span, .pip-appointment-card td:first-child > time { display: block; margin-bottom: 0.25rem; }
@@ -68,7 +69,7 @@ export default function AppointmentsPage() {
         .pip-appointment-actions p { margin: 0; }
         .pip-appointment-button { min-width: var(--pip-tap-target); min-height: var(--pip-tap-target); padding: 0.5rem 0.75rem; border: 1px solid var(--pip-color-primary); border-radius: 0.5rem; color: var(--pip-color-primary); background: var(--pip-color-base-100); font: inherit; font-weight: 600; }
         .pip-appointment-button:focus-visible, .pip-appointment-reschedule-form input:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
-        .pip-appointment-reschedule-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; width: 100%; }
+        .pip-appointment-reschedule-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; width: 100%; min-width: max-content; }
         .pip-appointment-reschedule-form label { display: grid; gap: 0.25rem; font-weight: 600; }
         .pip-appointment-reschedule-form input { min-height: var(--pip-tap-target); max-width: 100%; border: 1px solid var(--pip-color-base-300); border-radius: 0.5rem; padding: 0.5rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); font: inherit; }
         .pip-appointment-table { display: block; width: 100%; border-collapse: collapse; }

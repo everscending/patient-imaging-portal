@@ -37,6 +37,8 @@ gates:
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts"
     - "npx playwright test e2e/empty-states.spec.ts --project=product"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/empty-states.spec.ts"
+    - "npx playwright test e2e/responsive.spec.ts --project=product"
+    - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/responsive.spec.ts"
     - "npx playwright test --project=e2-wiring"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts"
     - "npx playwright test --project=e3-wiring"
