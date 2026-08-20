@@ -10,7 +10,7 @@ export default defineConfig({
   projects: [
     {
       name: 'product',
-      testIgnore: /e[01245]-wiring\.spec\.ts/,
+      testIgnore: /e[012345]-wiring\.spec\.ts/,
     },
     {
       // The E2 fixture exposes mutable identity and audit state. Running it
@@ -18,6 +18,13 @@ export default defineConfig({
       // as part of E2's exact audit assertions.
       name: 'e2-wiring',
       testMatch: /e2-wiring\.spec\.ts/,
+      dependencies: ['product'],
+    },
+    {
+      // E3 is the real-app imaging acceptance proof. It runs after product so
+      // its fixture-resetting identity cases do not overlap product traffic.
+      name: 'e3-wiring',
+      testMatch: /e3-wiring\.spec\.ts/,
       dependencies: ['product'],
     },
     {

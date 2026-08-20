@@ -17,7 +17,7 @@ const completedStudies = [
   {
     id: '11111111-1111-1111-1111-111111111111',
     description: 'Left knee MRI',
-    occurredAt: '2026-08-12',
+    occurredAt: '2026-08-12T14:00:00.000-05:00',
     providerName: 'Dr. Ada Lovelace',
     imageCount: 12,
     clipCount: 2,
@@ -25,7 +25,7 @@ const completedStudies = [
   {
     id: '22222222-2222-2222-2222-222222222222',
     description: 'Shoulder ultrasound',
-    occurredAt: '2026-08-10',
+    occurredAt: '2026-08-10T14:00:00.000-05:00',
     providerName: 'Dr. Grace Hopper',
     imageCount: 1,
     clipCount: 0,
@@ -147,7 +147,7 @@ test('mandatory adversarial: studies_wellTypedButInvalidRecords_degradeSafely', 
 
   const invalidStudies = [
     { ...completedStudies[0], id: '' },
-    { ...completedStudies[0], occurredAt: '2026-02-30' },
+    { ...completedStudies[0], occurredAt: '2026-02-30T14:00:00.000-05:00' },
     { ...completedStudies[0], imageCount: -1 },
     { ...completedStudies[0], clipCount: 1.5 },
   ]
