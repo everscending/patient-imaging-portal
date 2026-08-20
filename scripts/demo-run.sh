@@ -86,15 +86,18 @@ console.log('DEMO_STEP_COMPLETE identity-verification')
 
 const studyId = '99669966-9966-4966-8966-996699669966'
 const clipId = 'ee11ee11-ee11-4e11-8e11-ee11ee11ee11'
+const imageId = '10000000-0000-4000-8000-000000000001'
+const reportId = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
 await expectStatus(await patient.get(`/api/studies/${studyId}`), [200], 'image viewing')
 await expectStatus(await patient.get(`/api/studies/${studyId}/clips/${clipId}`), [200], 'cine viewing')
 console.log('DEMO_STEP_COMPLETE image-and-cine-viewing')
 
-const reportId = 'bb88bb88-bb88-4b88-8b88-bb88bb88bb88'
-await expectStatus(await patient.post('/api/shares', {
-  data: { resourceKind: 'report', resourceId: reportId, recipientEmail: `recipient-${randomUUID()}@example.test` },
-}), [201], 'sharing')
-console.log('DEMO_STEP_COMPLETE sharing')
+for (const [resourceKind, resourceId] of [['image', imageId], ['report', reportId]]) {
+  await expectStatus(await patient.post('/api/shares', {
+    data: { resourceKind, resourceId, recipientEmail: `recipient-${randomUUID()}@example.test` },
+  }), [201], `${resourceKind} sharing`)
+  console.log(`DEMO_STEP_COMPLETE ${resourceKind}-sharing`)
+}
 
 await expectStatus(await patient.get(`/api/reports/${reportId}`), [200], 'report')
 console.log('DEMO_STEP_COMPLETE report')
@@ -105,8 +108,17 @@ await expectStatus(await provider.post('/api/auth/login', {
   data: { email: 'avery.chen@example.test', password: 'ProviderFixturePassword9' },
 }), [200], 'provider login')
 const providerId = '66336633-6633-4633-8633-663366336633'
-await expectStatus(await provider.get(`/api/providers/${providerId}/availability`), [200], 'availability')
-console.log('DEMO_STEP_COMPLETE availability')
+await expectStatus(await provider.patch(`/api/providers/${providerId}/availability`, {
+  data: {
+    slotMinutes: 20,
+    workingHours: [
+      { weekday: 1, startsLocal: '08:00', endsLocal: '18:00' },
+      { weekday: 2, startsLocal: '09:00', endsLocal: '17:00' },
+    ],
+    blocks: [],
+  },
+}), [200], 'availability setup')
+console.log('DEMO_STEP_COMPLETE availability-setup')
 
 async function openBooking() {
   await expectStatus(await fixture.post(`${fakeUrl}/__test__/reset-booking`), [200], 'booking reset')
@@ -184,13 +196,13 @@ cat > "$REMINDER_DRIVER" <<'TS'
 import { startE8AcceptanceFixture } from '../tests/fixtures/e8-acceptance'
 
 const fixture = await startE8AcceptanceFixture()
+const auditLines: string[] = []
 try {
   await fixture.prepareDueAppointments(1)
   const result = await fixture.runAuthorizedJob()
   if (result.status !== 200 || result.body.sent !== 1) throw new Error('demo-run: reminder failed')
-  for (const log of fixture.dispatchLogs()) console.log(JSON.stringify(log))
   for (const audit of await fixture.dispatchAudits()) {
-    console.log(`DEMO_AUDIT_DETAIL ${JSON.stringify({
+    auditLines.push(`DEMO_AUDIT_DETAIL ${JSON.stringify({
       action: audit.action,
       targetId: audit.appointmentId,
       outcome: audit.outcome,
@@ -199,7 +211,10 @@ try {
   }
 } finally {
   await fixture.close()
+  const output = fixture.appOutput()
+  process.stdout.write(output.endsWith('\n') ? output : `${output}\n`)
 }
+for (const line of auditLines) console.log(line)
 process.exit(0)
 TS
 npx vite-node "$REMINDER_DRIVER" >> "$WORK_ARTIFACT" 2>&1

@@ -6,6 +6,12 @@ import { describe, expect, test } from 'vitest'
 import { generateAssetPool } from '../../db/seed/assets'
 import { buildRowSet, type RowSet } from '../../db/seed/rows'
 import { E2_DEMO_PHI_ROWS } from '../../e2e/fixtures/fake-auth-server'
+import {
+  DEMO_AUXILIARY_PHI_ROWS,
+  DEMO_E8_PROVIDER,
+  DEMO_RPC_PATIENT,
+  DEMO_RPC_PROVIDER,
+} from '../fixtures/demo-run-phi'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'tests', 'artifacts', 'demo-run.log')
@@ -14,9 +20,10 @@ const SEED_RUN_PATH = path.join(REPO_ROOT, 'tests', 'seed', 'artifacts', 'rows-r
 const REQUIRED_STEPS = [
   'identity-verification',
   'image-and-cine-viewing',
-  'sharing',
+  'image-sharing',
+  'report-sharing',
   'report',
-  'availability',
+  'availability-setup',
   'booking',
   'no-double-book',
   'reschedule-and-cancel',
@@ -26,7 +33,12 @@ const REQUIRED_STEPS = [
 type Needle = { className: string; normalized: string }
 type ScanHit = { file: string; line: number; needleClass: string }
 type ScanResult = { hits: ScanHit[]; integrityErrors: string[] }
-type PhiRows = Pick<RowSet, 'patients' | 'providers' | 'reports' | 'studies'>
+type PhiRows = {
+  patients: Array<Pick<RowSet['patients'][number], 'date_of_birth' | 'email' | 'full_name' | 'phone'>>
+  providers: Array<Pick<RowSet['providers'][number], 'full_name'>>
+  reports: Array<Pick<RowSet['reports'][number], 'findings' | 'impression'>>
+  studies: Array<Pick<RowSet['studies'][number], 'description'>>
+}
 
 const seedRun = JSON.parse(readFileSync(SEED_RUN_PATH, 'utf8')) as {
   seed: string
@@ -108,7 +120,10 @@ function validAuditRecord(value: Record<string, unknown>): boolean {
     ))
 }
 
-function scanArtifact(text: string, rowSets: PhiRows[] = [seededRows(), E2_DEMO_PHI_ROWS]): ScanResult {
+function scanArtifact(
+  text: string,
+  rowSets: PhiRows[] = [seededRows(), E2_DEMO_PHI_ROWS, DEMO_AUXILIARY_PHI_ROWS],
+): ScanResult {
   const lines = text.split(/\r?\n/)
   const hits: ScanHit[] = []
   const needles = needlesFor(rowSets)
@@ -284,6 +299,14 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
     expectRejected(completeArtifact(E2_DEMO_PHI_ROWS.patients[0]!.full_name), 'patient-name')
   })
 
+  test('auxiliaryDemoFixturePhi_fails', () => {
+    expectRejected(completeArtifact(DEMO_RPC_PATIENT.full_name), 'patient-name')
+    expectRejected(completeArtifact(DEMO_RPC_PATIENT.email), 'patient-email')
+    expectRejected(completeArtifact(DEMO_RPC_PATIENT.date_of_birth), 'patient-date-of-birth')
+    expectRejected(completeArtifact(DEMO_RPC_PROVIDER.full_name), 'provider-name')
+    expectRejected(completeArtifact(DEMO_E8_PROVIDER.full_name), 'provider-name')
+  })
+
   test('patientEmailAndPhone_fail', () => {
     const phone = '+1 (312) 555-0199'
     const rows = {
@@ -391,8 +414,11 @@ describe('JOR-212 public demo-run evidence', () => {
   })
 
   test('committedArtifact_hasAllStepsAndNoSeededPhi', () => {
-    const result = scanArtifact(readFileSync(ARTIFACT_PATH, 'utf8'))
+    const artifact = readFileSync(ARTIFACT_PATH, 'utf8')
+    const result = scanArtifact(artifact)
     expect(result).toEqual({ hits: [], integrityErrors: [] })
+    expect(artifact.match(/▲ Next\.js/g)).toHaveLength(2)
+    expect(artifact).toContain('POST /api/jobs/reminders 200')
   })
 
   test('producerUsesConfiguredPortsAndTheLocalDatabaseFixture', () => {
