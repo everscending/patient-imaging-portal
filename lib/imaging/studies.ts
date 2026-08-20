@@ -68,14 +68,23 @@ export async function listStudies(client: Client): Promise<{ studies: Array<Reco
 }
 
 export async function studyDetail(client: Client, studyId: string): Promise<Record<string, unknown> | null> {
-  const study = await row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle())
-  if (!study) return null
-  const [visit, images, clips] = await Promise.all([
-    completedVisit(client, study.visit_id),
+  const studyPromise = row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle())
+  const detailRows = Promise.allSettled([
     rows<ImageRow>(client.from('images').select('id, width, height, ordinal, storage_key, thumb_key').eq('study_id', studyId).order('ordinal')),
     rows<ClipRow>(client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('study_id', studyId)),
   ])
+
+  const study = await studyPromise
+  if (!study) {
+    await detailRows
+    return null
+  }
+  const visit = await completedVisit(client, study.visit_id)
+  const [imagesResult, clipsResult] = await detailRows
   if (!visit) return null
+  if (imagesResult.status === 'rejected') throw imagesResult.reason
+  if (clipsResult.status === 'rejected') throw clipsResult.reason
+  const [images, clips] = [imagesResult.value, clipsResult.value]
 
   const imageKeys = images.flatMap((image) => [image.storage_key, ...(image.thumb_key ? [image.thumb_key] : [])])
   const [signed, clipPosters] = await Promise.all([
@@ -109,19 +118,26 @@ export async function studyDetail(client: Client, studyId: string): Promise<Reco
 }
 
 export async function clipManifest(client: Client, studyId: string, clipId: string): Promise<Record<string, unknown> | null> {
-  const [clip, study] = await Promise.all([
+  const identityRows = Promise.all([
     row<ClipRow>(
       client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('id', clipId).eq('study_id', studyId).maybeSingle(),
     ),
     row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle()),
   ])
-  if (!clip || !study) return null
-
-  const [visit, storedFrames] = await Promise.all([
-    completedVisit(client, study.visit_id),
+  const frameRows = Promise.allSettled([
     rows<FrameRow>(client.from('cine_frames').select('frame_index, storage_key').eq('clip_id', clipId).order('frame_index')),
   ])
+
+  const [clip, study] = await identityRows
+  if (!clip || !study) {
+    await frameRows
+    return null
+  }
+  const visit = await completedVisit(client, study.visit_id)
+  const [storedFramesResult] = await frameRows
   if (!visit) return null
+  if (storedFramesResult.status === 'rejected') throw storedFramesResult.reason
+  const storedFrames = storedFramesResult.value
   const keysByIndex = new Map(storedFrames.map((frame) => [frame.frame_index, frame.storage_key]))
   const signed = await signStorageKeys(storedFrames.map((frame) => frame.storage_key))
   const signedByKey = new Map(signed.map((entry) => [entry.key, entry]))

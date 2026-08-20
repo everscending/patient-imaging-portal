@@ -71,7 +71,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function client(data: Data): never {
+function client(data: Data, errors: Record<string, unknown> = {}): never {
   return {
     from(table: string) {
       const filters: Array<[string, unknown]> = []
@@ -87,10 +87,13 @@ function client(data: Data): never {
           return query
         },
         async maybeSingle() {
-          return { data: (data[table] ?? []).find((item) => filters.every(([key, value]) => item[key] === value)) ?? null, error: null }
+          return { data: (data[table] ?? []).find((item) => filters.every(([key, value]) => item[key] === value)) ?? null, error: errors[table] ?? null }
         },
-        then(resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown) {
-          return Promise.resolve({ data: (data[table] ?? []).filter((item) => filters.every(([key, value]) => item[key] === value)), error: null }).then(resolve)
+        then(resolve: (value: { data: Record<string, unknown>[]; error: unknown }) => unknown) {
+          return Promise.resolve({
+            data: (data[table] ?? []).filter((item) => filters.every(([key, value]) => item[key] === value)),
+            error: errors[table] ?? null,
+          }).then(resolve)
         },
       }
       return query
@@ -158,7 +161,7 @@ const unauthenticated = { status: 'unauthenticated' }
 beforeEach(() => reset())
 
 describe('independent manifest work starts concurrently', () => {
-  test('studyDetailStartsVisitImagesAndClipsBeforeAnyOfThemCompletes', async function studyDetailStartsVisitImagesAndClipsBeforeAnyOfThemCompletes() {
+  test('studyDetailPipelinesInputIndependentReadsBeforeAnyCompletes', async function studyDetailPipelinesInputIndependentReadsBeforeAnyCompletes() {
     const { studyDetail } = await import('../../lib/imaging/studies')
     const reads = controlledClient(
       {
@@ -171,7 +174,7 @@ describe('independent manifest work starts concurrently', () => {
     )
 
     const result = studyDetail(reads.client, studyId)
-    expect(reads.started).toEqual(new Set(['studies']))
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['studies', 'images', 'cine_clips'])))
 
     reads.release('studies')
     await vi.waitFor(() => expect(reads.started).toEqual(new Set(['studies', 'visits', 'images', 'cine_clips'])))
@@ -207,7 +210,7 @@ describe('independent manifest work starts concurrently', () => {
     })
   })
 
-  test('clipManifestStartsEachIndependentReadBeforeItsPeerCompletes', async function clipManifestStartsEachIndependentReadBeforeItsPeerCompletes() {
+  test('clipManifestPipelinesInputIndependentReadsBeforeAnyCompletes', async function clipManifestPipelinesInputIndependentReadsBeforeAnyCompletes() {
     const { clipManifest } = await import('../../lib/imaging/studies')
     const reads = controlledClient(
       {
@@ -220,7 +223,7 @@ describe('independent manifest work starts concurrently', () => {
     )
 
     const result = clipManifest(reads.client, studyId, clipId)
-    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['cine_clips', 'studies'])))
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['cine_clips', 'studies', 'cine_frames'])))
 
     reads.release('cine_clips')
     reads.release('studies')
@@ -332,6 +335,20 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
 })
 
 describe('mandatory adversarial: incomplete visits and malformed ids reveal neither records nor signatures', () => {
+  test('speculativeReadsPreserveMissingAndGenericErrorSemantics', async function speculativeReadsPreserveMissingAndGenericErrorSemantics() {
+    const { studyDetail, clipManifest } = await import('../../lib/imaging/studies')
+    const complete = {
+      studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
+      visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+      cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: null }],
+    }
+
+    await expect(studyDetail(client({}, { images: new Error('private database detail') }), studyId)).resolves.toBeNull()
+    await expect(clipManifest(client({}, { cine_frames: new Error('private database detail') }), studyId, clipId)).resolves.toBeNull()
+    await expect(studyDetail(client(complete, { images: new Error('private database detail') }), studyId)).rejects.toThrow('studies: caller-scoped read failed')
+    await expect(clipManifest(client(complete, { cine_frames: new Error('private database detail') }), studyId, clipId)).rejects.toThrow('studies: caller-scoped read failed')
+  })
+
   test('rfc3339VisitTimestampKeepsItsExplicitOffsetInListAndDetailDtos', async function rfc3339VisitTimestampKeepsItsExplicitOffsetInListAndDetailDtos() {
     const { listStudies, studyDetail } = await import('../../lib/imaging/studies')
     const data = {
