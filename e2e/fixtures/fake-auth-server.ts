@@ -355,7 +355,7 @@ const CINE_CLIPS = [
     patient_id: SEEDED_PATIENT.id,
     study_id: E2_SEEDED_STUDY_ID,
     frame_count: 100,
-    default_fps: 24,
+    default_fps: 12,
     poster_key: null,
   },
   {
@@ -363,7 +363,7 @@ const CINE_CLIPS = [
     patient_id: OTHER_PATIENT.id,
     study_id: E2_FOREIGN_STUDY_ID,
     frame_count: 1,
-    default_fps: 24,
+    default_fps: 12,
     poster_key: null,
   },
 ]
@@ -1003,10 +1003,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       sendJson(res, 405, { message: 'method not allowed' })
       return
     }
-    // Availability is provider-owned data.  Model the RLS boundary here,
-    // rather than relying on the route's prior authorization: the real route
-    // performs three separate PostgREST reads and the fake must not let a
-    // future caller recover another provider's rows by issuing one directly.
+    // Provider names are globally readable under production RLS so imaging
+    // can decorate a patient's study DTO. Availability rows remain scoped to
+    // the owning provider below, and this read handler never permits writes.
     const caller = authenticatedUser(req)
     const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
 
@@ -1014,7 +1013,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       sendPostgrestRows(
         req,
         res,
-        callerProvider ? applyEqualityFilters([callerProvider], url) : [],
+        applyEqualityFilters(caller ? providers : [], url),
       )
       return
     }

@@ -55,7 +55,7 @@ vi.mock('../../lib/config', () => ({
 import { GET as resolveGet } from '../../app/api/s/[token]/route'
 import { DELETE as revokeDelete } from '../../app/api/shares/[id]/route'
 import { GET as listGet, POST as mintPost } from '../../app/api/shares/route'
-import { mintShareLink, resolveShareToken, revokeShareLink } from '../../lib/share/links'
+import { mintShareLink, revokeShareLink } from '../../lib/share/links'
 
 const LINK_ID = '11111111-1111-4111-8111-111111111111'
 const PATIENT_ID = '22222222-2222-4222-8222-222222222222'
@@ -337,7 +337,7 @@ describe('share minting', () => {
       resourceId: IMAGE_ID,
       recipientEmail: 'recipient@example.com',
     }).then((created) => expect(created.delivery).toBe('sent'))
-    await expect(revokeShareLink({ id: LINK_ID, patientId: PATIENT_ID, actorUserId: USER_ID }))
+    await expect(revokeShareLink({ id: LINK_ID, actorUserId: USER_ID }))
       .resolves.toEqual({ ok: true })
 
     expect(anonMock).toHaveBeenCalledTimes(2)
@@ -347,7 +347,7 @@ describe('share minting', () => {
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
-      { kind: 'image', id: IMAGE_ID },
+      { kind: 'share_link', id: LINK_ID },
       'share.revoke',
     )
   })
@@ -396,10 +396,9 @@ describe('share listing and revocation', () => {
   })
 
   test('deleteOfAnOwnedLinkRevokesItAndMakesItsTokenUnavailable', async () => {
-    const patientRead = query({ data: { id: PATIENT_ID }, error: null })
     const ownedRead = query({ data: link(), error: null })
     const revokeUpdate = query({ data: null, error: null })
-    const callerClient = clientFor({ patients: [patientRead], share_links: [ownedRead, revokeUpdate] })
+    const callerClient = clientFor({ share_links: [ownedRead, revokeUpdate] })
     anonMock.mockReturnValue(callerClient)
 
     const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
@@ -411,7 +410,7 @@ describe('share listing and revocation', () => {
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
-      { kind: 'image', id: IMAGE_ID },
+      { kind: 'share_link', id: LINK_ID },
       'share.revoke',
     )
     expect(serviceMock).not.toHaveBeenCalled()
@@ -428,21 +427,24 @@ describe('share listing and revocation', () => {
     )
   })
 
-  test('deleteOwnershipDenialIs404AndDoesNotRevokeTheForeignLink', async () => {
-    const patientRead = query({ data: { id: PATIENT_ID }, error: null })
-    const foreignRead = query({ data: link({ patient_id: OTHER_PATIENT_ID }), error: null })
-    const forbiddenUpdate = query({ data: null, error: null })
-    const callerClient = clientFor({ patients: [patientRead], share_links: [foreignRead, forbiddenUpdate] })
+  test('foreignAndUnknownRevokeDenialsAreIdenticalGuardedOnceAndDoNotRevoke', async () => {
+    const callerClient = clientFor({ patients: [query({ data: { id: PATIENT_ID }, error: null }), query({ data: { id: PATIENT_ID }, error: null })] })
     anonMock.mockReturnValue(callerClient)
+    guardMock.mockResolvedValue({ ok: false, status: 404 })
 
-    const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
+    const foreign = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
       params: Promise.resolve({ id: LINK_ID }),
     })
-    expect(response.status).toBe(404)
-    expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
-    expect(errorResponseMock).toHaveBeenCalledOnce()
-    expect(errorResponseMock).toHaveBeenCalledWith(404, 'not_found', 'The requested resource was not found.')
-    expect(forbiddenUpdate.update).not.toHaveBeenCalled()
+    const unknownId = '77777777-7777-4777-8777-777777777777'
+    const unknown = await revokeDelete(new Request(`https://portal.example/api/shares/${unknownId}`, { method: 'DELETE' }), {
+      params: Promise.resolve({ id: unknownId }),
+    })
+    const bodies = await Promise.all([foreign, unknown].map((response) => response.text()))
+    expect([foreign.status, unknown.status]).toEqual([404, 404])
+    expect(new Set(bodies)).toEqual(new Set([JSON.stringify({ error: 'not_found', message: 'The requested resource was not found.' })]))
+    expect(guardMock).toHaveBeenCalledTimes(2)
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: USER_ID }, { kind: 'share_link', id: LINK_ID }, 'share.revoke')
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: USER_ID }, { kind: 'share_link', id: unknownId }, 'share.revoke')
     expect(serviceMock).not.toHaveBeenCalled()
 
     const active = link({ patient_id: OTHER_PATIENT_ID })
@@ -460,6 +462,27 @@ describe('share listing and revocation', () => {
     })
     expect(stillActive.status).toBe(200)
   })
+
+  test('authenticatedUnlinkedRevokeReachesExactlyOneGuardAndKeepsOpaque404', async () => {
+    const routePrecheck = query({ data: null, error: null })
+    anonMock.mockReturnValue(clientFor({ patients: [routePrecheck] }))
+    guardMock.mockResolvedValue({ ok: false, status: 403 })
+
+    const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
+      params: Promise.resolve({ id: LINK_ID }),
+    })
+
+    expect(response.status).toBe(404)
+    expect(await response.text()).toBe(JSON.stringify({ error: 'not_found', message: 'The requested resource was not found.' }))
+    expect(guardMock).toHaveBeenCalledOnce()
+    expect(guardMock).toHaveBeenCalledWith(
+      { kind: 'patient', userId: USER_ID },
+      { kind: 'share_link', id: LINK_ID },
+      'share.revoke',
+    )
+    expect(anonMock).not.toHaveBeenCalled()
+    expect(serviceMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('share-token resolution', () => {
@@ -470,16 +493,12 @@ describe('share-token resolution', () => {
       link({ revoked_at: '2026-08-16T11:59:59.000Z' }),
     ]
     const resolverClient = clientFor({
-      share_links: unavailableRows.flatMap((data) => [
-        query({ data, error: null }),
-        query({ data, error: null }),
-      ]),
+      share_links: unavailableRows.map((data) => query({ data, error: null })),
     })
     serviceMock.mockReturnValue(resolverClient)
 
     const bodies: string[] = []
     for (const token of ['unknown-token', 'expired-token', 'revoked-token']) {
-      await expect(resolveShareToken(token)).resolves.toEqual({ ok: false })
       bodies.push(await unavailableBody(await resolveGet(new Request(`https://portal.example/s/${token}`), {
         params: Promise.resolve({ token }),
       })))
@@ -488,7 +507,22 @@ describe('share-token resolution', () => {
       JSON.stringify({ error: 'share_unavailable', message: 'This link is no longer available.' }),
     ]))
     expect(signMock).not.toHaveBeenCalled()
-    expect(guardMock).not.toHaveBeenCalled()
+    expect(guardMock).toHaveBeenCalledTimes(3)
+    expect(guardMock).toHaveBeenNthCalledWith(1,
+      { kind: 'anonymous' },
+      { kind: 'share_link', id: null },
+      'share.use',
+    )
+    expect(guardMock).toHaveBeenNthCalledWith(2,
+      { kind: 'share_recipient', shareLinkId: LINK_ID },
+      { kind: 'image', id: IMAGE_ID },
+      'share.use',
+    )
+    expect(guardMock).toHaveBeenNthCalledWith(3,
+      { kind: 'share_recipient', shareLinkId: LINK_ID },
+      { kind: 'image', id: IMAGE_ID },
+      'share.use',
+    )
   })
 
   test('revocationBetweenResolutionAndDisclosureNeverReturnsImageOrReportContent', async () => {

@@ -62,7 +62,9 @@ describe('JOR-284 shared provider availability fixture', () => {
     const otherToken = await providerToken(E2_OTHER_PROVIDER_EMAIL)
     const read = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, otherToken)
     expect(read.status).toBe(200)
-    expect(await read.json()).toEqual([])
+    expect(await read.json()).toEqual([
+      expect.objectContaining({ id: E2_PROVIDER_ID, full_name: 'Dr. Avery Chen' }),
+    ])
 
     const hours = await request(`/rest/v1/working_hours?provider_id=eq.${E2_PROVIDER_ID}`, otherToken)
     expect(await hours.json()).toEqual([])
@@ -78,6 +80,19 @@ describe('JOR-284 shared provider availability fixture', () => {
     const ownToken = await providerToken(E2_PROVIDER_EMAIL)
     const ownHours = await request(`/rest/v1/working_hours?provider_id=eq.${E2_PROVIDER_ID}`, ownToken)
     expect(await ownHours.json()).toEqual([{ provider_id: E2_PROVIDER_ID, weekday: 1, starts_local: '09:00:00', ends_local: '17:00:00' }])
+  })
+
+  test('authenticatedNonProviderReadsGlobalDirectoryWhileAnonymousReadsNone', async () => {
+    const token = await providerToken(E2_NON_PROVIDER_EMAIL)
+    const authenticated = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, token)
+    expect(authenticated.status).toBe(200)
+    expect(await authenticated.json()).toEqual([
+      expect.objectContaining({ id: E2_PROVIDER_ID, full_name: 'Dr. Avery Chen' }),
+    ])
+
+    const anonymous = await fetch(`${fixture.url}/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`)
+    expect(anonymous.status).toBe(200)
+    expect(await anonymous.json()).toEqual([])
   })
 
   test('narrowedHoursPreserveBookedAppointmentWithReferenceOnlyAndDeterministicCounts', async () => {
@@ -130,7 +145,9 @@ describe('JOR-284 shared provider availability fixture', () => {
 
     const owner = await request(`/rest/v1/providers?id=eq.${E2_PROVIDER_ID}`, unknownProviderToken)
     expect(owner.status).toBe(200)
-    expect(await owner.json()).toEqual([])
+    expect(await owner.json()).toEqual([
+      expect.objectContaining({ id: E2_PROVIDER_ID, full_name: 'Dr. Avery Chen' }),
+    ])
     const hours = await request(
       `/rest/v1/working_hours?provider_id=eq.${E2_PROVIDER_ID}`,
       unknownProviderToken,

@@ -15,8 +15,6 @@ let fixtureSequence = 0
 
 beforeAll(async () => {
   run = await startRun(await ensureContainer())
-  psql(run.dbName, `create or replace function auth.uid() returns uuid language sql stable
-    as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`)
 }, 60_000)
 
 afterAll(async () => {
@@ -42,7 +40,7 @@ function fixture(): { providerId: string; appointmentId: string; callerId: strin
 
 function apply(providerId: string, callerId: string, hours: string, slots: string, slotMinutes = 30, blocks = '[]'): string {
   return psql(run.dbName, `set role app_user;
-    set request.jwt.claim.sub = '${callerId}';
+    set request.jwt.claims = '${JSON.stringify({ sub: callerId })}';
     select removed_open_slots || '|' || generated_open_slots || '|' || jsonb_array_length(preserved_out_of_hours)
     from apply_provider_availability(
       '${providerId}', '${callerId}', ${slotMinutes}, '${hours}'::jsonb, '${blocks}'::jsonb,

@@ -80,7 +80,7 @@ function appointment(input: Fixture, slotIndex = 0, status = 'requested'): strin
 }
 
 function appSql(actorUserId: string, call: string): string {
-  return `set role app_user; set request.jwt.claim.sub = ${literal(actorUserId)}; ${call}`
+  return `set role app_user; set request.jwt.claims = ${literal(JSON.stringify({ sub: actorUserId }))}; ${call}`
 }
 
 function rescheduleCall(f: Fixture, appointmentId: string, slotId: string, minimumNotice = MINIMUM_NOTICE): string {
@@ -111,8 +111,6 @@ function makeActorClinician(f: Fixture, role: 'provider' | 'admin', retainPatien
 beforeAll(async () => {
   container = await ensureContainer()
   run = await startRun(container)
-  psql(`create or replace function auth.uid() returns uuid language sql stable
-        as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`)
 }, 120_000)
 
 afterAll(async () => {
@@ -347,7 +345,7 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
     psql(`update slots set status = 'open' where id = '${f.slotIds[1]}';
           begin;
             set local role app_user;
-            set local request.jwt.claim.sub = '${f.actorUserId}';
+            set local request.jwt.claims = ${literal(JSON.stringify({ sub: f.actorUserId }))};
             select * from reschedule_appointment(
               '${a}', '${f.slotIds[1]}', '${f.actorUserId}', ${MINIMUM_NOTICE}
             );
