@@ -29,6 +29,10 @@ function psql(dbName: string, sql: string): string {
   ).trim()
 }
 
+function yieldToTestRunner(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 const PLATFORM_STUB = `
 create schema storage;
 create table storage.buckets (id text primary key, name text not null, public boolean not null default false);
@@ -84,13 +88,6 @@ describe('deployed provisioning program', () => {
   }, 60_000)
 
   test('retries a partial seed, stays idempotent, and rejects row-shaping input drift', async () => {
-    let workerTaskUpdateCompleted = false
-    setTimeout(() => {
-      setImmediate(() => { workerTaskUpdateCompleted = true })
-    }, 0)
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(workerTaskUpdateCompleted).toBe(true)
     const objects = new Map<string, Buffer>()
     const storage: PhiStorageClient = {
       storage: {
@@ -146,10 +143,12 @@ describe('deployed provisioning program', () => {
     }
 
     await expect(provisionSeed(config, storage, authAdmin, sql)).rejects.toThrow('injected seed transaction failure')
+    await yieldToTestRunner()
     expect(psql(run.dbName, 'select count(*) from patients;')).toBe('0')
     expect(psql(run.dbName, 'select count(*) from app_deploy.seed_runs;')).toBe('0')
 
     await provisionSeed(config, storage, authAdmin, sql)
+    await yieldToTestRunner()
     const patientCount = psql(run.dbName, 'select count(*) from patients;')
     const objectCount = objects.size
 
@@ -185,6 +184,7 @@ describe('deployed provisioning program', () => {
        commit;`,
     )
     await expect(provisionSeed(config, storage, authAdmin, sql)).rejects.toThrow()
+    await yieldToTestRunner()
     expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('20')
     expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
       PREVIOUS_SEED_IDENTITY_CHECKSUM,
@@ -195,6 +195,7 @@ describe('deployed provisioning program', () => {
         where clip_id = '${performanceClipId}' and frame_index = 0;`,
     )
     await provisionSeed(config, storage, authAdmin, sql)
+    await yieldToTestRunner()
     expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('100')
     expect(
       JSON.parse(psql(
@@ -224,6 +225,7 @@ describe('deployed provisioning program', () => {
       buildSeedChecksum(config),
     )
     await provisionSeed(config, storage, authAdmin, sql)
+    await yieldToTestRunner()
     expect(psql(run.dbName, `select count(*) from cine_frames where clip_id = '${performanceClipId}';`)).toBe('100')
     expect(psql(run.dbName, 'select count(*) from patients;')).toBe(patientCount)
     expect(psql(run.dbName, 'select count(*) from app_deploy.seed_runs;')).toBe('1')
