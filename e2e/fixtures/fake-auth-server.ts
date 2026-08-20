@@ -1007,14 +1007,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     // can decorate a patient's study DTO. Availability rows remain scoped to
     // the owning provider below, and this read handler never permits writes.
     const caller = authenticatedUser(req)
-    const callerPatient = caller ? patients.find((patient) => patient.user_id === caller.id) : undefined
     const callerProvider = caller ? providers.find((provider) => provider.user_id === caller.id) : undefined
 
     if (url.pathname === '/rest/v1/providers') {
       sendPostgrestRows(
         req,
         res,
-        applyEqualityFilters(callerPatient ? providers : callerProvider ? [callerProvider] : [], url),
+        applyEqualityFilters(caller ? providers : [], url),
       )
       return
     }
