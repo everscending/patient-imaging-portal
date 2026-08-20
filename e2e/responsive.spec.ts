@@ -20,6 +20,7 @@ import {
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
   releaseIdentityFixtureLock,
 } from './fixtures/identity-fixture-lock'
+import { resolveTicketDiffBase } from './fixtures/git-ticket-base'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'ResponsivePatientPassword9'
@@ -204,7 +205,7 @@ function componentDeclarations(file: string, source: string): string[] {
 }
 
 async function componentsAddedByThisTicket(): Promise<string[]> {
-  const base = 'origin/main'
+  const base = resolveTicketDiffBase(REPO_ROOT)
   const responsiveSpecAdded = execFileSync('git', [
     'diff', '--diff-filter=A', '--name-only', `${base}...HEAD`, '--', 'e2e/responsive.spec.ts',
   ], { cwd: REPO_ROOT, encoding: 'utf8' }).trim()
