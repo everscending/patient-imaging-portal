@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext, Browser, Page } from '@playwright/test'
+import type { APIRequestContext, Browser, Locator, Page } from '@playwright/test'
 
 import type { CineViewerProps } from '../components/imaging/CineViewer'
 import type { ImageViewerProps } from '../components/imaging/ImageViewer'
@@ -132,6 +132,39 @@ async function expectNamedControls(page: Page): Promise<void> {
   }
 }
 
+async function expectVisibleKeyboardFocus(control: Locator): Promise<void> {
+  await expect(control).toBeFocused()
+  expect(await control.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return (style.outlineStyle !== 'none' && Number.parseFloat(style.outlineWidth) > 0) || style.boxShadow !== 'none'
+  })).toBe(true)
+}
+
+async function tabTo(page: Page, target: Locator, options: { backwards?: boolean, limit?: number } = {}): Promise<void> {
+  const key = options.backwards ? 'Shift+Tab' : 'Tab'
+  for (let press = 0; press < (options.limit ?? 40); press += 1) {
+    await page.keyboard.press(key)
+    const hasDocumentFocus = await page.evaluate(() => {
+      for (const previous of document.querySelectorAll('[data-keyboard-focus-check]')) previous.removeAttribute('data-keyboard-focus-check')
+      const active = document.activeElement
+      if (!(active instanceof HTMLElement) || active === document.body || active.matches('nextjs-portal')) return false
+      active.setAttribute('data-keyboard-focus-check', '')
+      return true
+    })
+    // Native date inputs expose an internal picker stop that briefly moves
+    // focus outside the document before Tab returns to the next app control.
+    if (!hasDocumentFocus) continue
+    const focused = page.locator('[data-keyboard-focus-check]')
+    await expect(focused).toHaveCount(1)
+    await expect(focused).toHaveAccessibleName(/\S/)
+    if (await target.evaluate((element) => element === document.activeElement)) {
+      await expectVisibleKeyboardFocus(target)
+      return
+    }
+  }
+  throw new Error(`Could not reach ${await target.evaluate((element) => element.outerHTML.slice(0, 180))} with ${key}`)
+}
+
 async function productionComponentFiles(): Promise<string[]> {
   const files = await Promise.all(['app', 'components', 'lib'].map(async (root) =>
     (await readdir(path.join(process.cwd(), root), { recursive: true }))
@@ -190,9 +223,28 @@ async function expectRenderedTextContrast(page: Page): Promise<void> {
     return [...document.body.querySelectorAll<HTMLElement>('*')].flatMap((element) => {
       const style = getComputedStyle(element)
       const hasOwnText = [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
-      const isControl = element.matches('button, input, select, textarea')
+      const rendersOwnValue = element.matches([
+        'input:not([type])',
+        'input[type="text"]',
+        'input[type="search"]',
+        'input[type="email"]',
+        'input[type="tel"]',
+        'input[type="url"]',
+        'input[type="password"]',
+        'input[type="number"]',
+        'input[type="date"]',
+        'input[type="time"]',
+        'input[type="datetime-local"]',
+        'input[type="month"]',
+        'input[type="week"]',
+        'input[type="submit"]',
+        'input[type="reset"]',
+        'input[type="button"]',
+        'textarea',
+        'select',
+      ].join(', '))
       const rect = element.getBoundingClientRect()
-      if ((!hasOwnText && !isControl) || rect.width < 2 || rect.height < 2 || style.visibility === 'hidden' || style.display === 'none' || element.matches(':disabled, .pip-visually-hidden')) return []
+      if ((!hasOwnText && !rendersOwnValue) || rect.width < 2 || rect.height < 2 || style.visibility === 'hidden' || style.display === 'none' || element.matches(':disabled, .pip-visually-hidden')) return []
       const foreground = parse(style.color)
       if (!foreground) return []
       if ((foreground[0] === 135 && foreground[1] === 63 && foreground[2] === 224) ||
@@ -215,6 +267,65 @@ async function expectRenderedTextContrast(page: Page): Promise<void> {
   expect(offenders).toEqual([])
 }
 
+async function rangeControlContrastOffenders(page: Page): Promise<Array<{ html: string, violation: string }>> {
+  return page.evaluate(() => {
+    type Colour = [number, number, number]
+    const parse = (value: string): Colour | null => {
+      const hex = value.trim().match(/^#([\da-f]{6})$/i)?.[1]
+      if (hex) return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)]
+      const channels = value.match(/[\d.]+/g)?.map(Number)
+      return channels && channels.length >= 3 ? [channels[0]!, channels[1]!, channels[2]!] : null
+    }
+    const luminance = ([red, green, blue]: Colour) => {
+      const channel = (value: number) => {
+        const normalized = value / 255
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+      }
+      return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+    }
+    const ratio = (first: Colour, second: Colour) => {
+      const firstLight = luminance(first)
+      const secondLight = luminance(second)
+      return (Math.max(firstLight, secondLight) + 0.05) / (Math.min(firstLight, secondLight) + 0.05)
+    }
+
+    return [...document.querySelectorAll<HTMLInputElement>('input[type="range"]')].flatMap((range) => {
+      const style = getComputedStyle(range)
+      const pairs = [
+        ['track', '--cine-range-track', '--cine-range-surface'],
+        ['thumb', '--cine-range-thumb', '--cine-range-track'],
+        ['focus', '--cine-range-focus', '--cine-range-surface'],
+      ] as const
+      return pairs.flatMap(([part, foregroundProperty, backgroundProperty]) => {
+        const foreground = parse(style.getPropertyValue(foregroundProperty))
+        const background = parse(style.getPropertyValue(backgroundProperty))
+        if (!foreground || !background) {
+          return [{ html: range.outerHTML.slice(0, 180), violation: `${part} does not expose its owning colour tokens` }]
+        }
+        const contrast = ratio(foreground, background)
+        return contrast + 0.01 < 3
+          ? [{ html: range.outerHTML.slice(0, 180), violation: `${part} ${contrast.toFixed(2)}:1; requires 3:1` }]
+          : []
+      })
+    })
+  })
+}
+
+async function expectRangeControlContrast(page: Page): Promise<void> {
+  expect(await rangeControlContrastOffenders(page)).toEqual([])
+}
+
+test('JOR-237 regression: a range inherited colour is not rendered text', async ({ page }) => {
+  await page.setContent(`
+    <main style="background: rgb(255, 255, 255); color: rgb(36, 27, 49)">
+      <label for="contrast-range">Frame</label>
+      <input id="contrast-range" type="range" aria-label="Frame scrubber" style="color: rgb(119, 119, 119)">
+    </main>
+  `)
+
+  await expectRenderedTextContrast(page)
+})
+
 test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
   test.beforeAll(async () => {
     test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
@@ -226,7 +337,7 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
   test('mandatory adversarial: share dialog releases keyboard focus with Escape', async ({ page }) => {
     await page.goto(`/studies/${E2_SEEDED_STUDY_ID}`)
     const trigger = page.getByTestId('share-create')
-    await trigger.focus()
+    await tabTo(page, trigger)
     await page.keyboard.press('Enter')
     await expect(page.getByRole('dialog', { name: 'Share secure link' })).toBeVisible()
 
@@ -274,6 +385,7 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
       await expectHeadingOrder(page)
       await expectNamedControls(page)
       await expectRenderedTextContrast(page)
+      if (ready === 'cine-viewer') await expectRangeControlContrast(page)
     }
   })
 
@@ -289,17 +401,12 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     const patientReference = page.getByLabel('Patient reference')
     const dateOfBirth = page.getByLabel('Date of birth')
     const continueButton = page.getByRole('button', { name: 'Continue' })
-    await patientReference.focus()
-    await page.keyboard.press('Tab')
-    await expect(dateOfBirth).toBeFocused()
-    for (let tab = 0; tab < 4 && !await continueButton.evaluate((button) => button === document.activeElement); tab += 1) {
-      await page.keyboard.press('Tab')
-    }
-    await expect(continueButton).toBeFocused()
-
-    await patientReference.fill('PT-4471')
-    await dateOfBirth.fill('1988-03-14')
-    await continueButton.press('Enter')
+    await tabTo(page, patientReference)
+    await page.keyboard.type('PT-4471')
+    await tabTo(page, dateOfBirth)
+    await page.keyboard.type('03141988')
+    await tabTo(page, continueButton)
+    await page.keyboard.press('Enter')
     await expect(page).toHaveURL(/\/studies$/)
     await page.goto('/profile')
     await expect(page.getByRole('form', { name: 'Patient profile' })).toBeVisible()
@@ -308,6 +415,8 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     await expectHeadingOrder(page)
     await expectNamedControls(page)
     await expectRenderedTextContrast(page)
+    await tabTo(page, page.getByLabel('Display name'))
+    await tabTo(page, page.getByLabel('Contact phone'))
   })
 
   test('acceptance: every patient operation completes by keyboard, while status remains text and verify errors alert', async ({ page }) => {
@@ -327,23 +436,30 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     await page.goto('/verify?next=%2Fstudies')
     const patientReference = page.getByLabel('Patient reference')
     const dateOfBirth = page.getByLabel('Date of birth')
-    await patientReference.fill('PT-0000')
-    await dateOfBirth.fill('1988-03-14')
-    await page.getByRole('button', { name: 'Continue' }).press('Enter')
+    const continueButton = page.getByRole('button', { name: 'Continue' })
+    await tabTo(page, patientReference)
+    await page.keyboard.type('PT-0000')
+    await tabTo(page, dateOfBirth)
+    await page.keyboard.type('03141988')
+    await tabTo(page, continueButton)
+    await page.keyboard.press('Enter')
     await expect(page.getByTestId('identity-error')).toHaveAttribute('role', 'alert')
     await expect(page.getByTestId('identity-error')).toHaveText('We could not match those details. Please check them and try again.')
-    await patientReference.fill('PT-4471')
-    await page.getByRole('button', { name: 'Continue' }).press('Enter')
+    await tabTo(page, patientReference, { backwards: true })
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.type('PT-4471')
+    await tabTo(page, dateOfBirth)
+    await tabTo(page, continueButton)
+    await page.keyboard.press('Enter')
     await expect(page).toHaveURL(/\/studies$/)
 
     const studyCard = page.getByTestId('study-card').first()
-    await studyCard.focus()
-    await expect(studyCard).toBeFocused()
+    await tabTo(page, studyCard)
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('image-viewer')).toBeVisible()
     await expect(page.getByTestId('image-zoom')).toHaveAttribute('aria-label', 'Image zoom controls')
     const imageCanvas = page.getByTestId('image-canvas')
-    await imageCanvas.focus()
+    await tabTo(page, imageCanvas)
     await page.keyboard.press('+')
     await page.keyboard.press('ArrowRight')
     await expect(page.getByTestId('zoom-level')).toHaveText('Zoom 125%')
@@ -353,35 +469,46 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     const previous = page.getByRole('button', { name: 'Previous frame' })
     const play = page.getByRole('button', { name: 'Play playback' })
     const next = page.getByRole('button', { name: 'Next frame' })
+    const scrub = page.getByRole('slider', { name: 'Frame scrubber' })
     const fps = page.getByRole('combobox', { name: 'Playback rate' })
-    for (const control of [previous, play, next, fps]) await expect(control).toBeVisible()
-    await next.press('Enter')
+    for (const control of [previous, play, next, scrub, fps]) await expect(control).toBeVisible()
+    await tabTo(page, previous)
+    await tabTo(page, play)
+    await tabTo(page, next)
+    await page.keyboard.press('Enter')
     await expect(page.getByText('Frame 2 of 100', { exact: true })).toBeVisible()
-    await fps.selectOption('6')
+    await tabTo(page, scrub)
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByText('Frame 3 of 100', { exact: true })).toBeVisible()
+    await tabTo(page, fps)
+    await page.keyboard.type('6 fps')
     await expect(fps).toHaveValue('6')
-    await play.press('Enter')
+    await tabTo(page, scrub, { backwards: true })
+    await tabTo(page, next, { backwards: true })
+    await tabTo(page, play, { backwards: true })
+    await page.keyboard.press('Enter')
     await expect(page.getByRole('button', { name: 'Pause playback' })).toBeVisible()
-    await page.getByRole('button', { name: 'Pause playback' }).press('Enter')
+    await page.keyboard.press('Enter')
 
     await page.goto('/reports')
     const reportLink = page.getByRole('link', { name: /Seeded abdominal ultrasound/ })
-    await reportLink.focus()
+    await tabTo(page, reportLink)
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('report-view')).toBeVisible()
     await expect(page.getByText('Signed', { exact: true })).toBeVisible()
     await expectHeadingOrder(page)
 
     const shareTrigger = page.getByTestId('share-create')
-    await shareTrigger.focus()
+    await tabTo(page, shareTrigger)
     await page.keyboard.press('Enter')
-    await expect(page.getByRole('button', { name: 'Close share dialog' })).toBeFocused()
+    await expectVisibleKeyboardFocus(page.getByRole('button', { name: 'Close share dialog' }))
     await page.keyboard.press('Tab')
     const recipientEmail = page.getByRole('textbox', { name: 'Recipient email' })
-    await expect(recipientEmail).toBeFocused()
+    await expectVisibleKeyboardFocus(recipientEmail)
     await page.keyboard.type('keyboard-recipient@example.test')
     await page.keyboard.press('Tab')
     const sendShare = page.getByRole('button', { name: 'Send secure link' })
-    await expect(sendShare).toBeFocused()
+    await expectVisibleKeyboardFocus(sendShare)
     const shareResponse = page.waitForResponse((response) =>
       new URL(response.url()).pathname === '/api/shares' && response.request().method() === 'POST')
     await page.keyboard.press('Enter')
@@ -393,23 +520,29 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     await page.goto('/shares')
     const revoke = page.getByTestId('share-revoke').first()
     await expect(revoke).toHaveAccessibleName(/Revoke link shared with keyboard-recipient@example\.test/)
-    await revoke.focus()
+    await tabTo(page, revoke)
     await page.keyboard.press('Enter')
     await expect(page.getByText('Revoked', { exact: true }).first()).toBeVisible()
 
     await page.goto('/book')
     const service = page.getByRole('combobox', { name: 'Service' })
     const provider = page.getByRole('combobox', { name: 'Provider' })
-    await service.focus()
-    await service.selectOption('77667766-7766-4766-8766-776677667766')
-    await provider.selectOption({ label: 'Dr. Riley Patel' })
+    await expect(service.getByRole('option', { name: 'Ultrasound', exact: true })).toHaveCount(1)
+    await tabTo(page, service)
+    await page.keyboard.type('Ultrasound')
+    await expect(service).toHaveValue('77667766-7766-4766-8766-776677667766')
+    await expect(provider).toBeEnabled()
+    await expect(provider.getByRole('option', { name: 'Dr. Riley Patel', exact: true })).toHaveCount(1)
+    await tabTo(page, provider)
+    await page.keyboard.type('Dr. Riley Patel')
+    await expect(provider.locator('option:checked')).toHaveText('Dr. Riley Patel')
     const slot = page.getByTestId('slot-item').first()
     await expect(slot).toHaveAccessibleName(/(?:AM|PM)/)
-    await slot.focus()
+    await tabTo(page, slot)
     await page.keyboard.press('Enter')
     const book = page.getByTestId('book-submit')
     await expect(book).toHaveAccessibleName('Confirm appointment')
-    await book.focus()
+    await tabTo(page, book)
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('booking-success')).toBeVisible()
 
@@ -435,16 +568,18 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     const changeable = page.getByTestId('appointment-item').filter({ has: page.getByTestId('appointment-reschedule') }).first()
     const reschedule = changeable.getByTestId('appointment-reschedule')
     await expect(reschedule).toHaveAccessibleName('Reschedule')
-    await reschedule.focus()
+    await tabTo(page, reschedule)
     await page.keyboard.press('Enter')
     const newSlot = changeable.getByRole('textbox', { name: 'New appointment slot ID' })
-    await newSlot.fill(RESCHEDULE_SLOT_ID)
-    await changeable.getByRole('button', { name: 'Confirm reschedule' }).press('Enter')
+    await tabTo(page, newSlot)
+    await page.keyboard.type(RESCHEDULE_SLOT_ID)
+    await tabTo(page, changeable.getByRole('button', { name: 'Confirm reschedule' }))
+    await page.keyboard.press('Enter')
     const updatedAppointment = page.getByTestId('appointment-item').filter({ hasText: 'Jun 11, 2030' })
     await expect(updatedAppointment).toBeVisible()
     const cancel = updatedAppointment.getByTestId('appointment-cancel')
     await expect(cancel).toHaveAccessibleName('Cancel')
-    await cancel.focus()
+    await tabTo(page, cancel)
     await page.keyboard.press('Enter')
     await expect(updatedAppointment).toContainText('Status: Cancelled')
 
