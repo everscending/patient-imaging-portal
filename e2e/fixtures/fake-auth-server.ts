@@ -437,6 +437,15 @@ const REPORTS: FakeReport[] = [
   },
 ]
 
+// The demo log scanner consumes the same rows as this HTTP fixture. Exporting
+// the existing arrays keeps its PHI guard tied to the data the demo drives.
+export const E2_DEMO_PHI_ROWS = {
+  patients: [SEEDED_PATIENT, OTHER_PATIENT, EMPTY_PATIENT],
+  providers: PROVIDERS,
+  reports: REPORTS,
+  studies: STUDIES,
+}
+
 const FOREIGN_SHARE_LINK: FakeShareLink = {
   id: E2_FOREIGN_SHARE_ID,
   token_hash: 'f'.repeat(64),

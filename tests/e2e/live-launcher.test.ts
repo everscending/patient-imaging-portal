@@ -1,7 +1,7 @@
 // JOR-283 — the live fixture must never let an enclosing checkout choose the
 // Next application it serves.
 import { spawn, type ChildProcess } from 'node:child_process'
-import { createServer } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -78,6 +78,15 @@ async function waitForServer(url: string, child: ChildProcess): Promise<Response
   throw new Error(`live fixture did not become ready: ${String(lastError)}`)
 }
 
+async function listenOn(port: number): Promise<Server> {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', resolve)
+  })
+  return server
+}
+
 afterEach(async () => {
   await Promise.all(
     children.splice(0).map(
@@ -129,6 +138,42 @@ test(
     })
     expect(registration.status).toBe(201)
     expect((await fetch(`${baseUrl}/api/identity/status`)).status).toBe(401)
+  },
+  120_000,
+)
+
+test(
+  'terminated shared launcher releases its configured port before exiting',
+  async function terminatedSharedLauncherReleasesConfiguredPortBeforeExiting() {
+    const port = await unusedPort()
+    const child = spawn('/usr/bin/env', [
+      ...(await testEnvironment(REPO_ROOT)),
+      `PORT=${port}`,
+      'WATCHPACK_POLLING=true',
+      process.execPath,
+      path.join(REPO_ROOT, 'scripts', 'run-next.mjs'),
+      'dev',
+    ], {
+      cwd: REPO_ROOT,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let rebound: Server | undefined
+    try {
+      expect((await waitForServer(`http://127.0.0.1:${port}/api/health`, child)).status).toBe(200)
+      await new Promise<void>((resolve) => {
+        child.once('exit', () => resolve())
+        child.kill('SIGTERM')
+      })
+      rebound = await listenOn(port)
+    } finally {
+      if (rebound) await new Promise<void>((resolve, reject) => rebound!.close((error) => error ? reject(error) : resolve()))
+      try {
+        process.kill(-child.pid!, 'SIGTERM')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      }
+    }
   },
   120_000,
 )

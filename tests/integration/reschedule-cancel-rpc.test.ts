@@ -374,6 +374,19 @@ describe('reschedule/cancel RPC — atomic database transaction contract', () =>
       values ('${f.slotIds[0]}', '${f.patientId}', '${f.providerId}', '${f.serviceId}', '${randomUUID()}') returning id;`)).toMatch(/[0-9a-f-]{36}/)
   })
 
+  test('demo run emits reschedule and cancel audit details', () => {
+    const f = fixture()
+    const id = appointment(f)
+    expect(JSON.parse(psql(rescheduleCall(f, id, f.slotIds[1]!))).result_error).toBeNull()
+    expect(JSON.parse(psql(cancelCall(f, id))).result_error).toBeNull()
+
+    const audits = psql(`select json_build_object(
+      'action', action, 'targetId', target_id, 'outcome', outcome, 'detail', detail
+    )::text from audit_events where target_id = '${id}' order by id;`).split('\n')
+    expect(audits.map((audit) => JSON.parse(audit).action)).toEqual(['booking.reschedule', 'booking.cancel'])
+    for (const audit of audits) console.log(`DEMO_AUDIT_DETAIL ${audit}`)
+  })
+
   test('cancel_minimumNoticeAndTransitionFailure_rollBackEveryChange', () => {
     const f = fixture({ startsInHours: 23 })
     const nearId = appointment(f)

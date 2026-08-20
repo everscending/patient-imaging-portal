@@ -159,9 +159,23 @@ NODE
 
 stop_server
 
-# The fake HTTP boundary intentionally has no reschedule RPC. Drive the real
-# migrated transactions against the isolated local database instead.
-npx vitest run --project integration tests/integration/reschedule-cancel-rpc.test.ts >> "$WORK_ARTIFACT" 2>&1
+# The shared launcher must finish its whole process tree before the producer
+# continues, or the next gate stage cannot reuse config.port.
+APP_PORT="$APP_PORT" node --input-type=module - >> "$WORK_ARTIFACT" 2>&1 <<'NODE'
+import { once } from 'node:events'
+import { createServer } from 'node:http'
+
+const server = createServer()
+server.listen(Number(process.env.APP_PORT), '127.0.0.1')
+await once(server, 'listening')
+await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+console.log('DEMO_PORT_RELEASED')
+NODE
+
+# The fake HTTP boundary intentionally has no reschedule RPC. Drive the two
+# real migrated transactions and capture their persisted audit detail.
+npx vitest run --project integration tests/integration/reschedule-cancel-rpc.test.ts \
+  -t 'demo run emits reschedule and cancel audit details' >> "$WORK_ARTIFACT" 2>&1
 printf '%s\n' 'DEMO_STEP_COMPLETE reschedule-and-cancel' >> "$WORK_ARTIFACT"
 
 # Drive one real reminder dispatch and print its persisted audit detail while
@@ -174,6 +188,7 @@ try {
   await fixture.prepareDueAppointments(1)
   const result = await fixture.runAuthorizedJob()
   if (result.status !== 200 || result.body.sent !== 1) throw new Error('demo-run: reminder failed')
+  for (const log of fixture.dispatchLogs()) console.log(JSON.stringify(log))
   for (const audit of await fixture.dispatchAudits()) {
     console.log(`DEMO_AUDIT_DETAIL ${JSON.stringify({
       action: audit.action,

@@ -1,8 +1,8 @@
-(node:82340) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/everscending/Projects/patient-imaging-portal/.worktrees/212/e2e/fixtures/fake-auth-server.ts is not specified and it doesn't parse as CommonJS.
+(node:76287) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/everscending/Projects/patient-imaging-portal/.worktrees/212/e2e/fixtures/fake-auth-server.ts is not specified and it doesn't parse as CommonJS.
 Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
 To eliminate this warning, add "type": "module" to /Users/everscending/Projects/patient-imaging-portal/.worktrees/212/package.json.
 (Use `node --trace-warnings ...` to show where the warning was created)
-(node:82357) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/everscending/Projects/patient-imaging-portal/.worktrees/212/lib/config.ts is not specified and it doesn't parse as CommonJS.
+(node:76304) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/everscending/Projects/patient-imaging-portal/.worktrees/212/lib/config.ts is not specified and it doesn't parse as CommonJS.
 Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
 To eliminate this warning, add "type": "module" to /Users/everscending/Projects/patient-imaging-portal/.worktrees/212/package.json.
 (Use `node --trace-warnings ...` to show where the warning was created)
@@ -12,49 +12,49 @@ To eliminate this warning, add "type": "module" to /Users/everscending/Projects/
    - Environments: .env
 
  ✓ Starting...
- ✓ Ready in 848ms
- ✓ Compiled / in 231ms (525 modules)
- GET / 200 in 355ms
- ✓ Compiled /api/auth/register in 111ms (659 modules)
- POST /api/auth/register 201 in 205ms
- ✓ Compiled /api/auth/login in 62ms (674 modules)
- POST /api/auth/login 200 in 130ms
- ✓ Compiled /api/identity/verify in 73ms (683 modules)
- POST /api/identity/verify 200 in 137ms
+ ✓ Ready in 811ms
+ ✓ Compiled / in 226ms (525 modules)
+ GET / 200 in 350ms
+ ✓ Compiled /api/auth/register in 107ms (659 modules)
+ POST /api/auth/register 201 in 194ms
+ ✓ Compiled /api/auth/login in 57ms (674 modules)
+ POST /api/auth/login 200 in 121ms
+ ✓ Compiled /api/identity/verify in 68ms (683 modules)
+ POST /api/identity/verify 200 in 128ms
 DEMO_STEP_COMPLETE identity-verification
- ✓ Compiled /middleware in 96ms (605 modules)
- ✓ Compiled /api/studies/[studyId] in 63ms (823 modules)
- GET /api/studies/99669966-9966-4966-8966-996699669966 200 in 318ms
- ✓ Compiled /api/studies/[studyId]/clips/[clipId] in 64ms (825 modules)
- GET /api/studies/99669966-9966-4966-8966-996699669966/clips/ee11ee11-ee11-4e11-8e11-ee11ee11ee11 200 in 310ms
+ ✓ Compiled /middleware in 86ms (605 modules)
+ ✓ Compiled /api/studies/[studyId] in 58ms (823 modules)
+ GET /api/studies/99669966-9966-4966-8966-996699669966 200 in 302ms
+ ✓ Compiled /api/studies/[studyId]/clips/[clipId] in 59ms (825 modules)
+ GET /api/studies/99669966-9966-4966-8966-996699669966/clips/ee11ee11-ee11-4e11-8e11-ee11ee11ee11 200 in 294ms
 DEMO_STEP_COMPLETE image-and-cine-viewing
- ✓ Compiled /api/shares in 86ms (847 modules)
-{"op":"share.create","ms":5.932624999999916,"outcome":"ok","requestId":"804de3ad-fbfc-4b1b-b6a2-dd101c56847c"}
- POST /api/shares 201 in 131ms
+ ✓ Compiled /api/shares in 72ms (847 modules)
+{"op":"share.create","ms":4.45154199999979,"outcome":"ok","requestId":"3963c501-9817-4fd2-9220-8491f5bd4235"}
+ POST /api/shares 201 in 112ms
 DEMO_STEP_COMPLETE sharing
- ✓ Compiled /api/reports/[reportId] in 77ms (850 modules)
- GET /api/reports/bb88bb88-bb88-4b88-8b88-bb88bb88bb88 200 in 310ms
+ ✓ Compiled /api/reports/[reportId] in 67ms (850 modules)
+ GET /api/reports/bb88bb88-bb88-4b88-8b88-bb88bb88bb88 200 in 286ms
 DEMO_STEP_COMPLETE report
  POST /api/auth/login 200 in 10ms
- ✓ Compiled /api/providers/[providerId]/availability in 71ms (854 modules)
- GET /api/providers/66336633-6633-4633-8633-663366336633/availability 200 in 294ms
+ ✓ Compiled /api/providers/[providerId]/availability in 69ms (854 modules)
+ GET /api/providers/66336633-6633-4633-8633-663366336633/availability 200 in 288ms
 DEMO_STEP_COMPLETE availability
- ✓ Compiled /api/services in 74ms (856 modules)
- GET /api/services 200 in 121ms
- ✓ Compiled /api/providers in 74ms (858 modules)
- GET /api/providers?serviceId=77667766-7766-4766-8766-776677667766 200 in 125ms
- ✓ Compiled /api/slots in 97ms (860 modules)
- GET /api/slots?providerId=66446644-6644-4644-8644-664466446644&serviceId=77667766-7766-4766-8766-776677667766&from=2026-08-20T09%3A29%3A25.946Z&to=2026-09-03T09%3A29%3A25.946Z 200 in 159ms
- ✓ Compiled /api/appointments in 113ms (864 modules)
-{"op":"booking.create","ms":8.014541999999892,"outcome":"ok","requestId":"68572818-dcc8-47d7-9089-ae0be279072c"}
- POST /api/appointments 201 in 186ms
+ ✓ Compiled /api/services in 71ms (856 modules)
+ GET /api/services 200 in 119ms
+ ✓ Compiled /api/providers in 72ms (858 modules)
+ GET /api/providers?serviceId=77667766-7766-4766-8766-776677667766 200 in 124ms
+ ✓ Compiled /api/slots in 75ms (860 modules)
+ GET /api/slots?providerId=66446644-6644-4644-8644-664466446644&serviceId=77667766-7766-4766-8766-776677667766&from=2026-08-20T10%3A02%3A21.621Z&to=2026-09-03T10%3A02%3A21.621Z 200 in 131ms
+ ✓ Compiled /api/appointments in 80ms (864 modules)
+{"op":"booking.create","ms":6.353832999999668,"outcome":"ok","requestId":"eddeed2f-9cb4-420d-a8e7-76370ab01bab"}
+ POST /api/appointments 201 in 141ms
 DEMO_STEP_COMPLETE booking
  GET /api/services 200 in 8ms
  GET /api/providers?serviceId=77667766-7766-4766-8766-776677667766 200 in 10ms
- GET /api/slots?providerId=66446644-6644-4644-8644-664466446644&serviceId=77667766-7766-4766-8766-776677667766&from=2026-08-20T09%3A29%3A26.319Z&to=2026-09-03T09%3A29%3A26.319Z 200 in 9ms
-{"op":"booking.create","ms":2.5057089999995696,"outcome":"conflict","requestId":"4d38c761-9187-4ed1-bafb-97efcb2da615"}
- POST /api/appointments 409 in 12ms
-{"op":"booking.create","ms":4.581500000000233,"outcome":"ok","requestId":"9c2ead1a-b230-408a-bea3-599165c438d8"}
+ GET /api/slots?providerId=66446644-6644-4644-8644-664466446644&serviceId=77667766-7766-4766-8766-776677667766&from=2026-08-20T10%3A02%3A21.918Z&to=2026-09-03T10%3A02%3A21.918Z 200 in 8ms
+{"op":"booking.create","ms":2.6139170000001286,"outcome":"conflict","requestId":"53e6a277-f4af-4383-a85d-1c4bae44688b"}
+ POST /api/appointments 409 in 11ms
+{"op":"booking.create","ms":4.6056250000001455,"outcome":"ok","requestId":"836d6675-0935-4ee2-93b2-447b4f67b368"}
  POST /api/appointments 201 in 14ms
 DEMO_STEP_COMPLETE no-double-book
 DEMO_AUDIT_DETAIL {"action":"identity.verify","targetId":"44714471-4471-4471-8471-447144714471","outcome":"granted","detail":null}
@@ -64,8 +64,10 @@ DEMO_AUDIT_DETAIL {"action":"clip.view","targetId":"ee11ee11-ee11-4e11-8e11-ee11
 DEMO_AUDIT_DETAIL {"action":"share.create","targetId":"bb88bb88-bb88-4b88-8b88-bb88bb88bb88","outcome":"granted","detail":null}
 DEMO_AUDIT_DETAIL {"action":"report.view","targetId":"bb88bb88-bb88-4b88-8b88-bb88bb88bb88","outcome":"granted","detail":null}
 DEMO_AUDIT_DETAIL {"action":"schedule.view","targetId":"66336633-6633-4633-8633-663366336633","outcome":"granted","detail":null}
-DEMO_AUDIT_DETAIL {"action":"booking.create","targetId":"40b51596-06b0-4bd4-b2f2-37e808fcb4e6","outcome":"granted","detail":null}
-DEMO_AUDIT_DETAIL {"action":"booking.create","targetId":"4c6016d8-8d3e-4b52-a993-7f6b2eee532a","outcome":"granted","detail":null}
+DEMO_AUDIT_DETAIL {"action":"booking.create","targetId":"df4c1d97-9b35-4f66-bbc0-2cbb635b925b","outcome":"granted","detail":null}
+DEMO_AUDIT_DETAIL {"action":"booking.create","targetId":"189ff30d-8ea3-42b1-a78a-f04f57151e35","outcome":"granted","detail":null}
+[?25h
+DEMO_PORT_RELEASED
 
  RUN  v3.2.7 /Users/everscending/Projects/patient-imaging-portal/.worktrees/212
 
@@ -75,65 +77,22 @@ psql:<stdin>:61: NOTICE:  pg_cron unavailable in this Postgres image
 psql:<stdin>:66: NOTICE:  pg_net unavailable in this Postgres image
 psql:<stdin>:92: NOTICE:  reminder cron not scheduled until deployment configuration is provisioned
 psql:<stdin>:17: NOTICE:  role "postgres" has already been granted membership in role "booking_executor" by role "postgres"
-[postgres-harness] pip-testpg on host port 55000, database pip_run_8e7e52ca5c1d
+[postgres-harness] pip-testpg on host port 55000, database pip_run_d8d17282f6cf
 NOTICE:  relation "_pip_run_registry" already exists, skipping
 psql:<stdin>:61: NOTICE:  pg_cron unavailable in this Postgres image
 psql:<stdin>:66: NOTICE:  pg_net unavailable in this Postgres image
 psql:<stdin>:92: NOTICE:  reminder cron not scheduled until deployment configuration is provisioned
 psql:<stdin>:17: NOTICE:  role "postgres" has already been granted membership in role "booking_executor" by role "postgres"
-ERROR:  permission denied for table appointments
-ERROR:  transition audit rejected
-CONTEXT:  PL/pgSQL function transition_audit_rollback_probe() line 2 at RAISE
-SQL statement "insert into audit_events (
-    actor_kind, actor_ref, action, target_kind, target_id, outcome
-  ) values (
-    'account', p_actor_user_id::text, 'appointment.transition',
-    'appointment', v_appointment.id, 'granted'
-  )"
-PL/pgSQL function transition_appointment(uuid,appointment_status,uuid) line 58 at SQL statement
-ERROR:  appointment is not available to caller
-CONTEXT:  PL/pgSQL function cancel_appointment(uuid,uuid,interval) line 32 at RAISE
-ERROR:  reschedule audit rejected
-CONTEXT:  PL/pgSQL function reschedule_rpc_rollback_probe() line 2 at RAISE
-SQL statement "insert into audit_events (
-    actor_kind, actor_ref, action, target_kind, target_id, outcome
-  ) values (
-    'account', p_actor_user_id::text, 'booking.reschedule',
-    'appointment', v_appointment.id, 'granted'
-  )"
-PL/pgSQL function reschedule_appointment(uuid,uuid,uuid,interval) line 74 at SQL statement
-ERROR:  transition rejected
-CONTEXT:  PL/pgSQL function cancel_rpc_rollback_probe() line 2 at RAISE
-SQL statement "insert into appointment_transitions (appointment_id, from_status, to_status, actor_user_id)
-  values (v_appointment.id, v_appointment.status, 'cancelled', p_actor_user_id)"
-PL/pgSQL function cancel_appointment(uuid,uuid,interval) line 61 at SQL statement
-ERROR:  cancel audit rejected
-CONTEXT:  PL/pgSQL function cancel_audit_rollback_probe() line 2 at RAISE
-SQL statement "insert into audit_events (
-    actor_kind, actor_ref, action, target_kind, target_id, outcome
-  ) values (
-    'account', p_actor_user_id::text, 'booking.cancel',
-    'appointment', v_appointment.id, 'granted'
-  )"
-PL/pgSQL function cancel_appointment(uuid,uuid,interval) line 63 at SQL statement
-ERROR:  permission denied for table slots
- ✓ |integration| tests/integration/reschedule-cancel-rpc.test.ts (22 tests) 8565ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > providerWithPatientLink_canUseTransactionalClinicianTransition  331ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > adminWithPatientLink_canUseTransactionalClinicianTransition  337ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > patientOnly_transactionalClinicianTransition_isDeniedWithoutSideEffects  307ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > transition_auditFailure_rollsBackStatusAndHistory  400ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > concurrentReschedulesToOneOpenSlot_serializeToOneWinnerAndOneSlotUnavailable  478ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > reschedule_minimumNoticeAndInvalidState_leaveAppointmentSlotsAndHistoryUnchanged  518ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > adminCancellation_insidePatientNoticeWindow_isAllowedAndAtomic  310ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > reschedule_auditFailure_rollsBackAppointmentBothSlotsTransitionAndAudit  356ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > rescheduleRpc_defersConstraintToAllowTwoAppointmentSwapAndKeepsSlotStatesConsistent  331ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > cancel_minimumNoticeAndTransitionFailure_rollBackEveryChange  554ms
-   ✓ reschedule/cancel RPC — atomic database transaction contract > cancel_auditFailure_rollsBackAppointmentSlotTransitionAndAudit  361ms
+stdout | tests/integration/reschedule-cancel-rpc.test.ts > reschedule/cancel RPC — atomic database transaction contract > demo run emits reschedule and cancel audit details
+DEMO_AUDIT_DETAIL {"action" : "booking.reschedule", "targetId" : "ce600330-5d94-4a9e-a826-88eaf2b2d96f", "outcome" : "granted", "detail" : null}
+DEMO_AUDIT_DETAIL {"action" : "booking.cancel", "targetId" : "ce600330-5d94-4a9e-a826-88eaf2b2d96f", "outcome" : "granted", "detail" : null}
+
+ ✓ |integration| tests/integration/reschedule-cancel-rpc.test.ts (23 tests | 22 skipped) 1735ms
 
  Test Files  1 passed (1)
-      Tests  22 passed (22)
-   Start at  04:29:26
-   Duration  10.10s (transform 23ms, setup 0ms, collect 16ms, tests 8.57s, environment 0ms, prepare 18ms)
+      Tests  1 passed | 22 skipped (23)
+   Start at  05:02:22
+   Duration  3.23s (transform 22ms, setup 0ms, collect 15ms, tests 1.74s, environment 0ms, prepare 18ms)
 
 DEMO_STEP_COMPLETE reschedule-and-cancel
 NOTICE:  relation "_pip_run_registry" already exists, skipping
@@ -141,6 +100,7 @@ psql:<stdin>:61: NOTICE:  pg_cron unavailable in this Postgres image
 psql:<stdin>:66: NOTICE:  pg_net unavailable in this Postgres image
 psql:<stdin>:92: NOTICE:  reminder cron not scheduled until deployment configuration is provisioned
 psql:<stdin>:17: NOTICE:  role "postgres" has already been granted membership in role "booking_executor" by role "postgres"
-DEMO_AUDIT_DETAIL {"action":"reminder.dispatch","targetId":"31c5b403-2d4b-4766-8ce7-f694cc09c090","outcome":"granted","detail":{"leadHours":24,"transport":"log"}}
+{"event":"email.sent","id":"bcc03c4c-0266-4a5c-8248-5abb01c4d737","domain":"demo.pip.test","transport":"log"}
+DEMO_AUDIT_DETAIL {"action":"reminder.dispatch","targetId":"d61efa21-72fa-4adc-b557-5bb1624f8991","outcome":"granted","detail":{"leadHours":24,"transport":"log"}}
 DEMO_STEP_COMPLETE reminder
 DEMO_RUN_COMPLETE

@@ -6,6 +6,7 @@
 // the same keyless-testing shape as lib/notify/email.ts's log transport
 // (GAP-3).
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -55,7 +56,10 @@ let exiting = false
 async function cleanupAndExit(code) {
   if (exiting) return
   exiting = true
-  child.kill()
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill()
+    await once(child, 'exit')
+  }
   await fakeAuthServer.close()
   process.exit(code)
 }
