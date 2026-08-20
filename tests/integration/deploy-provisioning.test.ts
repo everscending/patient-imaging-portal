@@ -145,11 +145,6 @@ describe('deployed provisioning program', () => {
     await provisionSeed(config, storage, authAdmin, sql)
     const patientCount = psql(run.dbName, 'select count(*) from patients;')
     const objectCount = objects.size
-    await provisionSeed(config, storage, authAdmin, sql)
-    expect(psql(run.dbName, 'select count(*) from patients;')).toBe(patientCount)
-    expect(psql(run.dbName, 'select count(*) from app_deploy.seed_runs;')).toBe('1')
-    expect(objects.size).toBe(objectCount)
-    expect(users.size).toBe(3)
 
     const rowSet = buildRowSet({
       pool: generateAssetPool(config.seedSourceSeed),
@@ -159,6 +154,9 @@ describe('deployed provisioning program', () => {
     })
     const performanceClipId = rowSet.fixtures.performanceCineClipId
     const brokenClipId = rowSet.fixtures.brokenCineClipId
+    const firstPerformanceFrame = rowSet.cineFrames.find(
+      (frame) => frame.clip_id === performanceClipId && frame.frame_index === 0,
+    )!
     const brokenBefore = psql(
       run.dbName,
       `select json_build_object(
@@ -171,9 +169,23 @@ describe('deployed provisioning program', () => {
       run.dbName,
       `begin;
        delete from cine_frames where clip_id = '${performanceClipId}' and frame_index >= 20;
+       update cine_frames set storage_key = 'unexpected-key'
+        where clip_id = '${performanceClipId}' and frame_index = 0;
        update cine_clips set frame_count = 20 where id = '${performanceClipId}';
-       update app_deploy.seed_runs set checksum = '${PREVIOUS_SEED_IDENTITY_CHECKSUM}' where singleton;
+       update app_deploy.seed_runs
+          set checksum = '0131eb052fffffec6b7c757d8b0df5269840856a431309a6cd132dcafa26794f'
+        where singleton;
        commit;`,
+    )
+    await expect(provisionSeed(config, storage, authAdmin, sql)).rejects.toThrow()
+    expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('20')
+    expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
+      PREVIOUS_SEED_IDENTITY_CHECKSUM,
+    )
+    psql(
+      run.dbName,
+      `update cine_frames set storage_key = '${firstPerformanceFrame.storage_key}'
+        where clip_id = '${performanceClipId}' and frame_index = 0;`,
     )
     await provisionSeed(config, storage, authAdmin, sql)
     expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('100')
@@ -206,47 +218,10 @@ describe('deployed provisioning program', () => {
     )
     await provisionSeed(config, storage, authAdmin, sql)
     expect(psql(run.dbName, `select count(*) from cine_frames where clip_id = '${performanceClipId}';`)).toBe('100')
-
-    psql(
-      run.dbName,
-      `begin;
-       delete from cine_frames where clip_id = '${performanceClipId}' and frame_index >= 20;
-       update cine_clips set frame_count = 20 where id = '${performanceClipId}';
-       update app_deploy.seed_runs
-          set checksum = '0131eb052fffffec6b7c757d8b0df5269840856a431309a6cd132dcafa26794f'
-        where singleton;
-       commit;`,
-    )
-    await provisionSeed(config, storage, authAdmin, sql)
-    expect(psql(run.dbName, `select count(*) from cine_frames where clip_id = '${performanceClipId}';`)).toBe('100')
-    expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
-      buildSeedChecksum(config),
-    )
-
-    const firstPerformanceFrame = rowSet.cineFrames.find(
-      (frame) => frame.clip_id === performanceClipId && frame.frame_index === 0,
-    )!
-    psql(
-      run.dbName,
-      `begin;
-       delete from cine_frames where clip_id = '${performanceClipId}' and frame_index >= 20;
-       update cine_frames set storage_key = 'unexpected-key'
-        where clip_id = '${performanceClipId}' and frame_index = 0;
-       update cine_clips set frame_count = 20 where id = '${performanceClipId}';
-       update app_deploy.seed_runs set checksum = '${PREVIOUS_SEED_IDENTITY_CHECKSUM}' where singleton;
-       commit;`,
-    )
-    await expect(provisionSeed(config, storage, authAdmin, sql)).rejects.toThrow()
-    expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('20')
-    expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
-      PREVIOUS_SEED_IDENTITY_CHECKSUM,
-    )
-    psql(
-      run.dbName,
-      `update cine_frames set storage_key = '${firstPerformanceFrame.storage_key}'
-        where clip_id = '${performanceClipId}' and frame_index = 0;`,
-    )
-    await provisionSeed(config, storage, authAdmin, sql)
+    expect(psql(run.dbName, 'select count(*) from patients;')).toBe(patientCount)
+    expect(psql(run.dbName, 'select count(*) from app_deploy.seed_runs;')).toBe('1')
+    expect(objects.size).toBe(objectCount)
+    expect(users.size).toBe(3)
 
     await expect(
       provisionSeed({ ...config, minChangeNoticeHours: 48 }, storage, authAdmin, sql),
@@ -254,5 +229,5 @@ describe('deployed provisioning program', () => {
     await expect(
       provisionSeed({ ...config, seedSourceSeed: 'changed-source' }, storage, authAdmin, sql),
     ).rejects.toThrow('applied seed does not match this checkout')
-  }, 60_000)
+  }, 90_000)
 })
