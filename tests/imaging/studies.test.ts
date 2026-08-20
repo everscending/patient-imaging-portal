@@ -63,6 +63,14 @@ vi.mock('../../lib/config', () => ({ config: { signedUrlTtlSeconds: 120 } }))
 
 type Data = Record<string, Array<Record<string, unknown>>>
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((release) => {
+    resolve = release
+  })
+  return { promise, resolve }
+}
+
 function client(data: Data): never {
   return {
     from(table: string) {
@@ -90,12 +98,139 @@ function client(data: Data): never {
   } as never
 }
 
+function controlledClient(data: Data, blockedTables: string[]) {
+  const started = new Set<string>()
+  const controls = new Map(blockedTables.map((table) => [table, deferred<void>()]))
+
+  function waitForRelease(table: string): Promise<void> {
+    started.add(table)
+    return controls.get(table)?.promise ?? Promise.resolve()
+  }
+
+  const controlled = {
+    from(table: string) {
+      const filters: Array<[string, unknown]> = []
+      const matchingRows = () => (data[table] ?? []).filter((item) => filters.every(([key, value]) => item[key] === value))
+      const query = {
+        select() {
+          return query
+        },
+        eq(key: string, value: unknown) {
+          filters.push([key, value])
+          return query
+        },
+        order() {
+          return query
+        },
+        async maybeSingle() {
+          await waitForRelease(table)
+          return { data: matchingRows()[0] ?? null, error: null }
+        },
+        then(
+          resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown,
+          reject: (reason: unknown) => unknown,
+        ) {
+          return waitForRelease(table)
+            .then((): { data: Record<string, unknown>[]; error: null } => ({ data: matchingRows(), error: null }))
+            .then(resolve, reject)
+        },
+      }
+      return query
+    },
+  } as never
+
+  return {
+    client: controlled,
+    started,
+    release(table: string) {
+      const control = controls.get(table)
+      if (!control) throw new Error(`No controlled read for ${table}`)
+      control.resolve()
+    },
+  }
+}
+
 const studyId = '11111111-1111-4111-8111-111111111111'
 const clipId = '22222222-2222-4222-8222-222222222222'
 const authenticated = { status: 'authenticated', session: { accessToken: 'caller-token', userId: 'account-1' } }
 const unauthenticated = { status: 'unauthenticated' }
 
 beforeEach(() => reset())
+
+describe('independent manifest work starts concurrently', () => {
+  test('studyDetailStartsVisitImagesAndClipsBeforeAnyOfThemCompletes', async function studyDetailStartsVisitImagesAndClipsBeforeAnyOfThemCompletes() {
+    const { studyDetail } = await import('../../lib/imaging/studies')
+    const reads = controlledClient(
+      {
+        studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
+        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        images: [],
+        cine_clips: [],
+      },
+      ['studies', 'visits', 'images', 'cine_clips'],
+    )
+
+    const result = studyDetail(reads.client, studyId)
+    expect(reads.started).toEqual(new Set(['studies']))
+
+    reads.release('studies')
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['studies', 'visits', 'images', 'cine_clips'])))
+
+    reads.release('visits')
+    reads.release('images')
+    reads.release('cine_clips')
+    await expect(result).resolves.toMatchObject({ id: studyId, images: [], clips: [] })
+  })
+
+  test('studyDetailStartsImageAndPosterSigningBeforeEitherCompletes', async function studyDetailStartsImageAndPosterSigningBeforeEitherCompletes() {
+    const { studyDetail } = await import('../../lib/imaging/studies')
+    const imageSigning = deferred<Array<{ key: string; url: string; available: true }>>()
+    const posterSigning = deferred<Array<{ key: string; url: string; available: true }>>()
+    signingMock.mockImplementation((keys: string[]) => (keys.includes('poster-secret') ? posterSigning.promise : imageSigning.promise))
+
+    const result = studyDetail(
+      client({
+        studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
+        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        images: [{ id: 'image-1', study_id: studyId, width: 10, height: 20, ordinal: 0, storage_key: 'image-secret', thumb_key: null }],
+        cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: 'poster-secret' }],
+      }),
+      studyId,
+    )
+
+    await vi.waitFor(() => expect(signingMock).toHaveBeenCalledTimes(2))
+    imageSigning.resolve([{ key: 'image-secret', url: 'https://signed.example/image-secret', available: true }])
+    posterSigning.resolve([{ key: 'poster-secret', url: 'https://signed.example/poster-secret', available: true }])
+    await expect(result).resolves.toMatchObject({
+      images: [{ url: 'https://signed.example/image-secret' }],
+      clips: [{ posterUrl: 'https://signed.example/poster-secret' }],
+    })
+  })
+
+  test('clipManifestStartsEachIndependentReadBeforeItsPeerCompletes', async function clipManifestStartsEachIndependentReadBeforeItsPeerCompletes() {
+    const { clipManifest } = await import('../../lib/imaging/studies')
+    const reads = controlledClient(
+      {
+        cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: null }],
+        studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
+        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-secret' }],
+      },
+      ['cine_clips', 'studies', 'visits', 'cine_frames'],
+    )
+
+    const result = clipManifest(reads.client, studyId, clipId)
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['cine_clips', 'studies'])))
+
+    reads.release('cine_clips')
+    reads.release('studies')
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['cine_clips', 'studies', 'visits', 'cine_frames'])))
+
+    reads.release('visits')
+    reads.release('cine_frames')
+    await expect(result).resolves.toMatchObject({ id: clipId, frames: [{ index: 0, available: true }] })
+  })
+})
 
 describe('mandatory adversarial: guard target, audit count, and ownership are enforced before data reads', () => {
   test('studyDetailKeepsDualRoleAdminAuthority', async function studyDetailKeepsDualRoleAdminAuthority() {

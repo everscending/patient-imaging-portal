@@ -70,18 +70,20 @@ export async function listStudies(client: Client): Promise<{ studies: Array<Reco
 export async function studyDetail(client: Client, studyId: string): Promise<Record<string, unknown> | null> {
   const study = await row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle())
   if (!study) return null
-  const visit = await completedVisit(client, study.visit_id)
-  if (!visit) return null
-
-  const [images, clips] = await Promise.all([
+  const [visit, images, clips] = await Promise.all([
+    completedVisit(client, study.visit_id),
     rows<ImageRow>(client.from('images').select('id, width, height, ordinal, storage_key, thumb_key').eq('study_id', studyId).order('ordinal')),
     rows<ClipRow>(client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('study_id', studyId)),
   ])
+  if (!visit) return null
+
   const imageKeys = images.flatMap((image) => [image.storage_key, ...(image.thumb_key ? [image.thumb_key] : [])])
-  const signed = await signStorageKeys(imageKeys)
+  const [signed, clipPosters] = await Promise.all([
+    signStorageKeys(imageKeys),
+    signStorageKeys(clips.flatMap((clip) => (clip.poster_key ? [clip.poster_key] : []))),
+  ])
   const signedByKey = new Map(signed.map((entry) => [entry.key, entry]))
   const expiry = expiresAt()
-  const clipPosters = await signStorageKeys(clips.flatMap((clip) => (clip.poster_key ? [clip.poster_key] : [])))
   const postersByKey = new Map(clipPosters.map((entry) => [entry.key, entry]))
 
   return {
@@ -107,14 +109,19 @@ export async function studyDetail(client: Client, studyId: string): Promise<Reco
 }
 
 export async function clipManifest(client: Client, studyId: string, clipId: string): Promise<Record<string, unknown> | null> {
-  const clip = await row<ClipRow>(
-    client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('id', clipId).eq('study_id', studyId).maybeSingle(),
-  )
-  if (!clip) return null
-  const study = await row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle())
-  if (!study || !(await completedVisit(client, study.visit_id))) return null
+  const [clip, study] = await Promise.all([
+    row<ClipRow>(
+      client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('id', clipId).eq('study_id', studyId).maybeSingle(),
+    ),
+    row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle()),
+  ])
+  if (!clip || !study) return null
 
-  const storedFrames = await rows<FrameRow>(client.from('cine_frames').select('frame_index, storage_key').eq('clip_id', clipId).order('frame_index'))
+  const [visit, storedFrames] = await Promise.all([
+    completedVisit(client, study.visit_id),
+    rows<FrameRow>(client.from('cine_frames').select('frame_index, storage_key').eq('clip_id', clipId).order('frame_index')),
+  ])
+  if (!visit) return null
   const keysByIndex = new Map(storedFrames.map((frame) => [frame.frame_index, frame.storage_key]))
   const signed = await signStorageKeys(storedFrames.map((frame) => frame.storage_key))
   const signedByKey = new Map(signed.map((entry) => [entry.key, entry]))
