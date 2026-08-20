@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { generateAssetPool } from '../db/seed/assets'
 import { runSeed, type AuthAdminClient, type SeedDbClient } from '../db/seed/index'
 import {
+  buildRowSet,
   DEMO_ACCOUNT_PASSWORD,
   DEMO_PATIENT_EMAIL,
 } from '../db/seed/rows'
@@ -27,6 +28,12 @@ const LEGACY_SEED_CHECKSUM_UPGRADES = new Map([
     '39ee3a9e535584d7d8386ecdb4b6ec248151f43becf99558644cabc7cc75b837',
   ],
 ])
+const SEED_DATA_CHECKSUM_UPGRADES = new Map([
+  [
+    '39ee3a9e535584d7d8386ecdb4b6ec248151f43becf99558644cabc7cc75b837',
+    'f6cf03ef229486e9cdfeeda0d82b08efb091bda2b619e0a5d34420e73ba31693',
+  ],
+])
 const MIGRATION_LOCK = 7_402_021
 const READY_TIMEOUT_MS = 30_000
 
@@ -40,7 +47,7 @@ export type DeploymentConfig = {
   minChangeNoticeHours: number
 }
 
-type SeedMarker = { sourceSeed: string; checksum: string } | null
+type SeedMarker = { sourceSeed: string; checksum: string; seedNow: string } | null
 
 function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`
@@ -150,9 +157,82 @@ end $$;`)
   return true
 }
 
+function upgradeSeedData(
+  sql: typeof runPsql,
+  marker: NonNullable<SeedMarker>,
+  markerChecksum: string,
+  checksum: string,
+  config: DeploymentConfig,
+): boolean {
+  if (SEED_DATA_CHECKSUM_UPGRADES.get(markerChecksum) !== checksum) return false
+
+  const rowSet = buildRowSet({
+    pool: generateAssetPool(config.seedSourceSeed),
+    sourceSeed: config.seedSourceSeed,
+    now: new Date(marker.seedNow),
+    minChangeNoticeHours: config.minChangeNoticeHours,
+  })
+  const clip = rowSet.cineClips.find(({ id }) => id === rowSet.fixtures.performanceCineClipId)
+  const frames = rowSet.cineFrames
+    .filter(({ clip_id }) => clip_id === clip?.id)
+    .sort((a, b) => a.frame_index - b.frame_index)
+  if (!clip || frames.length !== 100 || frames.some((frame, index) => frame.frame_index !== index)) {
+    throw new Error('provision-deployed-stack: invalid healthy performance cine clip transition')
+  }
+
+  const previousFrames = frames
+    .slice(0, 20)
+    .map((frame) => `(${frame.frame_index}, ${sqlLiteral(frame.storage_key)})`)
+    .join(',\n')
+  const addedFrames = frames
+    .slice(20)
+    .map((frame) => `(${sqlLiteral(frame.clip_id)}, ${frame.frame_index}, ${sqlLiteral(frame.storage_key)})`)
+    .join(',\n')
+
+  sql(`do $$
+begin
+  perform 1 from app_deploy.seed_runs
+   where singleton
+     and source_seed = ${sqlLiteral(marker.sourceSeed)}
+     and checksum = ${sqlLiteral(markerChecksum)}
+   for update;
+  if not found then
+    raise exception 'seed marker changed while seed data was upgraded';
+  end if;
+
+  perform 1 from cine_clips
+   where id = ${sqlLiteral(clip.id)}
+     and study_id = ${sqlLiteral(clip.study_id)}
+     and patient_id = ${sqlLiteral(clip.patient_id)}
+     and frame_count = 20
+     and default_fps = ${clip.default_fps}
+     and poster_key = ${sqlLiteral(clip.poster_key)}
+   for update;
+  if not found or exists (
+    select 1
+      from (values
+${previousFrames}
+      ) as expected(frame_index, storage_key)
+      full join (
+        select frame_index, storage_key from cine_frames where clip_id = ${sqlLiteral(clip.id)}
+      ) as actual using (frame_index)
+     where expected.storage_key is distinct from actual.storage_key
+  ) then
+    raise exception 'healthy performance cine clip does not match its previous seed identity';
+  end if;
+
+  update cine_clips set frame_count = 100 where id = ${sqlLiteral(clip.id)};
+  insert into cine_frames (clip_id, frame_index, storage_key) values
+${addedFrames};
+  update app_deploy.seed_runs set checksum = ${sqlLiteral(checksum)}
+   where singleton and checksum = ${sqlLiteral(markerChecksum)};
+end $$;`)
+  return true
+}
+
 function readSeedMarker(sql: typeof runPsql): SeedMarker {
   const raw = sql(
-    `select json_build_object('sourceSeed', source_seed, 'checksum', checksum)::text
+    `select json_build_object('sourceSeed', source_seed, 'checksum', checksum, 'seedNow', seed_now)::text
        from app_deploy.seed_runs where singleton;`,
     true,
   )
@@ -190,7 +270,15 @@ export async function provisionSeed(
     if (marker.sourceSeed !== config.seedSourceSeed) {
       throw new Error('provision-deployed-stack: applied seed does not match this checkout')
     }
-    if (marker.checksum !== checksum && !upgradeLegacySeedChecksum(sql, marker.checksum, checksum)) {
+    let markerChecksum = marker.checksum
+    const legacyChecksum = LEGACY_SEED_CHECKSUM_UPGRADES.get(markerChecksum)
+    if (legacyChecksum && upgradeLegacySeedChecksum(sql, markerChecksum, legacyChecksum)) {
+      markerChecksum = legacyChecksum
+    }
+    if (
+      markerChecksum !== checksum &&
+      !upgradeSeedData(sql, marker, markerChecksum, checksum, config)
+    ) {
       throw new Error('provision-deployed-stack: applied seed does not match this checkout')
     }
     await uploadPool(storage, generateAssetPool(config.seedSourceSeed))
