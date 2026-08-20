@@ -94,9 +94,11 @@ describe('timings — every executed command reports its duration', () => {
       GATE_FAKE_EXIT_TSC: '0',
       GATE_FAKE_EXIT_ESLINT: '0',
       GATE_FAKE_EXIT_VITEST_UNIT: '0',
+      GATE_FAKE_EXIT_VITEST_COVERAGE_CONTRACT: '0',
+      GATE_FAKE_EXIT_VITEST_COVERAGE: '0',
     })
     expect(result.status).toBe(0)
-    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT']) {
+    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT', 'VITEST_COVERAGE_CONTRACT', 'VITEST_COVERAGE']) {
       expect(result.stderr).toMatch(new RegExp(`\\[gate:logic\\] timing ${name}=\\d+s`))
     }
   })

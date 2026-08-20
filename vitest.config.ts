@@ -5,13 +5,29 @@ import { defineConfig } from 'vitest/config'
 // tests/integration/** plus the named booking concurrency proof, run by the
 // `api` tier against a migrated
 // pip_run_<random> database via tests/setup/postgres.ts's globalSetup
-// (ADR-0013). Coverage is configured so CQ-1's 80% threshold has a reporter
-// to enforce against once a later ticket sets it — no threshold here yet.
+// (ADR-0013). CQ-1 measures only its named core logic, over both projects.
 export default defineConfig({
   test: {
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
+      include: [
+        'lib/access/guard.ts',
+        'lib/access/identity.ts',
+        'lib/imaging/signing.ts',
+        'lib/imaging/studies.ts',
+        'lib/notify/reminders.ts',
+        'lib/reports/reports.ts',
+        'lib/scheduling/booking.ts',
+        'lib/scheduling/lifecycle.ts',
+        'lib/share/links.ts',
+      ],
+      thresholds: {
+        statements: 80,
+        branches: 80,
+        functions: 80,
+        lines: 80,
+      },
     },
     // One shared pip-testpg container per machine (ADR-0013) — integration
     // test files that create their own pip_run_* databases must not run

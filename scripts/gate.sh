@@ -67,6 +67,8 @@ run_logic() {
   step TSC npx tsc --noEmit
   step ESLINT npx eslint .
   step VITEST_UNIT npx vitest run --project unit
+  step VITEST_COVERAGE_CONTRACT npx vitest run --project unit tests/coverage-config.test.ts
+  step VITEST_COVERAGE npx vitest run --coverage --project unit --project integration
 }
 
 run_api() {
