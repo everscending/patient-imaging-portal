@@ -40,8 +40,8 @@
 //     → unlinkedOrNoSessionOnCollectionRejected
 //   exactly one audit_events row per call, counted across the whole table
 //     → exactlyOneAuditRowPerCallCountedAcrossWholeTable
-//   signature and exported types byte-identical to T15's
-//     → signatureAndExportedTypesByteIdenticalToT15
+//   signature and exported types match the current §5 interface
+//     → signatureAndExportedTypesMatchCurrentArchitecture
 //
 // Mandatory adversarial tests
 //   patient naming another patient's studyId → 404, identical to a random UUID
@@ -257,7 +257,7 @@ function expectOk(result: GuardResult): { ok: true; patientId: string | null } {
 }
 
 async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
-  if (actor.kind !== 'share_recipient') setSessionUserId(actor.userId)
+  if (actor.kind !== 'share_recipient' && actor.kind !== 'anonymous') setSessionUserId(actor.userId)
   return guardPhiAccessRaw(actor, target, action)
 }
 
@@ -326,12 +326,14 @@ function seedAppointment(overrides: { id?: string; patient_id: string; provider_
   return row
 }
 
-function seedShareLink(overrides: { id?: string; patient_id: string; image_id?: string | null; report_id?: string | null }) {
+function seedShareLink(overrides: { id?: string; patient_id: string; image_id?: string | null; report_id?: string | null; expires_at?: string; revoked_at?: string | null }) {
   const row = {
     id: overrides.id ?? nextId('share'),
     patient_id: overrides.patient_id,
     image_id: overrides.image_id ?? null,
     report_id: overrides.report_id ?? null,
+    expires_at: overrides.expires_at ?? '2099-01-01T00:00:00.000Z',
+    revoked_at: overrides.revoked_at ?? null,
   }
   db.share_links!.push(row)
   return row
@@ -677,15 +679,16 @@ describe('AC: exactly one audit_events row is appended per call, counted across 
   })
 })
 
-describe("AC: guard.ts's exported signature and types are byte-identical to T15's pinned interface", () => {
-  test('signatureAndExportedTypesByteIdenticalToT15', function signatureAndExportedTypesByteIdenticalToT15() {
+describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5", () => {
+  test('signatureAndExportedTypesMatchCurrentArchitecture', function signatureAndExportedTypesMatchCurrentArchitecture() {
     const source = readFileSync(path.join(REPO_ROOT, 'lib', 'access', 'guard.ts'), 'utf8')
     expect(source).toContain(
       `export type Actor =
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
-  | { kind: 'share_recipient'; shareLinkId: string }`,
+  | { kind: 'share_recipient'; shareLinkId: string }
+  | { kind: 'anonymous' }`,
     )
     expect(source).toContain(
       `export type PhiTarget =
@@ -695,6 +698,7 @@ describe("AC: guard.ts's exported signature and types are byte-identical to T15'
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule'; id: string } // id = provider id
+  | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' } // no id — the whole log, admin only`,
     )
@@ -827,6 +831,34 @@ describe('mandatory adversarial: share_recipient naming any resource other than 
 
     const result = await guardPhiAccess({ kind: 'share_recipient', shareLinkId: 'm9-share' }, { kind: 'image', id: otherImage.id }, 'image.view')
     expect(result).toEqual({ ok: false, status: 404 })
+  })
+})
+
+describe('mandatory adversarial: patient share-link revocation ownership', () => {
+  test('patientShareLinkOwnershipGrantsOwnedAndDeniesForeignOrMissingWithOneAuditEach', async function patientShareLinkOwnershipGrantsOwnedAndDeniesForeignOrMissingWithOneAuditEach() {
+    const patient = seedPatient({ id: 'revoke-patient', user_id: 'revoke-user' })
+    const otherPatient = seedPatient({ id: 'revoke-other-patient', user_id: 'revoke-other-user' })
+    const owned = seedShareLink({ id: 'revoke-owned', patient_id: patient.id })
+    const foreign = seedShareLink({ id: 'revoke-foreign', patient_id: otherPatient.id })
+    const target = (id: string): PhiTarget => ({ kind: 'share_link', id })
+
+    const results = [
+      await guardPhiAccess({ kind: 'patient', userId: 'revoke-user' }, target(owned.id), 'share.revoke'),
+      await guardPhiAccess({ kind: 'patient', userId: 'revoke-user' }, target(foreign.id), 'share.revoke'),
+      await guardPhiAccess({ kind: 'patient', userId: 'revoke-user' }, target('revoke-missing'), 'share.revoke'),
+    ]
+
+    expect(results).toEqual([
+      { ok: true, patientId: patient.id },
+      { ok: false, status: 404 },
+      { ok: false, status: 404 },
+    ])
+    expect(auditCalls).toEqual([
+      expect.objectContaining({ action: 'share.revoke', targetKind: 'share_link', targetId: owned.id, outcome: 'granted' }),
+      expect.objectContaining({ action: 'share.revoke', targetKind: 'share_link', targetId: foreign.id, outcome: 'denied' }),
+      expect.objectContaining({ action: 'share.revoke', targetKind: 'share_link', targetId: 'revoke-missing', outcome: 'denied' }),
+    ])
+    expect(serviceClientMock).not.toHaveBeenCalled()
   })
 })
 

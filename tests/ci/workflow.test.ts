@@ -38,7 +38,7 @@ function suiteForPlaywrightCommand(command: string): string | undefined {
   const [, spec, project] = match
   if (spec) return spec
 
-  return project === 'e2-wiring' ? 'e2e/e2-wiring.spec.ts' : undefined
+  return ['e2-wiring', 'e3-wiring', 'e4-wiring'].includes(project ?? '') ? `e2e/${project}.spec.ts` : undefined
 }
 
 function expectValidUiGateManifest(commands: string[]): void {
@@ -183,14 +183,20 @@ describe('per-change coverage stays cumulative', () => {
     ])).toThrow()
   })
 
-  test('ordinary product Playwright excludes wiring specs; E2 depends on product while E0/E1 remain certification', () => {
+  test('ordinary product Playwright excludes dedicated wiring specs; E2/E3 depend on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012345\]-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e3-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e3-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/dependencies:\s*\['product'\]/)
+    expect(playwrightConfig).toMatch(/name:\s*'e4-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e4-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e8-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e8-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e5-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e5-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'certification'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e\[01\]-wiring\\\.spec\\\.ts\//)
   })
@@ -238,7 +244,9 @@ describe('timing and warm browser setup', () => {
     expect(workflow).toContain('Playwright setup')
     expect(workflow).toContain("hashFiles('package-lock.json')")
     expect(workflow).toContain('steps.playwright-version.outputs.version')
-    expect(workflow).toMatch(/npx playwright install --with-deps chromium/)
+    expect(workflow).toMatch(/npx playwright install chromium/)
+    expect(workflow).not.toMatch(/playwright install[^\n]*--with-deps/)
+    expect(workflow).toMatch(/- name: Setup — Playwright browser\n\s+timeout-minutes:\s*[1-9]\d*\n\s+run:/)
   })
 
   test('the gate records unit, integration, and Playwright command durations', () => {

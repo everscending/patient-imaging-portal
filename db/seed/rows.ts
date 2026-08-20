@@ -41,12 +41,15 @@ const IMAGES_PER_STUDY_CYCLE = [4, 5, 5]
 // Sums to 250 over 150 studies (50 cycles of 3 studies, 5 clips/cycle).
 const CLIPS_PER_STUDY_CYCLE = [2, 2, 1]
 
-const NORMAL_CLIP_FRAME_COUNT = 20 // "up to 100 frames"; the broken clip alone uses the full 100
+const NORMAL_CLIP_FRAME_COUNT = 20
 const BROKEN_CLIP_FRAME_COUNT = 100
+const PERFORMANCE_CLIP_FRAME_COUNT = 100
 // Global clip index (0-based, across the whole run) that references the
 // pool's one broken cine set — fixed, not seed-derived, mirroring
 // db/seed/assets.ts's BROKEN_CINE_SET_INDEX/BROKEN_FRAME_INDEX choice.
 const BROKEN_CLIP_GLOBAL_INDEX = 0
+// The next clip uses healthy cine set 0 and is the stable PF-3 fixture.
+const PERFORMANCE_CLIP_GLOBAL_INDEX = 1
 // The pool's non-broken cine sets, cycled through for every other clip.
 const NON_BROKEN_CINE_SET_CYCLE = [0, 1, 2, 4, 5, 6, 7]
 
@@ -136,6 +139,7 @@ export type RowSetFixtures = {
   patientRefFirst: string
   patientRefLast: string
   brokenCineClipId: string
+  performanceCineClipId: string
   noticeWindowInsideAppointmentId: string
   noticeWindowOutsideAppointmentId: string
   statusAppointmentIds: Record<AppointmentStatus, string>
@@ -417,12 +421,13 @@ function buildCineClipsAndFrames(
   sourceSeed: string,
   plans: VisitPlan[],
   poolIndex: PoolIndex,
-): { clips: CineClipRow[]; frames: CineFrameRow[]; brokenCineClipId: string } {
+): { clips: CineClipRow[]; frames: CineFrameRow[]; brokenCineClipId: string; performanceCineClipId: string } {
   const clips: CineClipRow[] = []
   const frames: CineFrameRow[] = []
   let globalClipIndex = 0
   let nonBrokenCursor = 0
   let brokenCineClipId = ''
+  let performanceCineClipId = ''
 
   for (const plan of plans) {
     const count = CLIPS_PER_STUDY_CYCLE[plan.studyIndex % CLIPS_PER_STUDY_CYCLE.length]
@@ -432,10 +437,16 @@ function buildCineClipsAndFrames(
         ? 3 // db/seed/assets.ts's BROKEN_CINE_SET_INDEX
         : NON_BROKEN_CINE_SET_CYCLE[nonBrokenCursor % NON_BROKEN_CINE_SET_CYCLE.length]
       if (!isBroken) nonBrokenCursor += 1
-      const frameCount = isBroken ? BROKEN_CLIP_FRAME_COUNT : NORMAL_CLIP_FRAME_COUNT
+      const isPerformanceClip = globalClipIndex === PERFORMANCE_CLIP_GLOBAL_INDEX
+      const frameCount = isBroken
+        ? BROKEN_CLIP_FRAME_COUNT
+        : isPerformanceClip
+          ? PERFORMANCE_CLIP_FRAME_COUNT
+          : NORMAL_CLIP_FRAME_COUNT
 
       const clipId = deterministicId(sourceSeed, 'clip', globalClipIndex)
       if (isBroken) brokenCineClipId = clipId
+      if (isPerformanceClip) performanceCineClipId = clipId
 
       clips.push({
         id: clipId,
@@ -454,7 +465,7 @@ function buildCineClipsAndFrames(
     }
   }
 
-  return { clips, frames, brokenCineClipId }
+  return { clips, frames, brokenCineClipId, performanceCineClipId }
 }
 
 function buildReports(sourceSeed: string, plans: VisitPlan[]): ReportRow[] {
@@ -612,7 +623,11 @@ export function buildRowSet(input: BuildRowSetInput): RowSet {
   const visits = plans.map((p) => p.visit)
   const studies = plans.map((p) => p.study)
   const images = buildImages(sourceSeed, plans, poolIndex, pool)
-  const { clips: cineClips, frames: cineFrames, brokenCineClipId } = buildCineClipsAndFrames(sourceSeed, plans, poolIndex)
+  const { clips: cineClips, frames: cineFrames, brokenCineClipId, performanceCineClipId } = buildCineClipsAndFrames(
+    sourceSeed,
+    plans,
+    poolIndex,
+  )
   const reports = buildReports(sourceSeed, plans)
   const workingHours = buildWorkingHours(sourceSeed, providers)
   const availabilityBlocks = buildAvailabilityBlocks(sourceSeed, providers, now)
@@ -704,6 +719,7 @@ export function buildRowSet(input: BuildRowSetInput): RowSet {
     patientRefFirst: patients[0].patient_ref,
     patientRefLast: patients[patients.length - 1].patient_ref,
     brokenCineClipId,
+    performanceCineClipId,
     noticeWindowInsideAppointmentId: noticeWindowInside.id,
     noticeWindowOutsideAppointmentId: noticeWindowOutside.id,
     statusAppointmentIds,

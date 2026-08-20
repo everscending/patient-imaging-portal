@@ -7,15 +7,19 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import {
   buildMigrationProgram,
+  buildSeedChecksum,
   provisionSeed,
   readMigrationFiles,
   type DeploymentConfig,
 } from '../../scripts/provision-deployed-stack'
 import type { AuthAdminClient } from '../../db/seed'
+import { generateAssetPool } from '../../db/seed/assets'
+import { buildRowSet } from '../../db/seed/rows'
 import type { PhiStorageClient } from '../../db/seed/storage'
 import { ensureContainer, startRun, stopRun, type Run } from '../setup/postgres'
 
 const CONTAINER = 'pip-testpg'
+const PREVIOUS_SEED_IDENTITY_CHECKSUM = '39ee3a9e535584d7d8386ecdb4b6ec248151f43becf99558644cabc7cc75b837'
 
 function psql(dbName: string, sql: string): string {
   return execFileSync(
@@ -28,8 +32,6 @@ function psql(dbName: string, sql: string): string {
 const PLATFORM_STUB = `
 create schema storage;
 create table storage.buckets (id text primary key, name text not null, public boolean not null default false);
-create or replace function auth.uid() returns uuid language sql stable
-as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
     create role anon nologin noinherit;
@@ -62,7 +64,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('9')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('11')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')
@@ -143,7 +145,79 @@ describe('deployed provisioning program', () => {
     await provisionSeed(config, storage, authAdmin, sql)
     const patientCount = psql(run.dbName, 'select count(*) from patients;')
     const objectCount = objects.size
+
+    const rowSet = buildRowSet({
+      pool: generateAssetPool(config.seedSourceSeed),
+      sourceSeed: config.seedSourceSeed,
+      now: new Date('2026-08-19T00:00:00.000Z'),
+      minChangeNoticeHours: config.minChangeNoticeHours,
+    })
+    const performanceClipId = rowSet.fixtures.performanceCineClipId
+    const brokenClipId = rowSet.fixtures.brokenCineClipId
+    const firstPerformanceFrame = rowSet.cineFrames.find(
+      (frame) => frame.clip_id === performanceClipId && frame.frame_index === 0,
+    )!
+    const brokenBefore = psql(
+      run.dbName,
+      `select json_build_object(
+         'frameCount', c.frame_count,
+         'frames', (select json_agg(json_build_array(f.frame_index, f.storage_key) order by f.frame_index)
+                      from cine_frames f where f.clip_id = c.id)
+       )::text from cine_clips c where c.id = '${brokenClipId}';`,
+    )
+    psql(
+      run.dbName,
+      `begin;
+       delete from cine_frames where clip_id = '${performanceClipId}' and frame_index >= 20;
+       update cine_frames set storage_key = 'unexpected-key'
+        where clip_id = '${performanceClipId}' and frame_index = 0;
+       update cine_clips set frame_count = 20 where id = '${performanceClipId}';
+       update app_deploy.seed_runs
+          set checksum = '0131eb052fffffec6b7c757d8b0df5269840856a431309a6cd132dcafa26794f'
+        where singleton;
+       commit;`,
+    )
+    await expect(provisionSeed(config, storage, authAdmin, sql)).rejects.toThrow()
+    expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('20')
+    expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
+      PREVIOUS_SEED_IDENTITY_CHECKSUM,
+    )
+    psql(
+      run.dbName,
+      `update cine_frames set storage_key = '${firstPerformanceFrame.storage_key}'
+        where clip_id = '${performanceClipId}' and frame_index = 0;`,
+    )
     await provisionSeed(config, storage, authAdmin, sql)
+    expect(psql(run.dbName, `select frame_count from cine_clips where id = '${performanceClipId}';`)).toBe('100')
+    expect(
+      JSON.parse(psql(
+        run.dbName,
+        `select json_agg(json_build_array(frame_index, storage_key) order by frame_index)::text
+           from cine_frames where clip_id = '${performanceClipId}';`,
+      )),
+    ).toEqual(
+      rowSet.cineFrames
+        .filter((frame) => frame.clip_id === performanceClipId)
+        .sort((a, b) => a.frame_index - b.frame_index)
+        .map((frame) => [frame.frame_index, frame.storage_key]),
+    )
+    expect(psql(run.dbName, `select count(*) from cine_frames where clip_id = '${performanceClipId}';`)).toBe('100')
+    expect(psql(run.dbName, `select count(*) from cine_frames where clip_id = '${brokenClipId}';`)).toBe('100')
+    expect(
+      psql(
+        run.dbName,
+        `select json_build_object(
+           'frameCount', c.frame_count,
+           'frames', (select json_agg(json_build_array(f.frame_index, f.storage_key) order by f.frame_index)
+                        from cine_frames f where f.clip_id = c.id)
+         )::text from cine_clips c where c.id = '${brokenClipId}';`,
+      ),
+    ).toBe(brokenBefore)
+    expect(psql(run.dbName, 'select checksum from app_deploy.seed_runs where singleton;')).toBe(
+      buildSeedChecksum(config),
+    )
+    await provisionSeed(config, storage, authAdmin, sql)
+    expect(psql(run.dbName, `select count(*) from cine_frames where clip_id = '${performanceClipId}';`)).toBe('100')
     expect(psql(run.dbName, 'select count(*) from patients;')).toBe(patientCount)
     expect(psql(run.dbName, 'select count(*) from app_deploy.seed_runs;')).toBe('1')
     expect(objects.size).toBe(objectCount)
@@ -152,5 +226,8 @@ describe('deployed provisioning program', () => {
     await expect(
       provisionSeed({ ...config, minChangeNoticeHours: 48 }, storage, authAdmin, sql),
     ).rejects.toThrow('applied seed does not match this checkout')
-  }, 60_000)
+    await expect(
+      provisionSeed({ ...config, seedSourceSeed: 'changed-source' }, storage, authAdmin, sql),
+    ).rejects.toThrow('applied seed does not match this checkout')
+  }, 90_000)
 })
