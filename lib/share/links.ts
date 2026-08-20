@@ -134,15 +134,12 @@ export async function resolveShareToken(token: string): Promise<
 export async function revokeShareLink(input: { id: string; patientId: string; actorUserId: string }): Promise<{ ok: boolean }> {
   const accessToken = await callerAccessToken()
   if (!accessToken) return { ok: false }
-  const client = anonClient(accessToken)
-  const { data, error } = await client.from('share_links').select('id, patient_id, image_id, report_id').eq('id', input.id).maybeSingle()
-  const link = data as Pick<LinkRow, 'id' | 'patient_id' | 'image_id' | 'report_id'> | null
-  if (error || !link || link.patient_id !== input.patientId) return { ok: false }
-  const resourceKind: ResourceKind = link.image_id === null ? 'report' : 'image'
-  const resourceId = link.image_id ?? link.report_id
-  if (!resourceId) return { ok: false }
-  const access = await guardPhiAccess({ kind: 'patient', userId: input.actorUserId }, { kind: resourceKind, id: resourceId }, 'share.revoke')
+  const access = await guardPhiAccess({ kind: 'patient', userId: input.actorUserId }, { kind: 'share_link', id: input.id }, 'share.revoke')
   if (!access.ok || access.patientId !== input.patientId) return { ok: false }
+  const client = anonClient(accessToken)
+  const { data, error } = await client.from('share_links').select('id, patient_id').eq('id', input.id).maybeSingle()
+  const link = data as Pick<LinkRow, 'id' | 'patient_id'> | null
+  if (error || !link || link.patient_id !== input.patientId) return { ok: false }
   const { error: updateError } = await client.from('share_links').update({ revoked_at: new Date().toISOString() }).eq('id', input.id)
   return { ok: !updateError }
 }

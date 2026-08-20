@@ -347,7 +347,7 @@ describe('share minting', () => {
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
-      { kind: 'image', id: IMAGE_ID },
+      { kind: 'share_link', id: LINK_ID },
       'share.revoke',
     )
   })
@@ -411,7 +411,7 @@ describe('share listing and revocation', () => {
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },
-      { kind: 'image', id: IMAGE_ID },
+      { kind: 'share_link', id: LINK_ID },
       'share.revoke',
     )
     expect(serviceMock).not.toHaveBeenCalled()
@@ -428,21 +428,24 @@ describe('share listing and revocation', () => {
     )
   })
 
-  test('deleteOwnershipDenialIs404AndDoesNotRevokeTheForeignLink', async () => {
-    const patientRead = query({ data: { id: PATIENT_ID }, error: null })
-    const foreignRead = query({ data: link({ patient_id: OTHER_PATIENT_ID }), error: null })
-    const forbiddenUpdate = query({ data: null, error: null })
-    const callerClient = clientFor({ patients: [patientRead], share_links: [foreignRead, forbiddenUpdate] })
+  test('foreignAndUnknownDeleteDenialsAreIdenticalGuardedOnceAndDoNotRevoke', async () => {
+    const callerClient = clientFor({ patients: [query({ data: { id: PATIENT_ID }, error: null }), query({ data: { id: PATIENT_ID }, error: null })] })
     anonMock.mockReturnValue(callerClient)
+    guardMock.mockResolvedValue({ ok: false, status: 404 })
 
-    const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
+    const foreign = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
       params: Promise.resolve({ id: LINK_ID }),
     })
-    expect(response.status).toBe(404)
-    expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
-    expect(errorResponseMock).toHaveBeenCalledOnce()
-    expect(errorResponseMock).toHaveBeenCalledWith(404, 'not_found', 'The requested resource was not found.')
-    expect(forbiddenUpdate.update).not.toHaveBeenCalled()
+    const unknownId = '77777777-7777-4777-8777-777777777777'
+    const unknown = await revokeDelete(new Request(`https://portal.example/api/shares/${unknownId}`, { method: 'DELETE' }), {
+      params: Promise.resolve({ id: unknownId }),
+    })
+    const bodies = await Promise.all([foreign, unknown].map((response) => response.text()))
+    expect([foreign.status, unknown.status]).toEqual([404, 404])
+    expect(new Set(bodies)).toEqual(new Set([JSON.stringify({ error: 'not_found', message: 'The requested resource was not found.' })]))
+    expect(guardMock).toHaveBeenCalledTimes(2)
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: USER_ID }, { kind: 'share_link', id: LINK_ID }, 'share.revoke')
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: USER_ID }, { kind: 'share_link', id: unknownId }, 'share.revoke')
     expect(serviceMock).not.toHaveBeenCalled()
 
     const active = link({ patient_id: OTHER_PATIENT_ID })
