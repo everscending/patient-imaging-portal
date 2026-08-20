@@ -29,8 +29,9 @@ function psql(dbName: string, sql: string): string {
   ).trim()
 }
 
-function yieldToTestRunner(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve))
+async function yieldToTestRunner(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  await new Promise<void>((resolve) => setImmediate(resolve))
 }
 
 const PLATFORM_STUB = `
@@ -88,6 +89,12 @@ describe('deployed provisioning program', () => {
   }, 60_000)
 
   test('retries a partial seed, stays idempotent, and rejects row-shaping input drift', async () => {
+    // Prove the helper crosses timers and poll/check before long synchronous work.
+    let pollTurnCompleted = false
+    setTimeout(() => setImmediate(() => { pollTurnCompleted = true }), 0)
+    await yieldToTestRunner()
+    expect(pollTurnCompleted).toBe(true)
+
     const objects = new Map<string, Buffer>()
     const storage: PhiStorageClient = {
       storage: {
