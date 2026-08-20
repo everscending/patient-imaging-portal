@@ -337,7 +337,7 @@ describe('share minting', () => {
       resourceId: IMAGE_ID,
       recipientEmail: 'recipient@example.com',
     }).then((created) => expect(created.delivery).toBe('sent'))
-    await expect(revokeShareLink({ id: LINK_ID, patientId: PATIENT_ID, actorUserId: USER_ID }))
+    await expect(revokeShareLink({ id: LINK_ID, actorUserId: USER_ID }))
       .resolves.toEqual({ ok: true })
 
     expect(anonMock).toHaveBeenCalledTimes(2)
@@ -396,10 +396,9 @@ describe('share listing and revocation', () => {
   })
 
   test('deleteOfAnOwnedLinkRevokesItAndMakesItsTokenUnavailable', async () => {
-    const patientRead = query({ data: { id: PATIENT_ID }, error: null })
     const ownedRead = query({ data: link(), error: null })
     const revokeUpdate = query({ data: null, error: null })
-    const callerClient = clientFor({ patients: [patientRead], share_links: [ownedRead, revokeUpdate] })
+    const callerClient = clientFor({ share_links: [ownedRead, revokeUpdate] })
     anonMock.mockReturnValue(callerClient)
 
     const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
@@ -462,6 +461,27 @@ describe('share listing and revocation', () => {
       params: Promise.resolve({ token: 'foreign-token' }),
     })
     expect(stillActive.status).toBe(200)
+  })
+
+  test('authenticatedUnlinkedDeleteReachesExactlyOneGuardAndKeepsOpaque404', async () => {
+    const routePrecheck = query({ data: null, error: null })
+    anonMock.mockReturnValue(clientFor({ patients: [routePrecheck] }))
+    guardMock.mockResolvedValue({ ok: false, status: 403 })
+
+    const response = await revokeDelete(new Request(`https://portal.example/api/shares/${LINK_ID}`, { method: 'DELETE' }), {
+      params: Promise.resolve({ id: LINK_ID }),
+    })
+
+    expect(response.status).toBe(404)
+    expect(await response.text()).toBe(JSON.stringify({ error: 'not_found', message: 'The requested resource was not found.' }))
+    expect(guardMock).toHaveBeenCalledOnce()
+    expect(guardMock).toHaveBeenCalledWith(
+      { kind: 'patient', userId: USER_ID },
+      { kind: 'share_link', id: LINK_ID },
+      'share.revoke',
+    )
+    expect(anonMock).not.toHaveBeenCalled()
+    expect(serviceMock).not.toHaveBeenCalled()
   })
 })
 
