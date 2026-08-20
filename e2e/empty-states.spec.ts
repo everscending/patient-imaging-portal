@@ -197,13 +197,3 @@ test('retention policy names every required record class and deletion residue', 
   expect(policy).toContain('access grant')
   expect(policy).toMatch(/append-only/i)
 })
-
-test('deletion request is insert-only and cannot erase or revoke patient data', async () => {
-  const route = await readFile(path.join(REPO_ROOT, 'app/api/profile/deletion-request/route.ts'), 'utf8')
-  const domain = await readFile(path.join(REPO_ROOT, 'lib/profile/deletion-requests.ts'), 'utf8')
-  const migration = await readFile(path.join(REPO_ROOT, 'db/migrations/010_profile_deletion_requests.sql'), 'utf8')
-  expect(`${route}\n${domain}`).not.toMatch(/\.delete\s*\(|\.update\s*\(|serviceClient/)
-  expect(route).not.toContain(".from('deletion_requests')")
-  expect(domain).toContain(".rpc('request_profile_deletion'")
-  expect(migration).not.toMatch(/\b(?:delete\s+from|update)\s+deletion_requests\b/i)
-})

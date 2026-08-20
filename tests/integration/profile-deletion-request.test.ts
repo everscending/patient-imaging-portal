@@ -117,6 +117,58 @@ describe('profile deletion request — migrated transactional contract', () => {
       .toBe(`account|${actorUserId}|profile.deletion_request|patient|${patientId}|granted`)
   })
 
+  test('requestPreservesPatientStudyReportAuditAppointmentAndShareRows', () => {
+    const { actorUserId, patientId } = fixture()
+    const providerId = randomUUID()
+    const serviceId = randomUUID()
+    const slotId = randomUUID()
+    const appointmentId = randomUUID()
+    const visitId = randomUUID()
+    const studyId = randomUUID()
+    const reportId = randomUUID()
+    const shareId = randomUUID()
+    const suffix = randomUUID().replaceAll('-', '')
+
+    psql(`
+      insert into providers (id, full_name, time_zone)
+        values ('${providerId}', 'Dr. Retention', 'America/Chicago');
+      insert into services (id, slug, name)
+        values ('${serviceId}', 'retention-${suffix}', 'Retention Service');
+      insert into provider_services (provider_id, service_id)
+        values ('${providerId}', '${serviceId}');
+      insert into slots (id, provider_id, starts_at, ends_at)
+        values ('${slotId}', '${providerId}', now() + interval '1 day', now() + interval '1 day 30 minutes');
+      insert into appointments (id, slot_id, patient_id, provider_id, service_id, status)
+        values ('${appointmentId}', '${slotId}', '${patientId}', '${providerId}', '${serviceId}', 'confirmed');
+      insert into visits (id, patient_id, provider_id, occurred_at, status)
+        values ('${visitId}', '${patientId}', '${providerId}', now(), 'completed');
+      insert into studies (id, visit_id, patient_id, description)
+        values ('${studyId}', '${visitId}', '${patientId}', 'Retention study');
+      insert into reports (id, study_id, patient_id, status, findings, impression)
+        values ('${reportId}', '${studyId}', '${patientId}', 'preliminary', 'Persistent findings', 'Persistent impression');
+      insert into share_links
+        (id, token_hash, patient_id, report_id, created_by, recipient_email, expires_at)
+        values ('${shareId}', '${suffix}', '${patientId}', '${reportId}', '${actorUserId}',
+          'retention@example.test', now() + interval '1 day');
+    `)
+    const auditId = psql(`insert into audit_events
+      (actor_kind, actor_ref, action, target_kind, target_id, outcome)
+      values ('account', '${actorUserId}', 'study.view', 'study', '${studyId}', 'granted')
+      returning id;`)
+    const protectedState = (): string => psql(`select jsonb_build_object(
+      'patient', (select to_jsonb(row) from patients row where id = '${patientId}'),
+      'study', (select to_jsonb(row) from studies row where id = '${studyId}'),
+      'report', (select to_jsonb(row) from reports row where id = '${reportId}'),
+      'audit', (select to_jsonb(row) from audit_events row where id = ${auditId}),
+      'appointment', (select to_jsonb(row) from appointments row where id = '${appointmentId}'),
+      'share', (select to_jsonb(row) from share_links row where id = '${shareId}')
+    )::text;`)
+    const before = protectedState()
+
+    expect(JSON.parse(psql(requestCall(actorUserId)))).toMatchObject({ result_error: null, request_status: 'received' })
+    expect(protectedState()).toBe(before)
+  })
+
   test('auditFailureRollsBackTheDeletionRequest', () => {
     const { actorUserId, patientId } = fixture()
     psql(`create function deletion_audit_rollback_probe() returns trigger language plpgsql as $$
