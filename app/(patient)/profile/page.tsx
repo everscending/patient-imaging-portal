@@ -118,7 +118,7 @@ export default function ProfilePage() {
       ) : null}
 
       {profile ? (
-        <form data-testid="profile-form" onSubmit={save}>
+        <form aria-label="Patient profile" data-testid="profile-form" onSubmit={save}>
           <div className="pip-field">
             <label htmlFor="profile-email">Email</label>
             <input className="pip-input" id="profile-email" type="email" value={profile.email} readOnly />

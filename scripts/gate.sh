@@ -95,6 +95,10 @@ run_ui() {
   step PLAYWRIGHT_EMPTY_STATES_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/empty-states.spec.ts
   step PLAYWRIGHT_RESPONSIVE npx playwright test e2e/responsive.spec.ts --project=product
   step PLAYWRIGHT_RESPONSIVE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/responsive.spec.ts
+  # JOR-237 makes the keyboard/accessibility proof and its JSON evidence an
+  # explicit UI-tier contract rather than relying on the aggregate project.
+  step PLAYWRIGHT_ACCESSIBILITY npx playwright test e2e/accessibility.spec.ts --project=product
+  step PLAYWRIGHT_ACCESSIBILITY_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts
   # e2-wiring depends on product, so this invocation runs the parallel product
   # suite first and the shared-state E2 proof after the ticket-specific proofs.
   step PLAYWRIGHT npx playwright test --project=e2-wiring
