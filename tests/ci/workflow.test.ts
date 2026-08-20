@@ -24,46 +24,36 @@ const REQUIRED_UI_GATE_PREFIX = [
   'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
   'npx vitest run --project e8',
 ]
-const REQUIRED_E2_ENTRY = [
-  'npx playwright test --project=e2-wiring',
-  'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
+const PLAYWRIGHT_COMMAND = 'npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring'
+const REQUIRED_UI_SUITES = [
+  'e2e/e8-wiring.spec.ts',
+  'e2e/e5-wiring.spec.ts',
+  'e2e/book.spec.ts',
+  'e2e/provider-schedule.spec.ts',
+  'e2e/empty-states.spec.ts',
+  'e2e/responsive.spec.ts',
+  'e2e/accessibility.spec.ts',
+  'e2e/e2-wiring.spec.ts',
+  'e2e/e3-wiring.spec.ts',
+  'e2e/e4-wiring.spec.ts',
 ] as const
-const PLAYWRIGHT_COMMAND = /^npx playwright test(?: (e2e\/[^ ]+\.spec\.ts))? --project=([^ ]+)$/
 const REPORT_VALIDATOR = /^node scripts\/validate-playwright-report\.mjs test-results\/playwright\.json (e2e\/[^ ]+\.spec\.ts)$/
-
-function suiteForPlaywrightCommand(command: string): string | undefined {
-  const match = command.match(PLAYWRIGHT_COMMAND)
-  if (!match) return undefined
-
-  const [, spec, project] = match
-  if (spec) return spec
-
-  return ['e2-wiring', 'e3-wiring', 'e4-wiring'].includes(project ?? '') ? `e2e/${project}.spec.ts` : undefined
-}
 
 function expectValidUiGateManifest(commands: string[]): void {
   expect(commands.slice(0, REQUIRED_UI_GATE_PREFIX.length)).toEqual(REQUIRED_UI_GATE_PREFIX)
+  const browserCommands = commands.slice(REQUIRED_UI_GATE_PREFIX.length)
+  expect(browserCommands[0]).toBe(PLAYWRIGHT_COMMAND)
+  expect(browserCommands.filter((command) => command.startsWith('npx playwright test'))).toEqual([PLAYWRIGHT_COMMAND])
 
   const seenSuites = new Set<string>()
-  let hasRequiredE2Entry = false
-  for (let index = REQUIRED_UI_GATE_PREFIX.length; index < commands.length; index += 2) {
-    const playwrightCommand = commands[index]
-    const validatorCommand = commands[index + 1]
-    const suite = suiteForPlaywrightCommand(playwrightCommand)
-    expect(suite, `manifest entry ${index} must start with a Playwright command`).toBeDefined()
-    expect(seenSuites.has(suite!), `suite ${suite} has more than one manifest entry`).toBe(false)
+  for (const validator of browserCommands.slice(1)) {
+    const suite = validator.match(REPORT_VALIDATOR)?.[1]
+    expect(suite, `manifest entry is not a report validator: ${validator}`).toBeDefined()
+    expect(seenSuites.has(suite!), `suite ${suite} has more than one validator`).toBe(false)
     seenSuites.add(suite!)
-
-    const validatorSuite = validatorCommand?.match(REPORT_VALIDATOR)?.[1]
-    expect(validatorSuite, `Playwright suite ${suite} must have an immediate report validator`).toBeDefined()
-    expect(validatorSuite, `report validator must match Playwright suite ${suite}`).toBe(suite)
-
-    if (playwrightCommand === REQUIRED_E2_ENTRY[0] && validatorCommand === REQUIRED_E2_ENTRY[1]) {
-      hasRequiredE2Entry = true
-    }
   }
 
-  expect(hasRequiredE2Entry, 'the mandatory e2-wiring manifest entry must remain unchanged').toBe(true)
+  for (const suite of REQUIRED_UI_SUITES) expect(seenSuites.has(suite), `missing report validator for ${suite}`).toBe(true)
 }
 
 function executableInvocations(source: string, pattern: RegExp): string[] {
@@ -78,18 +68,17 @@ const gateInvocations = executableInvocations(ci, /scripts\/gate\.sh/)
 describe('per-change triggers and concurrency', () => {
   const triggerBlock = ci.match(/^on:\n([\s\S]*?)^concurrency:/m)?.[1] ?? ''
 
-  test('every push and pull request triggers the product workflow', () => {
-    expect(triggerBlock).toMatch(/^\s*push:\s*$/m)
-    expect(triggerBlock).not.toMatch(/push:\s*\n\s+branches:/)
+  test('pull requests and integrated main pushes trigger the product workflow', () => {
+    expect(triggerBlock).toMatch(/push:\s*\n\s+branches:\s*\n\s+- main/)
     expect(triggerBlock).toMatch(/^\s*pull_request:\s*$/m)
   })
 
-  test('push and PR events for the same source branch share one cancelling group', () => {
+  test('obsolete runs for the same PR or main branch share one cancelling group', () => {
     expect(ci).toContain('group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}')
     expect(ci).toMatch(/cancel-in-progress:\s*true/)
   })
 
-  test('the gate is not conditional on event type, so either surviving event remains a valid check', () => {
+  test('the gate is not conditional on event type', () => {
     const gateStep = ci.slice(ci.indexOf('- name: Product UI gate'))
     expect(gateStep).not.toMatch(/^\s*if:/m)
   })
@@ -105,6 +94,16 @@ describe('per-change coverage stays cumulative', () => {
     expect(gateInvocations[0]).toMatch(/scripts\/gate\.sh ui\s*$/)
   })
 
+  test('JOR-306: the UI tier launches Playwright once and validates every required suite', () => {
+    const playwrightCommands = resolvedUiGate.filter((command) => command.startsWith('npx playwright test'))
+    expect(playwrightCommands).toHaveLength(1)
+    for (const suite of REQUIRED_UI_SUITES) {
+      expect(resolvedUiGate).toContain(
+        `node scripts/validate-playwright-report.mjs test-results/playwright.json ${suite}`,
+      )
+    }
+  })
+
   test('the UI gate preserves the cumulative prefix and matched Playwright report entries', () => {
     expectValidUiGateManifest(resolvedUiGate)
   })
@@ -112,61 +111,27 @@ describe('per-change coverage stays cumulative', () => {
   test('JOR-253 and JOR-260 Playwright extensions are accepted without a manifest count edit', () => {
     expectValidUiGateManifest([
       ...resolvedUiGate,
-      'npx playwright test e2e/appended-ticket.spec.ts --project=product',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/appended-ticket.spec.ts',
     ])
-
-    const jor253 = [
-      ...REQUIRED_UI_GATE_PREFIX,
-      'npx playwright test e2e/book.spec.ts --project=product',
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts',
-      ...REQUIRED_E2_ENTRY,
-    ]
-    const jor260 = [
-      ...REQUIRED_UI_GATE_PREFIX,
-      'npx playwright test e2e/provider-schedule.spec.ts --project=product',
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts',
-      ...REQUIRED_E2_ENTRY,
-    ]
-
-    expectValidUiGateManifest(jor253)
-    expectValidUiGateManifest(jor260)
   })
 
-  test('the mandatory e2-wiring command cannot be replaced by a different owner of the same suite', () => {
+  test('the combined command cannot omit the e2-wiring project', () => {
     expect(() => expectValidUiGateManifest([
       ...REQUIRED_UI_GATE_PREFIX,
-      'npx playwright test e2e/e2-wiring.spec.ts --project=product',
-      REQUIRED_E2_ENTRY[1],
+      PLAYWRIGHT_COMMAND.replace(' --project=e2-wiring', ''),
+      ...REQUIRED_UI_SUITES.map((suite) => `node scripts/validate-playwright-report.mjs test-results/playwright.json ${suite}`),
     ])).toThrow()
   })
 
   test('uiGateExtension_withoutMatchingReportValidator_isRejected', () => {
-    expect(() => expectValidUiGateManifest([...REQUIRED_UI_GATE_PREFIX, ...REQUIRED_E2_ENTRY, 'npx playwright test e2e/book.spec.ts --project=product'])).toThrow()
+    expect(() => expectValidUiGateManifest(resolvedUiGate.filter((command) => !command.endsWith('e2e/book.spec.ts')))).toThrow()
   })
 
-  test('uiGateExtension_withMismatchedSuite_isRejected', () => {
+  test('uiGateExtension_withNonValidatorOrDuplicateSuite_isRejected', () => {
+    expect(() => expectValidUiGateManifest([...resolvedUiGate, 'echo not-a-validator'])).toThrow()
     expect(() => expectValidUiGateManifest([
-      ...REQUIRED_UI_GATE_PREFIX,
-      'npx playwright test e2e/book.spec.ts --project=product',
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts',
-      ...REQUIRED_E2_ENTRY,
-    ])).toThrow()
-  })
-
-  test('uiGateExtension_withOrphanValidatorOrDuplicateSuite_isRejected', () => {
-    expect(() => expectValidUiGateManifest([
-      ...REQUIRED_UI_GATE_PREFIX,
+      ...resolvedUiGate,
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts',
-      ...REQUIRED_E2_ENTRY,
-    ])).toThrow()
-    expect(() => expectValidUiGateManifest([
-      ...REQUIRED_UI_GATE_PREFIX,
-      'npx playwright test e2e/book.spec.ts --project=product',
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts',
-      'npx playwright test e2e/book.spec.ts --project=product',
-      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts',
-      ...REQUIRED_E2_ENTRY,
     ])).toThrow()
   })
 
@@ -175,17 +140,17 @@ describe('per-change coverage stays cumulative', () => {
       REQUIRED_UI_GATE_PREFIX[1],
       REQUIRED_UI_GATE_PREFIX[0],
       ...REQUIRED_UI_GATE_PREFIX.slice(2),
-      ...REQUIRED_E2_ENTRY,
+      ...resolvedUiGate.slice(REQUIRED_UI_GATE_PREFIX.length),
     ])).toThrow()
     expect(() => expectValidUiGateManifest([
       ...REQUIRED_UI_GATE_PREFIX.slice(0, -1),
-      ...REQUIRED_E2_ENTRY,
+      ...resolvedUiGate.slice(REQUIRED_UI_GATE_PREFIX.length),
     ])).toThrow()
   })
 
   test('ordinary product Playwright excludes dedicated wiring specs; E2/E3 depend on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012345\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[0123458\]-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e3-wiring'/)

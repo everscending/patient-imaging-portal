@@ -2026,29 +2026,29 @@ same runner, so they cannot drift.
 | `api` | `logic` + integration tests against a migrated test database |
 | `ui` | `api` + the exact Playwright/JSON-validator inventory below |
 
-The `ui` additions run in this exact order; each named Playwright invocation is
-immediately followed by `scripts/validate-playwright-report.mjs` for that same
-specification file:
+The `ui` additions use one serial Playwright invocation for `product`, E2, E3,
+E4, E5, and E8. Playwright runs `product` once before its E2/E3 dependents. The
+single JSON report is then validated for each mandatory specification:
 
-1. `e2e/e8-wiring.spec.ts --project=e8-wiring`
-2. `e2e/e5-wiring.spec.ts --project=e5-wiring`
-3. `e2e/book.spec.ts --project=product`
-4. `e2e/provider-schedule.spec.ts --project=product`
-5. `e2e/empty-states.spec.ts --project=product`
-6. `e2e/responsive.spec.ts --project=product`
-7. `e2e/accessibility.spec.ts --project=product`
-8. `--project=e2-wiring` with report evidence for `e2e/e2-wiring.spec.ts`
-9. `--project=e3-wiring` with report evidence for `e2e/e3-wiring.spec.ts`
-10. `e2e/e4-wiring.spec.ts --project=e4-wiring`
+1. `e2e/e8-wiring.spec.ts`
+2. `e2e/e5-wiring.spec.ts`
+3. `e2e/book.spec.ts`
+4. `e2e/provider-schedule.spec.ts`
+5. `e2e/empty-states.spec.ts`
+6. `e2e/responsive.spec.ts`
+7. `e2e/accessibility.spec.ts`
+8. `e2e/e2-wiring.spec.ts`
+9. `e2e/e3-wiring.spec.ts`
+10. `e2e/e4-wiring.spec.ts`
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
-`e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
-separately by the `ui` gate;
+`e4-wiring`, `e5-wiring`, and `e8-wiring` remain isolated projects selected by
+that same `ui` invocation;
 `book.spec.ts`, `provider-schedule.spec.ts`, `empty-states.spec.ts`,
-`responsive.spec.ts`, and `accessibility.spec.ts` are focused `product` entries,
-each immediately followed by its matching JSON report validator.
+`responsive.spec.ts`, and `accessibility.spec.ts` are ordinary `product` entries
+whose evidence is retained in the same report.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
 dispatch. E0 invokes the cumulative `ui` gate once
