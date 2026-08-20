@@ -155,6 +155,9 @@ describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the 
   test('api names the timing acceptance test explicitly', () => {
     const api = run(['api', '--list']).stdout.trim().split('\n')
     expect(api).toContain(
+      'npx vitest run --project unit tests/adversarial/cross-patient.test.ts',
+    )
+    expect(api).toContain(
       'npx vitest run --project unit tests/observability/timing.test.ts',
     )
     expect(api).toContain('npx vitest run --project e8')

@@ -48,7 +48,14 @@ vi.mock('../../lib/access/identity', () => ({
   resolveAuthenticatedSession: vi.fn(async () => authenticatedSession()),
   resolveCallerId: vi.fn(async () => authenticatedSession()?.userId ?? null),
 }))
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardPhiAccessMock }))
+vi.mock('../../lib/access/guard', () => ({
+  guardPhiAccess: guardPhiAccessMock,
+  guardAuthenticatedPhiAccess: guardPhiAccessMock,
+  authenticatePhiRequest: vi.fn(async () => {
+    const session = authenticatedSession()
+    return session ? { status: 'authenticated', session } : { status: 'unauthenticated' }
+  }),
+}))
 vi.mock('../../lib/db/client', () => ({
   anonClient: anonClientMock,
   authClient: authClientMock,
