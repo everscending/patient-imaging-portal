@@ -10,11 +10,13 @@ Command: `npx vitest run --coverage --project unit --project integration`
 Measured: 2026-08-20
 Source commit: `8d64c60e46b7c4cd9a35d673ce6cde92acb79d39`
 
-The initial measurement at `64db55fcec3da1f6561bbc266e01ea4867202528`
-passed all 839 tests but correctly failed CQ-1 with 76.36% aggregate branch
-coverage. JOR-227 adds public-behavior coverage for the share-link failure
-paths. The final reconciled run passes all 875 tests and all four CQ-1
-thresholds.
+The controlled RED measurement used source checkpoint
+`64db55fcec3da1f6561bbc266e01ea4867202528`: all 839 tests passed, while
+aggregate branch coverage measured 76.36%, below CQ-1. That checkpoint
+predates the committed nine-module include and threshold configuration, so it
+records the source baseline rather than a reproducible threshold-exit snapshot.
+JOR-227 adds public-behavior coverage for the share-link failure paths. The
+final reconciled run passes all 875 tests and all four CQ-1 thresholds.
 
 | Named core module | Statements | Branches | Functions | Lines |
 | --- | ---: | ---: | ---: | ---: |
