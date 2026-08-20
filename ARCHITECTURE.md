@@ -1996,7 +1996,7 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, responsive, cumulative product→E2, cumulative product→E3, and E4 |
+| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, responsive, accessibility, cumulative product→E2, cumulative product→E3, and E4 |
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative

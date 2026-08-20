@@ -58,7 +58,10 @@ export function SharedResource({ token }: { token: string }): JSX.Element {
         <p aria-live="polite">{timeRemaining(share.expiresAt)}.</p>
       </aside>
       {share.resourceKind === 'image' ? (
-        <ImageViewer images={[share.payload]} variant="shared" />
+        <>
+          <h1>Shared image</h1>
+          <ImageViewer images={[share.payload]} variant="shared" />
+        </>
       ) : (
         <ReportView report={share.payload} variant="shared" />
       )}
