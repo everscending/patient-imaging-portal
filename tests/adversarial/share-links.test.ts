@@ -15,7 +15,9 @@ vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' 
 vi.mock('../../lib/imaging/signing', () => ({ signStorageKeys: signMock }))
 vi.mock('../../lib/config', () => ({ config: { signedUrlTtlSeconds: 300 } }))
 
-const LINK = '11111111-1111-4111-8111-111111111111'
+const EXPIRED_LINK = '11111111-1111-4111-8111-111111111111'
+const REVOKED_LINK = '11111111-1111-4111-8111-111111111112'
+const VALID_LINK = '11111111-1111-4111-8111-111111111113'
 const PATIENT = '22222222-2222-4222-8222-222222222222'
 const IMAGE = '33333333-3333-4333-8333-333333333333'
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
@@ -32,7 +34,7 @@ const client = () => ({ from: (table: string) => new Query(table) }) as never
 let run: Run
 const lit = (v: unknown) => v === null || v === undefined ? 'null' : `'${String(v).replaceAll("'", "''")}'`
 function psql(sql: string) { return execFileSync('docker', ['exec', 'pip-testpg', 'psql', '-U', 'postgres', '-d', run.dbName, '-v', 'ON_ERROR_STOP=1', '-tA', '-c', sql], { encoding: 'utf8' }).trim() }
-function audits() { const out = psql("select action||'|'||outcome||'|'||coalesce(target_id::text,'-') from audit_events order by id;"); return out ? out.split('\n') : [] }
+function audits() { const out = psql("select actor_kind||'|'||coalesce(actor_ref::text,'-')||'|'||action||'|'||target_kind||'|'||coalesce(target_id::text,'-')||'|'||outcome from audit_events order by id;"); return out ? out.split('\n') : [] }
 
 beforeAll(async () => { run = await startRun(await ensureContainer()); state.persist = async (row) => { psql(`insert into audit_events(actor_kind,actor_ref,action,target_kind,target_id,outcome) values(${lit(row.actor_kind)},${lit(row.actor_ref)},${lit(row.action)},${lit(row.target_kind)},${lit(row.target_id)},${lit(row.outcome)});`) } })
 afterAll(async () => stopRun(run))
@@ -50,8 +52,8 @@ const request = (token: string) => resolveShare(new Request(`https://portal.exam
 describe('bearer share-token public HTTP behavior', () => {
   test('unknownExpiredAndRevokedTokensAreByteIdenticalAndContainNoPayload', async function unknownExpiredAndRevokedTokensAreByteIdenticalAndContainNoPayload() {
     state.rows.share_links.push(
-      { id: LINK, patient_id: PATIENT, image_id: IMAGE, report_id: null, token_hash: hash('expired-token'), expires_at: '2020-01-01T00:00:00Z', revoked_at: null },
-      { id: LINK, patient_id: PATIENT, image_id: IMAGE, report_id: null, token_hash: hash('revoked-token'), expires_at: '2099-01-01T00:00:00Z', revoked_at: '2026-01-01T00:00:00Z' },
+      { id: EXPIRED_LINK, patient_id: PATIENT, image_id: IMAGE, report_id: null, token_hash: hash('expired-token'), expires_at: '2020-01-01T00:00:00Z', revoked_at: null },
+      { id: REVOKED_LINK, patient_id: PATIENT, image_id: IMAGE, report_id: null, token_hash: hash('revoked-token'), expires_at: '2099-01-01T00:00:00Z', revoked_at: '2026-01-01T00:00:00Z' },
     )
     const responses = await Promise.all(['unknown-token', 'expired-token', 'revoked-token'].map(request))
     const bodies = await Promise.all(responses.map((response) => response.text()))
@@ -59,13 +61,20 @@ describe('bearer share-token public HTTP behavior', () => {
     expect(new Set(bodies)).toEqual(new Set([JSON.stringify({ error: 'share_unavailable', message: 'This link is no longer available.' })]))
     expect(bodies.join('')).not.toMatch(/payload|signed\.example|image-key/)
     expect(signMock).not.toHaveBeenCalled()
+    expect(audits().sort()).toEqual([
+      'anonymous|-|share.use|share_link|-|denied',
+      `share_recipient|${EXPIRED_LINK}|share.use|image|${IMAGE}|denied`,
+      `share_recipient|${REVOKED_LINK}|share.use|image|${IMAGE}|denied`,
+    ].sort())
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
   })
 
   test('validBearerTokenWorksDespiteUnrelatedAmbientSessionAndAuditsRecipientOnce', async function validBearerTokenWorksDespiteUnrelatedAmbientSessionAndAuditsRecipientOnce() {
-    state.rows.share_links.push({ id: LINK, patient_id: PATIENT, image_id: IMAGE, report_id: null, token_hash: hash('valid-token'), expires_at: '2099-01-01T00:00:00Z', revoked_at: null })
+    state.rows.share_links.push({ id: VALID_LINK, patient_id: PATIENT, image_id: IMAGE, report_id: null, token_hash: hash('valid-token'), expires_at: '2099-01-01T00:00:00Z', revoked_at: null })
     const response = await request('valid-token')
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ resourceKind: 'image', payload: { id: IMAGE } })
-    expect(audits()).toEqual([`share.use|granted|${IMAGE}`])
+    expect(audits()).toEqual([`share_recipient|${VALID_LINK}|share.use|image|${IMAGE}|granted`])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
   })
 })

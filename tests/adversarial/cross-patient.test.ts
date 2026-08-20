@@ -18,11 +18,14 @@ const ACCOUNT_A = '11111111-1111-4111-8111-111111111111', PATIENT_A = '22222222-
 const PATIENT_B = '33333333-3333-4333-8333-333333333333', PROVIDER_ACCOUNT = '44444444-4444-4444-8444-444444444444'
 const PROVIDER_A = '55555555-5555-4555-8555-555555555555', PROVIDER_B = '66666666-6666-4666-8666-666666666666'
 const OWNED_STUDY = '70000000-0000-4000-8000-000000000001', FOREIGN_STUDY = '70000000-0000-4000-8000-000000000011'
-const FOREIGN_CLIP = '71000000-0000-4000-8000-000000000011', FOREIGN_REPORT = '72000000-0000-4000-8000-000000000011'
-const PRELIM_REPORT = '72000000-0000-4000-8000-000000000012', FOREIGN_APPT = '73000000-0000-4000-8000-000000000011'
+const OWNED_CLIP = '71000000-0000-4000-8000-000000000001', FOREIGN_CLIP = '71000000-0000-4000-8000-000000000011'
+const OWNED_REPORT = '72000000-0000-4000-8000-000000000001', FOREIGN_REPORT = '72000000-0000-4000-8000-000000000011'
+const PRELIM_REPORT = '72000000-0000-4000-8000-000000000012', OWNED_APPT = '73000000-0000-4000-8000-000000000001', FOREIGN_APPT = '73000000-0000-4000-8000-000000000011'
 const FOREIGN_IMAGE = '74000000-0000-4000-8000-000000000011', FOREIGN_SHARE = '75000000-0000-4000-8000-000000000011'
 const VISIT_A = '76000000-0000-4000-8000-000000000001', VISIT_B = '76000000-0000-4000-8000-000000000011'
 const FRESH_ACCOUNT = '77000000-0000-4000-8000-000000000001'
+const MISSING_STUDY = '70000000-0000-4000-8000-000000000021', MISSING_CLIP = '71000000-0000-4000-8000-000000000021'
+const MISSING_REPORT = '72000000-0000-4000-8000-000000000021', MISSING_APPT = '73000000-0000-4000-8000-000000000021'
 
 class Query {
   filters: Array<[string, unknown]> = []; op: 'select' | 'insert' | 'update' = 'select'; payload: Row = {}; head = false
@@ -56,9 +59,9 @@ function fixtures(): Record<string, Row[]> { return {
   providers: [{ id: PROVIDER_A, user_id: PROVIDER_ACCOUNT, full_name: 'Provider A', time_zone: 'America/Chicago' }, { id: PROVIDER_B, user_id: '88888888-8888-4888-8888-888888888888', full_name: 'Provider B', time_zone: 'America/Chicago' }], staff_admins: [],
   visits: [{ id: VISIT_A, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'completed', occurred_at: '2026-01-01T12:00:00Z' }, { id: VISIT_B, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'completed', occurred_at: '2026-01-02T12:00:00Z' }],
   studies: [{ id: OWNED_STUDY, patient_id: PATIENT_A, visit_id: VISIT_A, description: 'Owned' }, { id: FOREIGN_STUDY, patient_id: PATIENT_B, visit_id: VISIT_B, description: 'Foreign' }],
-  cine_clips: [{ id: FOREIGN_CLIP, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, frame_count: 1, default_fps: 12, poster_key: null }], cine_frames: [], images: [{ id: FOREIGN_IMAGE, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, width: 10, height: 10, ordinal: 0, storage_key: 'foreign', thumb_key: null }],
-  reports: [{ id: FOREIGN_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'signed', findings: 'private', impression: 'private', signed_at: '2026-01-02T13:00:00Z', studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: { full_name: 'Provider B' } }, { id: PRELIM_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'preliminary', findings: 'draft', impression: 'draft', signed_at: null, studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: null }],
-  appointments: [{ id: FOREIGN_APPT, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'requested' }], share_links: [{ id: FOREIGN_SHARE, patient_id: PATIENT_B, image_id: FOREIGN_IMAGE, report_id: null, revoked_at: null }], identity_attempts: [], audit_events: [],
+  cine_clips: [{ id: OWNED_CLIP, patient_id: PATIENT_A, study_id: OWNED_STUDY, frame_count: 1, default_fps: 12, poster_key: null }, { id: FOREIGN_CLIP, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, frame_count: 1, default_fps: 12, poster_key: null }], cine_frames: [], images: [{ id: FOREIGN_IMAGE, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, width: 10, height: 10, ordinal: 0, storage_key: 'foreign', thumb_key: null }],
+  reports: [{ id: OWNED_REPORT, patient_id: PATIENT_A, study_id: OWNED_STUDY, status: 'signed', findings: 'owned', impression: 'owned', signed_at: '2026-01-01T13:00:00Z', studies: { description: 'Owned' }, patients: { patient_ref: 'PT-0001' }, providers: { full_name: 'Provider A' } }, { id: FOREIGN_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'signed', findings: 'private', impression: 'private', signed_at: '2026-01-02T13:00:00Z', studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: { full_name: 'Provider B' } }, { id: PRELIM_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'preliminary', findings: 'draft', impression: 'draft', signed_at: null, studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: null }],
+  appointments: [{ id: OWNED_APPT, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'requested' }, { id: FOREIGN_APPT, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'requested' }], share_links: [{ id: FOREIGN_SHARE, patient_id: PATIENT_B, image_id: FOREIGN_IMAGE, report_id: null, revoked_at: null }], identity_attempts: [], audit_events: [],
 } }
 
 beforeAll(async () => { run = await startRun(await ensureContainer()); state.persist = async (row) => { psql(`insert into audit_events(actor_kind,actor_ref,action,target_kind,target_id,outcome) values(${lit(row.actor_kind)},${lit(row.actor_ref)},${lit(row.action)},${lit(row.target_kind)},${lit(row.target_id)},${lit(row.outcome)});`) } })
@@ -81,16 +84,33 @@ const json = (url: string, method: string, body: unknown) => new Request(url, { 
 
 describe('cross-patient public HTTP denials', () => {
   test('foreignStudyClipReportAndAppointmentIdsAtLeastTenIncrementsAwayReturn404', async function foreignStudyClipReportAndAppointmentIdsAtLeastTenIncrementsAwayReturn404() {
-    const before = state.tables.appointments[0]?.status
-    const responses = [await study(new Request('https://x'), ctx({ studyId: FOREIGN_STUDY })), await clip(new Request('https://x'), ctx({ studyId: FOREIGN_STUDY, clipId: FOREIGN_CLIP })), await report(new Request('https://x'), ctx({ reportId: FOREIGN_REPORT })), await patchAppointment(json('https://x', 'PATCH', { action: 'cancel' }), ctx({ id: FOREIGN_APPT }))]
-    expect(responses.map((r) => r.status)).toEqual([404, 404, 404, 404]); expect(state.tables.appointments[0]?.status).toBe(before)
-    expect(audits()).toEqual([`study.view|denied|${FOREIGN_STUDY}`, `clip.view|denied|${FOREIGN_CLIP}`, `report.view|denied|${FOREIGN_REPORT}`, `appointment.view|denied|${FOREIGN_APPT}`])
+    const before = state.tables.appointments.find((appointment) => appointment.id === FOREIGN_APPT)?.status
+    const responses = [
+      await study(new Request('https://x'), ctx({ studyId: FOREIGN_STUDY })), await study(new Request('https://x'), ctx({ studyId: MISSING_STUDY })),
+      await clip(new Request('https://x'), ctx({ studyId: FOREIGN_STUDY, clipId: FOREIGN_CLIP })), await clip(new Request('https://x'), ctx({ studyId: OWNED_STUDY, clipId: MISSING_CLIP })),
+      await report(new Request('https://x'), ctx({ reportId: FOREIGN_REPORT })), await report(new Request('https://x'), ctx({ reportId: MISSING_REPORT })),
+      await patchAppointment(json('https://x', 'PATCH', { action: 'cancel' }), ctx({ id: FOREIGN_APPT })), await patchAppointment(json('https://x', 'PATCH', { action: 'cancel' }), ctx({ id: MISSING_APPT })),
+    ]
+    const bodies = await Promise.all(responses.map((response) => response.text()))
+    expect(responses.map((response) => response.status)).toEqual(Array(8).fill(404))
+    expect([bodies[0], bodies[2], bodies[6]]).toEqual(Array(3).fill(JSON.stringify({ error: 'not_found', message: 'The requested resource was not found.' })))
+    expect(bodies[4]).toBe(JSON.stringify({ error: 'not_found', message: 'The requested report could not be found.' }))
+    expect(bodies[1]).toBe(bodies[0]); expect(bodies[3]).toBe(bodies[2]); expect(bodies[5]).toBe(bodies[4]); expect(bodies[7]).toBe(bodies[6])
+    expect(state.tables.appointments.find((appointment) => appointment.id === FOREIGN_APPT)?.status).toBe(before)
+    expect(audits()).toEqual([
+      `study.view|denied|${FOREIGN_STUDY}`, `study.view|denied|${MISSING_STUDY}`,
+      `clip.view|denied|${FOREIGN_CLIP}`, `clip.view|denied|${MISSING_CLIP}`,
+      `report.view|denied|${FOREIGN_REPORT}`, `report.view|denied|${MISSING_REPORT}`,
+      `appointment.view|denied|${FOREIGN_APPT}`, `appointment.view|denied|${MISSING_APPT}`,
+    ])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
   })
   test('foreignShareResourcesAndLinkAreNotCreatedOrRevoked', async function foreignShareResourcesAndLinkAreNotCreatedOrRevoked() {
     const count = state.tables.share_links.length
     const responses = [await share(json('https://x', 'POST', { resourceKind: 'image', resourceId: FOREIGN_IMAGE, recipientEmail: 'r@example.com' })), await share(json('https://x', 'POST', { resourceKind: 'report', resourceId: FOREIGN_REPORT, recipientEmail: 'r@example.com' })), await share(json('https://x', 'POST', { resourceKind: 'clip', resourceId: FOREIGN_CLIP, recipientEmail: 'r@example.com' })), await deleteShare(new Request('https://x', { method: 'DELETE' }), ctx({ id: FOREIGN_SHARE }))]
     expect(responses.map((r) => r.status)).toEqual([404, 404, 422, 404]); expect(state.tables.share_links).toHaveLength(count); expect(state.tables.share_links[0]?.revoked_at).toBeNull()
-    expect(audits()).toEqual([`share.create|denied|${FOREIGN_IMAGE}`, `share.create|denied|${FOREIGN_REPORT}`])
+    expect(audits()).toEqual([`share.create|denied|${FOREIGN_IMAGE}`, `share.create|denied|${FOREIGN_REPORT}`, `share.revoke|denied|${FOREIGN_IMAGE}`])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
     psql(`insert into auth.users(id) values('${ACCOUNT_A}'); insert into patients(id,user_id,patient_ref,date_of_birth,full_name,email) values('${PATIENT_A}','${ACCOUNT_A}','PT-9001','1980-01-01','A','a@example.com'),('${PATIENT_B}',null,'PT-9002','1990-01-01','B','b@example.com'); insert into providers(id,full_name,time_zone) values('${PROVIDER_B}','Provider','America/Chicago'); insert into visits(id,patient_id,provider_id,occurred_at,status) values('${VISIT_B}','${PATIENT_B}','${PROVIDER_B}',now(),'completed'); insert into studies(id,visit_id,patient_id,description) values('${FOREIGN_STUDY}','${VISIT_B}','${PATIENT_B}','foreign'); insert into images(id,study_id,patient_id,storage_key,width,height,ordinal) values('${FOREIGN_IMAGE}','${FOREIGN_STUDY}','${PATIENT_B}','opaque',10,10,0);`)
     expect(() => psql(`insert into share_links(token_hash,patient_id,image_id,created_by,recipient_email,expires_at) values('${'a'.repeat(64)}','${PATIENT_A}','${FOREIGN_IMAGE}','${ACCOUNT_A}','r@example.com',now()+interval '48 hours');`)).toThrow()
     expect(psql('select count(*) from share_links;')).toBe('0')
@@ -103,7 +123,8 @@ describe('cross-patient public HTTP denials', () => {
   })
   test('unlinkedAndAnonymousRequestsRemainDistinctAndAuditedOnce', async function unlinkedAndAnonymousRequestsRemainDistinctAndAuditedOnce() {
     session(FRESH_ACCOUNT, 'fresh-token'); const unlinked = await study(new Request('https://x'), ctx({ studyId: OWNED_STUDY })); session(null); const anonymous = await study(new Request('https://x'), ctx({ studyId: OWNED_STUDY }))
-    expect(unlinked.status).toBe(403); expect(anonymous.status).toBe(401); expect(audits()).toEqual([`study.view|denied|${OWNED_STUDY}`, `study.view|denied|${OWNED_STUDY}`])
+    expect(unlinked.status).toBe(403); expect(await unlinked.json()).toMatchObject({ error: 'identity_verification_required' }); expect(anonymous.status).toBe(401); expect(await anonymous.json()).toMatchObject({ error: 'session_required' }); expect(audits()).toEqual([`study.view|denied|${OWNED_STUDY}`, `study.view|denied|${OWNED_STUDY}`])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
   })
 })
 
@@ -114,5 +135,11 @@ describe('fresh-account positive case', () => {
     expect((await verify(json('https://x', 'POST', { patientRef: 'PT-0002', dateOfBirth: '1990-02-02' }))).status).toBe(200)
     const ownStudies = await studies(), ownReports = await reports(), signed = await report(new Request('https://x'), ctx({ reportId: FOREIGN_REPORT })), preliminary = await report(new Request('https://x'), ctx({ reportId: PRELIM_REPORT }))
     expect(ownStudies.status).toBe(200); expect((await ownStudies.json() as { studies: unknown[] }).studies.length).toBeGreaterThan(0); expect(ownReports.status).toBe(200); expect((await ownReports.json() as { reports: unknown[] }).reports.length).toBeGreaterThan(0); expect(signed.status).toBe(200); expect(preliminary.status).toBe(404)
+    expect(audits()).toEqual([
+      `study.view|denied|${FOREIGN_STUDY}`, `identity.verify|granted|${PATIENT_B}`,
+      `identity.link|granted|${PATIENT_B}`, 'study.view|granted|-', 'report.view|granted|-',
+      `report.view|granted|${FOREIGN_REPORT}`, `report.view|denied|${PRELIM_REPORT}`,
+    ])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
   })
 })
