@@ -37,7 +37,7 @@ function suiteForPlaywrightCommand(command: string): string | undefined {
   const [, spec, project] = match
   if (spec) return spec
 
-  return project === 'e2-wiring' || project === 'e4-wiring' ? `e2e/${project}.spec.ts` : undefined
+  return ['e2-wiring', 'e3-wiring', 'e4-wiring'].includes(project ?? '') ? `e2e/${project}.spec.ts` : undefined
 }
 
 function expectValidUiGateManifest(commands: string[]): void {
@@ -182,11 +182,13 @@ describe('per-change coverage stays cumulative', () => {
     ])).toThrow()
   })
 
-  test('ordinary product Playwright excludes dedicated wiring specs; E2 depends on product while E0/E1 remain certification', () => {
+  test('ordinary product Playwright excludes dedicated wiring specs; E2/E3 depend on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[01245\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[012345\]-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(/name:\s*'e3-wiring'/)
+    expect(playwrightConfig).toMatch(/testMatch:\s*\/e3-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/dependencies:\s*\['product'\]/)
     expect(playwrightConfig).toMatch(/name:\s*'e4-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e4-wiring\\\.spec\\\.ts\//)

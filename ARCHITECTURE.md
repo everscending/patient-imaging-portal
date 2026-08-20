@@ -1956,12 +1956,13 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, and E4 |
+| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, cumulative product→E3, and E4 |
 
-The Playwright suite has six projects. `product` contains ordinary browser
-checks. `e2-wiring` depends on `product`, so E2 runs after ordinary product tests
-stop using the fixture's shared audit state. `e4-wiring`, `e5-wiring`, and
-`e8-wiring` are focused wiring projects invoked separately by the `ui` gate;
+The Playwright suite has seven projects. `product` contains ordinary browser
+checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
+proofs run after ordinary product tests stop using the fixture's shared state.
+`e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
+separately by the `ui` gate;
 `book.spec.ts` and `provider-schedule.spec.ts` are focused `product` entries.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
