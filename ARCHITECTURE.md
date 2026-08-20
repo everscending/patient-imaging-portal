@@ -125,7 +125,7 @@ create type slot_status         as enum ('open', 'booked');
 create type appointment_status  as enum ('requested','confirmed','completed','cancelled','no_show');
 create type report_status       as enum ('preliminary','signed');
 create type visit_status        as enum ('scheduled','completed','cancelled');
-create type actor_kind          as enum ('account','share_recipient','system');
+create type actor_kind          as enum ('account','share_recipient','system','anonymous');
 
 -- ── people ──────────────────────────────────────────────────────────────
 create table patients (
@@ -580,7 +580,7 @@ create table audit_events (
   id              bigserial primary key,
   occurred_at     timestamptz not null default now(),
   actor_kind      actor_kind not null,
-  actor_ref       text,                          -- user id or share_link id
+  actor_ref       text,                          -- user/share_link id; null for system/anonymous
   action          text not null check (action in (
                     'identity.verify','identity.lockout','identity.link',
                     'study.view','image.view','clip.view','report.view',
@@ -944,6 +944,7 @@ export type Actor =
   | { kind: 'provider';         userId: string }
   | { kind: 'admin';            userId: string }
   | { kind: 'share_recipient';  shareLinkId: string }
+  | { kind: 'anonymous' }
 
 export type PhiTarget =
   | { kind: 'study';       id: string }
@@ -952,6 +953,7 @@ export type PhiTarget =
   | { kind: 'report';      id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule';    id: string }   // id = provider id
+  | { kind: 'share_link';  id: null }     // unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' }                 // no id — the whole log, admin only
 
@@ -978,7 +980,7 @@ export async function guardPhiAccess(
 ```
 
 **Ownership means something different per actor kind, and the guard owns all
-four definitions** — no route handler writes its own:
+five definitions** — no route handler writes its own:
 
 | Actor | Requires the FR-2 link? | "Owns the target" means |
 |-------|:---------------------:|-------------------------|
@@ -986,6 +988,7 @@ four definitions** — no route handler writes its own:
 | `provider` | no | the target's `provider_id` is the caller's provider — for a study or report, via its visit |
 | `admin` | no | always true, and **always audited** (SEC-2 scopes admin access and requires it logged) |
 | `share_recipient` | n/a | the target is the exact resource the validated token names, and nothing else |
+| `anonymous` | n/a | nothing; an unresolved share token is always denied |
 
 **The identity link is a patient-only concept.** A provider's account is never
 linked to a `patients` row and never will be; requiring one would lock providers
@@ -1005,6 +1008,12 @@ list read, never one per item.
 to re-read per request beyond `patients.user_id` (ADR-0011). A patient account
 that has never verified is refused with `403`; one that has verified stays
 verified.
+
+**Unavailable bearer tokens still cross the guard.** An unresolved share token
+uses the anonymous actor and `{ kind: 'share_link', id: null }`; an
+expired or revoked link uses its persisted reference and named resource. The
+guard rejects each and writes the same single denied `share.use` event without
+placing the raw token or PHI in the audit row.
 
 **Provider and admin PHI reads go through this guard too.** They are PHI reads
 (CONTEXT.md: appointments with named providers are PHI), so SEC-4 applies to
@@ -1941,14 +1950,16 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + `playwright test --project=e2-wiring` (the serial E2 project depends on the parallel product project) + validation that its JSON artifact contains `e2e/e2-wiring.spec.ts` |
+| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, and E4 |
 
-The Playwright suite has three execution classes. The `product` project contains
-the ordinary browser checks. The `e2-wiring` project depends on `product`, so E2
-remains in the cumulative `ui` gate but runs after ordinary product tests stop
-using the fixture's shared audit state. The `certification` project contains the
-expensive E0/E1 fresh-clone wiring proofs and runs from `.github/workflows/certification.yml` on
-`main`, nightly, or by manual dispatch. E0 invokes the cumulative `ui` gate once
+The Playwright suite has six projects. `product` contains ordinary browser
+checks. `e2-wiring` depends on `product`, so E2 runs after ordinary product tests
+stop using the fixture's shared audit state. `e4-wiring`, `e5-wiring`, and
+`e8-wiring` are focused wiring projects invoked separately by the `ui` gate;
+`book.spec.ts` and `provider-schedule.spec.ts` are focused `product` entries.
+`certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
+from `.github/workflows/certification.yml` on `main`, nightly, or by manual
+dispatch. E0 invokes the cumulative `ui` gate once
 inside its clean checkout and confirms the emitted step list contains TypeScript,
 ESLint, unit, integration, product Playwright, and the E2 report validation; it
 never serially invokes the three cumulative tiers or includes itself recursively.
