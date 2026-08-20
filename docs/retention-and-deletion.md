@@ -17,7 +17,7 @@ The portal does not collect a separate intake record.
 
 ## Patient deletion requests
 
-A patient can submit a request from `/profile`. The request records intent only; it does not delete data. A clinic privacy administrator verifies the requester, checks legal holds and retention duties, then deletes or minimizes records whose retention period and obligations allow it. The administrator marks the deletion request completed or declined and contacts the patient. The application role can insert its caller's request but cannot perform deletion.
+A patient can submit a request from `/profile`. The request records intent only; it does not delete data. A clinic privacy administrator verifies the requester, checks legal holds and retention duties, then deletes or minimizes records whose retention period and obligations allow it. The administrator marks the deletion request completed or declined and contacts the patient. The application role executes `request_profile_deletion` to record its caller's request; it has no direct `INSERT` or `DELETE` privilege.
 
 Deleting eligible patient records does not erase audit events. Share links are revoked, not deleted, so their audit history survives. Images, cine clips, frames, reports, appointments, and appointment transitions remain available while the request is reviewed.
 
