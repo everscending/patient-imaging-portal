@@ -249,7 +249,7 @@ const digits = [...suffix.slice(0, 10)].map((value) => Number.parseInt(value, 16
 const patient = {
   id: randomUUID(),
   user_id: randomUUID(),
-  patient_ref: `PT-${digits.slice(0, 8)}`,
+  patient_ref: 'PT-0001',
   date_of_birth: `${1950 + Number.parseInt(suffix.slice(0, 2), 16) % 50}-${String(1 + Number.parseInt(suffix.slice(2, 4), 16) % 12).padStart(2, '0')}-${String(1 + Number.parseInt(suffix.slice(4, 6), 16) % 28).padStart(2, '0')}`,
   full_name: `Patient-${suffix.slice(0, 8)} Record-${suffix.slice(8, 16)}`,
   email: `${suffix}@example.test`,
@@ -272,6 +272,9 @@ try {
       (${literal(slotIds[0]!)}::uuid, ${literal(provider.id)}::uuid, now() + interval '72 hours', now() + interval '73 hours'),
       (${literal(slotIds[1]!)}::uuid, ${literal(provider.id)}::uuid, now() + interval '74 hours', now() + interval '75 hours');
   `)
+  if (!/^PT-\d{4}$/.test(psql(`select patient_ref from patients where id = ${literal(patient.id)}::uuid;`))) {
+    throw new Error('demo-run: migrated patient reference is invalid')
+  }
   const appointmentId = psql(`insert into appointments
       (slot_id, patient_id, provider_id, service_id, status, idempotency_key)
     values (${literal(slotIds[0]!)}::uuid, ${literal(patient.id)}::uuid, ${literal(provider.id)}::uuid,
