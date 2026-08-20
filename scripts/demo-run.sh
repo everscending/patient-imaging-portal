@@ -187,7 +187,7 @@ NODE
 # The fake HTTP boundary intentionally has no reschedule RPC. Drive the two
 # real migrated transactions and capture their persisted audit detail.
 npx vitest run --project integration tests/integration/reschedule-cancel-rpc.test.ts \
-  -t 'demo run emits reschedule and cancel audit details' >> "$WORK_ARTIFACT" 2>&1
+  --disableConsoleIntercept -t 'demo run emits reschedule and cancel audit details' >> "$WORK_ARTIFACT" 2>&1
 printf '%s\n' 'DEMO_STEP_COMPLETE reschedule-and-cancel' >> "$WORK_ARTIFACT"
 
 # Drive one real reminder dispatch and print its persisted audit detail while

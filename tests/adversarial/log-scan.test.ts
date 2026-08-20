@@ -427,4 +427,9 @@ describe('JOR-212 public demo-run evidence', () => {
     expect(script).toContain('pip-testpg')
     expect(script).not.toMatch(/\b(?:3000|5432)\b/)
   })
+
+  test('producerCapturesRawRpcAuditLinesWithoutVitestInterception', () => {
+    const script = readFileSync(SCRIPT_PATH, 'utf8')
+    expect(script).toContain('--disableConsoleIntercept')
+  })
 })
