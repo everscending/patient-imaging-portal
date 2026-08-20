@@ -137,9 +137,9 @@ async function writeClient(
 }
 
 /**
- * Appends one row to audit_events. Resolves void either way: a failed
- * append is logged (SEC-6: no PHI) and never rethrown into the caller's
- * response path — the guard's contract is a GuardResult, not an exception.
+ * Appends one row to audit_events. By default a failed append is logged
+ * (SEC-6: no PHI) and not rethrown into the caller's response path. A caller
+ * that marks the row required fails closed instead.
  *
  * An unapproved `detail` key or value is a caller bug, not a write failure,
  * so it throws synchronously instead of being logged and dropped.
@@ -148,6 +148,7 @@ async function appendAuditEvent(
   input: RecordAuditEventInput,
   fromPhiGuard: boolean,
   authenticatedSession?: AuthenticatedSession,
+  required = false,
 ): Promise<void> {
   if (!detailIsApproved(input.detail)) {
     // Do not echo the rejected key or value: either can itself contain PHI or
@@ -155,6 +156,7 @@ async function appendAuditEvent(
     throw new Error('recordAuditEvent: detail contains an unapproved key or value — SEC-6/SEC-7')
   }
 
+  let failed = false
   try {
     const client = await writeClient(input, fromPhiGuard, authenticatedSession)
     const { error } = await client.from('audit_events').insert({
@@ -166,9 +168,14 @@ async function appendAuditEvent(
       outcome: input.outcome,
       detail: input.detail ?? null,
     })
-    if (error) logWriteFailure(input.action)
+    failed = error !== null
   } catch {
+    failed = true
+  }
+
+  if (failed) {
     logWriteFailure(input.action)
+    if (required) throw new Error('required audit event could not be recorded')
   }
 }
 
@@ -186,6 +193,14 @@ export async function recordPhiAccessDecision(
   authenticatedSession?: AuthenticatedSession,
 ): Promise<void> {
   return appendAuditEvent(input, true, authenticatedSession)
+}
+
+/** Refusal paths that cannot truthfully respond without their audit row. */
+export async function recordRequiredPhiAccessDecision(
+  input: RecordAuditEventInput,
+  authenticatedSession?: AuthenticatedSession,
+): Promise<void> {
+  return appendAuditEvent(input, true, authenticatedSession, true)
 }
 
 /** Reads the append-only audit log through the caller-scoped admin RLS policy. */

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { EmptyState } from '../../../components/system/EmptyState'
 
 type ShareState = 'active' | 'expired' | 'revoked'
 
@@ -80,25 +81,30 @@ export default function SharesPage() {
       <h1>Shares</h1>
       {error ? <p className="pip-error" role="alert">{error}</p> : null}
       {loading ? <p aria-live="polite">Loading shares…</p> : null}
-      {!loading && !error && shares.length === 0 ? <p data-testid="share-empty">You have not shared any secure links.</p> : null}
-      {!loading && shares.length > 0 ? (
-        <ul aria-label="Secure share links" className="pip-share-list" data-testid="share-list">
-          {shares.map((share) => (
-            <li className="pip-share-row" key={share.id}>
-              <div>
-                <strong>{share.resourceKind === 'image' ? 'Image' : 'Report'} shared with {share.recipientEmail}</strong>
-                <p className="pip-share-state">{stateLabel(share.state)}</p>
-                {share.state === 'active' ? <p className="pip-share-remaining">{remainingTime(share.expiresAt)}</p> : null}
-              </div>
-              {share.state === 'active' ? (
-                <button aria-label={`Revoke link shared with ${share.recipientEmail}`} className="pip-share-revoke" data-testid="share-revoke" disabled={revokingId === share.id} onClick={() => { void revoke(share.id) }} type="button">
-                  {revokingId === share.id ? 'Revoking…' : 'Revoke'}
-                </button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+      {!loading && !error && shares.length === 0 ? (
+        <EmptyState id="shares-empty-message" message="You haven't shared anything yet — sharing an image or a report creates a link here." testId="share-empty" />
       ) : null}
+      <ul
+        aria-describedby={!loading && !error && shares.length === 0 ? 'shares-empty-message' : undefined}
+        aria-label="Secure share links"
+        className="pip-share-list"
+        data-testid="share-list"
+      >
+        {!loading ? shares.map((share) => (
+          <li className="pip-share-row" data-testid="share-row" key={share.id}>
+            <div>
+              <strong>{share.resourceKind === 'image' ? 'Image' : 'Report'} shared with {share.recipientEmail}</strong>
+              <p className="pip-share-state">{stateLabel(share.state)}</p>
+              {share.state === 'active' ? <p className="pip-share-remaining">{remainingTime(share.expiresAt)}</p> : null}
+            </div>
+            {share.state === 'active' ? (
+              <button aria-label={`Revoke link shared with ${share.recipientEmail}`} className="pip-share-revoke" data-testid="share-revoke" disabled={revokingId === share.id} onClick={() => { void revoke(share.id) }} type="button">
+                {revokingId === share.id ? 'Revoking…' : 'Revoke'}
+              </button>
+            ) : null}
+          </li>
+        )) : null}
+      </ul>
     </main>
   )
 }

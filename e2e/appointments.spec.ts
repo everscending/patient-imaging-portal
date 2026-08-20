@@ -219,7 +219,8 @@ test.describe('JOR-257 appointments', () => {
     await page.route('**/api/appointments', (route) => route.fulfill({ contentType: 'application/json', body: '{"appointments":[]}' }))
     await page.goto('/appointments')
     await expect(page.getByTestId('appointments-empty')).toHaveText('No appointments yet — booked appointments appear here.')
-    await expect(page.getByTestId('appointment-list')).toHaveCount(0)
+    await expect(page.getByTestId('appointment-list')).toHaveCount(1)
+    await expect(page.getByTestId('appointment-item')).toHaveCount(0)
   })
 
   test('responsiveLayout_rendersOneDomItemPerAppointment', async ({ page }) => {
