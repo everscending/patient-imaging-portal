@@ -89,6 +89,10 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts',
     )
+    expect(ui).toContain('npx playwright test e2e/accessibility.spec.ts --project=product')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts',
+    )
   })
 })
 
@@ -195,6 +199,9 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
     )
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts',
+    )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts',
     )
     expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
   })
