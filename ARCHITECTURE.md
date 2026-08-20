@@ -996,9 +996,9 @@ export type GuardResult =
   | { ok: false; status: 401 | 403 | 404 }
 
 /**
- * Verifies session, identity link, and ownership; writes exactly one audit
- * event either way. An ADR-0014 transaction can own the granted audit row;
- * denials remain required here and fail closed if their audit cannot persist.
+ * Authenticates the session, checks the identity link and ownership, and
+ * writes exactly one audit event either way. An ADR-0014 transaction can own
+ * the granted audit row; denials remain required here and fail closed.
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
@@ -1009,6 +1009,17 @@ export async function guardPhiAccess(
   action: AuditAction,
   options?: { grantedAudit: 'transactional-rpc' },
 ): Promise<GuardResult>
+
+// Study-detail and cine-manifest routes authenticate before parameter
+// validation, then reuse this opaque, runtime-branded guard context for
+// authorization and awaited audit.
+export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication>
+export async function guardAuthenticatedPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication: PhiRequestAuthentication,
+): Promise<GuardResult>
 ```
 
 The profile deletion domain passes `{ kind: 'patient', id: null }` through this
@@ -1016,6 +1027,14 @@ guard. On a grant it uses the ADR-0014 option because
 `request_profile_deletion(boolean)` commits the request row and granted audit
 row in the same database transaction. The guard still owns every refusal and
 will not return a refused result unless its single PHI-free audit row persisted.
+
+`PhiRequestAuthentication` is created and runtime-branded only inside
+`lib/access/guard.ts`; a route cannot construct it from decoded claims or a raw
+session JWT. The study-detail or cine-manifest route may read the authenticated
+session it contains to resolve the account role and fetch the already-authorized
+response, while the guard passes that same session internally to the awaited
+audit write. No second remote Auth call occurs, and the public guard accepts
+neither a raw session JWT nor a caller-built authentication context.
 
 **Ownership means something different per actor kind, and the guard owns all
 five definitions** — no route handler writes its own:

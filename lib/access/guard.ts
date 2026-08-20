@@ -31,6 +31,24 @@ export type PhiTarget =
 // shape that always promises a patient id is unsatisfiable for those.
 export type GuardResult = { ok: true; patientId: string | null } | { ok: false; status: 401 | 403 | 404 }
 
+const authenticatedSession = Symbol('authenticatedSession')
+export type AuthenticatedSession = {
+  accessToken: string
+  userId: string
+  readonly [authenticatedSession]: true
+}
+
+type SessionAuthentication =
+  | { status: 'authenticated'; session: AuthenticatedSession }
+  | { status: 'unauthenticated' }
+  | { status: 'unavailable' }
+
+declare const phiRequestAuthentication: unique symbol
+export type PhiRequestAuthentication = SessionAuthentication & {
+  readonly [phiRequestAuthentication]: true
+}
+const phiRequestAuthentications = new WeakSet<object>()
+
 function assertNever(value: never): never {
   throw new Error(`lib/access/guard.ts: unreachable variant ${JSON.stringify(value)}`)
 }
@@ -42,7 +60,7 @@ function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipie
     case 'admin':
       // The supplied account id is only a claim until the session is
       // authenticated. Missing/invalid sessions must not attribute an
-      // elevated audit write to that unverified value.
+      // elevated audit write to that unauthenticated value.
       return { actorKind: 'account', actorRef: null }
     case 'share_recipient':
       return { actorKind: 'share_recipient', actorRef: actor.shareLinkId }
@@ -126,6 +144,31 @@ async function fetchRow<T>(client: Client, table: string, columns: string, filte
 async function callerAccessToken(): Promise<string | null> {
   const cookieStore = await cookies()
   return cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null
+}
+
+function authenticatedRequest(result: SessionAuthentication): PhiRequestAuthentication {
+  const authentication = Object.freeze(result) as PhiRequestAuthentication
+  phiRequestAuthentications.add(authentication)
+  return authentication
+}
+
+export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication> {
+  try {
+    const accessToken = await callerAccessToken()
+    if (!accessToken) return authenticatedRequest({ status: 'unauthenticated' })
+
+    const { data, error } = await authClient().auth.getUser(accessToken)
+    if (error) {
+      return authenticatedRequest(error.status === 401 || error.status === 403
+        ? { status: 'unauthenticated' }
+        : { status: 'unavailable' })
+    }
+    if (!data.user) return authenticatedRequest({ status: 'unauthenticated' })
+    const session = Object.freeze({ accessToken, userId: data.user.id, [authenticatedSession]: true as const })
+    return authenticatedRequest({ status: 'authenticated', session })
+  } catch {
+    return authenticatedRequest({ status: 'unavailable' })
+  }
 }
 
 /** Resolves the authenticated account's schedule-facing role without trusting
@@ -329,10 +372,11 @@ async function decideShareRecipient(shareLinkId: string, target: PhiTarget): Pro
 type AccessDecision = {
   result: GuardResult
   authenticatedUserId?: string
+  session?: AuthenticatedSession
   dependencyFailed?: boolean
 }
 
-async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> {
+async function decide(actor: Actor, target: PhiTarget, authentication?: SessionAuthentication): Promise<AccessDecision> {
   if (actor.kind === 'anonymous') return { result: { ok: false, status: 404 } }
 
   if (actor.kind === 'share_recipient') {
@@ -343,31 +387,15 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
     }
   }
 
-  let token: string | null
-  try {
-    token = await callerAccessToken()
-  } catch {
+  const sessionResult = authentication ?? await authenticatePhiRequest()
+  if (sessionResult.status === 'unavailable') {
     return { result: { ok: false, status: 404 }, dependencyFailed: true }
   }
-  if (!token) return { result: { ok: false, status: 401 } }
+  if (sessionResult.status === 'unauthenticated') return { result: { ok: false, status: 401 } }
 
-  let authentication: Awaited<ReturnType<ReturnType<typeof authClient>['auth']['getUser']>>
-  try {
-    authentication = await authClient().auth.getUser(token)
-  } catch {
-    return { result: { ok: false, status: 404 }, dependencyFailed: true }
-  }
-
-  const { data, error } = authentication
-  if (error) {
-    if (error.status === 401 || error.status === 403) return { result: { ok: false, status: 401 } }
-    return { result: { ok: false, status: 404 }, dependencyFailed: true }
-  }
-  if (!data.user) return { result: { ok: false, status: 401 } }
-
-  const authenticatedUserId = data.user.id
+  const { accessToken: token, userId: authenticatedUserId } = sessionResult.session
   if (actor.userId !== authenticatedUserId) {
-    return { result: { ok: false, status: 401 }, authenticatedUserId }
+    return { result: { ok: false, status: 401 }, authenticatedUserId, session: sessionResult.session }
   }
 
   const client = anonClient(token)
@@ -375,37 +403,30 @@ async function decide(actor: Actor, target: PhiTarget): Promise<AccessDecision> 
   try {
     switch (actor.kind) {
       case 'patient':
-        return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId }
+        return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
       case 'provider':
-        return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId }
+        return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
       case 'admin':
-        return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId }
+        return { result: await decideAdmin(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
       default:
         return assertNever(actor)
     }
   } catch {
-    return { result: { ok: false, status: 404 }, authenticatedUserId, dependencyFailed: true }
+    return { result: { ok: false, status: 404 }, authenticatedUserId, session: sessionResult.session, dependencyFailed: true }
   }
 }
 
-/**
- * Verifies session, identity link, and ownership. By default it writes exactly
- * one audit event either way. An ADR-0014 transaction may own the granted row;
- * denials still persist here and fail closed.
- *
- * Ownership failure returns 404, never 403: a 403 confirms the resource
- * exists, which is itself a cross-patient leak under FR-6.
- */
-export async function guardPhiAccess(
+async function guardWithAuthentication(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
-  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+  authentication?: SessionAuthentication,
+  options?: { grantedAudit: 'transactional-rpc' },
 ): Promise<GuardResult> {
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
 
-  const accessDecision = await decide(actor, target)
+  const accessDecision = await decide(actor, target, authentication)
   const decision = accessDecision.result
 
   const audit = {
@@ -418,9 +439,9 @@ export async function guardPhiAccess(
   } as const
 
   if (options?.grantedAudit === 'transactional-rpc') {
-    if (!decision.ok) await recordRequiredPhiAccessDecision(audit)
+    if (!decision.ok) await recordRequiredPhiAccessDecision(audit, accessDecision.session)
   } else {
-    await recordPhiAccessDecision(audit)
+    await recordPhiAccessDecision(audit, accessDecision.session)
   }
 
   if (accessDecision.dependencyFailed) {
@@ -428,4 +449,35 @@ export async function guardPhiAccess(
   }
 
   return decision
+}
+
+/**
+ * Authenticates the session, checks the identity link and ownership, and
+ * writes exactly one audit event either way. An ADR-0014 transaction may own
+ * the granted row; its denials remain required here and fail closed.
+ *
+ * Ownership failure returns 404, never 403: a 403 confirms the resource
+ * exists, which is itself a cross-patient leak under FR-6.
+ */
+export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+): Promise<GuardResult> {
+  return guardWithAuthentication(actor, target, action, undefined, options)
+}
+
+/** Reuses one guard-authenticated request for authorization and its awaited
+ * audit decision. The private runtime brand rejects caller-built contexts. */
+export async function guardAuthenticatedPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication: PhiRequestAuthentication,
+): Promise<GuardResult> {
+  if (!phiRequestAuthentications.has(authentication)) {
+    throw new Error('guardPhiAccess: invalid request authentication')
+  }
+  return guardWithAuthentication(actor, target, action, authentication)
 }

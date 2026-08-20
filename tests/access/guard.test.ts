@@ -94,6 +94,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
+vi.mock('../../lib/config', () => ({ config: {} }))
 
 type FakeRow = Record<string, unknown>
 
@@ -713,7 +714,19 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
     expect(source).toContain(
       'export type GuardResult = { ok: true; patientId: string | null } | { ok: false; status: 401 | 403 | 404 }',
     )
-    expect(source).toContain("options: { grantedAudit: 'transactional-rpc' } | undefined = undefined")
+    expect(source).toContain(`export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+): Promise<GuardResult> {`)
+    expect(source).toContain('export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication> {')
+    expect(source).toContain(`export async function guardAuthenticatedPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication: PhiRequestAuthentication,
+): Promise<GuardResult> {`)
   })
 })
 

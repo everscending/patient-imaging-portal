@@ -5,6 +5,7 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 
+import type { AuthenticatedSession } from '../access/guard'
 import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
@@ -105,7 +106,11 @@ function serviceRoleAllowed(input: RecordAuditEventInput, fromPhiGuard: boolean)
   return guardDenial || reminderJob
 }
 
-async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean): Promise<WriteClient> {
+async function writeClient(
+  input: RecordAuditEventInput,
+  fromPhiGuard: boolean,
+  authenticatedSession?: AuthenticatedSession,
+): Promise<WriteClient> {
   // Share recipients are intentionally unauthenticated. Select the elevated
   // single-row writer before looking at any ambient account cookie.
   if (input.actorKind === 'share_recipient') return serviceClient()
@@ -115,6 +120,8 @@ async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean):
   // re-reading the failed session context would create a second failure path
   // capable of dropping the required row.
   if (serviceRoleAllowed(input, fromPhiGuard)) return serviceClient()
+
+  if (authenticatedSession) return anonClient(authenticatedSession.accessToken)
 
   const accessToken = await callerAccessToken()
   if (accessToken) {
@@ -130,14 +137,19 @@ async function writeClient(input: RecordAuditEventInput, fromPhiGuard: boolean):
 }
 
 /**
- * Appends one row to audit_events. Resolves void either way: a failed
- * append is logged (SEC-6: no PHI) and never rethrown into the caller's
- * response path — the guard's contract is a GuardResult, not an exception.
+ * Appends one row to audit_events. By default a failed append is logged
+ * (SEC-6: no PHI) and not rethrown into the caller's response path. A caller
+ * that marks the row required fails closed instead.
  *
  * An unapproved `detail` key or value is a caller bug, not a write failure,
  * so it throws synchronously instead of being logged and dropped.
  */
-async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: boolean, required = false): Promise<void> {
+async function appendAuditEvent(
+  input: RecordAuditEventInput,
+  fromPhiGuard: boolean,
+  authenticatedSession?: AuthenticatedSession,
+  required = false,
+): Promise<void> {
   if (!detailIsApproved(input.detail)) {
     // Do not echo the rejected key or value: either can itself contain PHI or
     // a credential and this exception may be captured by an outer logger.
@@ -146,7 +158,7 @@ async function appendAuditEvent(input: RecordAuditEventInput, fromPhiGuard: bool
 
   let failed = false
   try {
-    const client = await writeClient(input, fromPhiGuard)
+    const client = await writeClient(input, fromPhiGuard, authenticatedSession)
     const { error } = await client.from('audit_events').insert({
       actor_kind: input.actorKind,
       actor_ref: input.actorRef,
@@ -176,13 +188,19 @@ export async function recordAuditEvent(input: RecordAuditEventInput): Promise<vo
  * audit-only fallback. Domain modules cannot gain service-role writes merely
  * by choosing an access-shaped action string.
  */
-export async function recordPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
-  return appendAuditEvent(input, true)
+export async function recordPhiAccessDecision(
+  input: RecordAuditEventInput,
+  authenticatedSession?: AuthenticatedSession,
+): Promise<void> {
+  return appendAuditEvent(input, true, authenticatedSession)
 }
 
 /** Refusal paths that cannot truthfully respond without their audit row. */
-export async function recordRequiredPhiAccessDecision(input: RecordAuditEventInput): Promise<void> {
-  return appendAuditEvent(input, true, true)
+export async function recordRequiredPhiAccessDecision(
+  input: RecordAuditEventInput,
+  authenticatedSession?: AuthenticatedSession,
+): Promise<void> {
+  return appendAuditEvent(input, true, authenticatedSession, true)
 }
 
 /** Reads the append-only audit log through the caller-scoped admin RLS policy. */
