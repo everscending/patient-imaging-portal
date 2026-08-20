@@ -21,7 +21,7 @@ export type PhiTarget =
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule'; id: string } // id = provider id
-  | { kind: 'share_link'; id: null } // unresolved share token
+  | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' } // no id — the whole log, admin only
 
@@ -170,10 +170,17 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
       // themselves stay scoped by RLS; this grant never widens what returns.
       return { ok: true, patientId }
     case 'schedule':
-    case 'share_link':
     case 'audit_log':
       // No ownership definition for a patient actor on either target.
       return { ok: false, status: 404 }
+    case 'share_link': {
+      if (target.id === null) return { ok: false, status: 404 }
+      const row = await fetchRow<OwnedRow>(client, 'share_links', 'id, patient_id', [
+        ['id', target.id],
+        ['patient_id', patientId],
+      ])
+      return row ? { ok: true, patientId } : { ok: false, status: 404 }
+    }
     case 'report':
       return decidePatientReport(client, target.id, patientId)
     case 'study':

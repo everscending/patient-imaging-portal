@@ -953,7 +953,7 @@ export type PhiTarget =
   | { kind: 'report';      id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule';    id: string }   // id = provider id
-  | { kind: 'share_link';  id: null }     // unresolved share token
+  | { kind: 'share_link';  id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' }                 // no id — the whole log, admin only
 
@@ -1014,6 +1014,12 @@ uses the anonymous actor and `{ kind: 'share_link', id: null }`; an
 expired or revoked link uses its persisted reference and named resource. The
 guard rejects each and writes the same single denied `share.use` event without
 placing the raw token or PHI in the audit row.
+
+**Authenticated share-link revocation uses the same seam.** `DELETE
+/api/shares/:id` passes the patient actor and `{ kind: 'share_link', id }` to
+the guard before mutation. The caller-scoped client grants only an owned link;
+foreign and missing ids receive the same `404` and one denied `share.revoke`
+event, while an owned link receives one granted event.
 
 **Provider and admin PHI reads go through this guard too.** They are PHI reads
 (CONTEXT.md: appointments with named providers are PHI), so SEC-4 applies to
@@ -1950,12 +1956,13 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, and E4 |
+| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, cumulative product→E3, and E4 |
 
-The Playwright suite has six projects. `product` contains ordinary browser
-checks. `e2-wiring` depends on `product`, so E2 runs after ordinary product tests
-stop using the fixture's shared audit state. `e4-wiring`, `e5-wiring`, and
-`e8-wiring` are focused wiring projects invoked separately by the `ui` gate;
+The Playwright suite has seven projects. `product` contains ordinary browser
+checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
+proofs run after ordinary product tests stop using the fixture's shared state.
+`e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
+separately by the `ui` gate;
 `book.spec.ts` and `provider-schedule.spec.ts` are focused `product` entries.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
