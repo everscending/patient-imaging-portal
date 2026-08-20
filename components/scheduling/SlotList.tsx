@@ -51,7 +51,7 @@ export default function SlotList({
       {[...groups].map(([day, daySlots]) => (
         <section key={day} className="pip-slot-day" aria-label={day}>
           <h2>{day}</h2>
-          <div className="pip-slot-grid">
+          <div className="pip-slot-grid" data-testid="slot-grid">
             {daySlots.map((slot) => {
               const unavailable = unavailableSlotIds.has(slot.id)
               return (

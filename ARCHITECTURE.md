@@ -1972,12 +1972,12 @@ tests a flow both touch them. Pinned names, `data-testid`:
 ```
 identity-form · identity-error
 profile-form · profile-save · profile-patient-ref
-study-list · study-card · image-viewer · image-zoom
+patient-tabbar · study-list · study-card · image-viewer · image-zoom · image-filmstrip
 cine-viewer · cine-play · cine-next · cine-prev · cine-fps · cine-frame-gap
 report-view · report-findings · report-impression
-share-create · share-list · share-revoke · share-unavailable
+share-create · share-list · share-revoke · share-unavailable · shared-resource
 service-select · provider-select
-slot-list · slot-item · book-submit · booking-conflict
+slot-list · slot-grid · slot-item · book-submit · booking-conflict · booking-success
 appointment-list · appointment-item · appointment-out-of-hours
 appointment-reschedule · appointment-cancel · appointment-notice-locked
 availability-form · availability-collision-list
@@ -1996,14 +1996,16 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, cumulative product→E2, cumulative product→E3, and E4 |
+| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, responsive, cumulative product→E2, cumulative product→E3, and E4 |
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
 `e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
 separately by the `ui` gate;
-`book.spec.ts` and `provider-schedule.spec.ts` are focused `product` entries.
+`book.spec.ts`, `provider-schedule.spec.ts`, and `responsive.spec.ts` are
+focused `product` entries, each immediately followed by its matching JSON report
+validator.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
 dispatch. E0 invokes the cumulative `ui` gate once
