@@ -974,7 +974,7 @@ export type PhiTarget =
   | { kind: 'report';      id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule';    id: string }   // id = provider id
-  | { kind: 'share_link';  id: null }     // unresolved share token
+  | { kind: 'share_link';  id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' }                 // no id — the whole log, admin only
 
@@ -1035,6 +1035,12 @@ uses the anonymous actor and `{ kind: 'share_link', id: null }`; an
 expired or revoked link uses its persisted reference and named resource. The
 guard rejects each and writes the same single denied `share.use` event without
 placing the raw token or PHI in the audit row.
+
+**Authenticated share-link revocation uses the same seam.** `DELETE
+/api/shares/:id` passes the patient actor and `{ kind: 'share_link', id }` to
+the guard before mutation. The caller-scoped client grants only an owned link;
+foreign and missing ids receive the same `404` and one denied `share.revoke`
+event, while an owned link receives one granted event.
 
 **Provider and admin PHI reads go through this guard too.** They are PHI reads
 (CONTEXT.md: appointments with named providers are PHI), so SEC-4 applies to
