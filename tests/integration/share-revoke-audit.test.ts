@@ -157,7 +157,7 @@ afterAll(async () => {
 })
 
 describe('public share revoke denial audit persistence', () => {
-  test('foreignDeletePersistsExactlyOneDurableDeniedShareRevokeRow', async () => {
+  test('foreignRevokePersistsExactlyOneDurableDeniedShareRevokeRow', async () => {
     const response = await revokeDelete(
       new Request(`https://portal.example/api/shares/${FOREIGN_SHARE_ID}`, { method: 'DELETE' }),
       { params: Promise.resolve({ id: FOREIGN_SHARE_ID }) },

@@ -427,7 +427,7 @@ describe('share listing and revocation', () => {
     )
   })
 
-  test('foreignAndUnknownDeleteDenialsAreIdenticalGuardedOnceAndDoNotRevoke', async () => {
+  test('foreignAndUnknownRevokeDenialsAreIdenticalGuardedOnceAndDoNotRevoke', async () => {
     const callerClient = clientFor({ patients: [query({ data: { id: PATIENT_ID }, error: null }), query({ data: { id: PATIENT_ID }, error: null })] })
     anonMock.mockReturnValue(callerClient)
     guardMock.mockResolvedValue({ ok: false, status: 404 })
@@ -463,7 +463,7 @@ describe('share listing and revocation', () => {
     expect(stillActive.status).toBe(200)
   })
 
-  test('authenticatedUnlinkedDeleteReachesExactlyOneGuardAndKeepsOpaque404', async () => {
+  test('authenticatedUnlinkedRevokeReachesExactlyOneGuardAndKeepsOpaque404', async () => {
     const routePrecheck = query({ data: null, error: null })
     anonMock.mockReturnValue(clientFor({ patients: [routePrecheck] }))
     guardMock.mockResolvedValue({ ok: false, status: 403 })
