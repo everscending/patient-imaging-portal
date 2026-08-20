@@ -58,6 +58,16 @@ function imageExpiry(): string {
   return new Date(Date.now() + config.signedUrlTtlSeconds * 1000).toISOString()
 }
 
+async function guardUnavailableShareAccess(link: LinkRow | null): Promise<{ ok: false }> {
+  const target = link?.image_id
+    ? { kind: 'image' as const, id: link.image_id }
+    : link?.report_id
+      ? { kind: 'report' as const, id: link.report_id }
+      : { kind: 'share_link' as const, id: null }
+  await guardPhiAccess(link ? { kind: 'share_recipient', shareLinkId: link.id } : { kind: 'anonymous' }, target, 'share.use')
+  return { ok: false }
+}
+
 async function callerAccessToken(): Promise<string | null> {
   return (await cookies()).get(SESSION_COOKIE_NAME)?.value ?? null
 }
@@ -113,10 +123,11 @@ export async function resolveShareToken(token: string): Promise<
     .eq('token_hash', tokenHash(token))
     .maybeSingle()
   const link = data as LinkRow | null
-  if (error || !link || stateOf(link) !== 'active') return { ok: false }
+  if (error || !link) return guardUnavailableShareAccess(null)
+  if (stateOf(link) !== 'active') return guardUnavailableShareAccess(link)
   const resourceKind: ResourceKind = link.image_id === null ? 'report' : 'image'
   const resourceId = link.image_id ?? link.report_id
-  if (!resourceId) return { ok: false }
+  if (!resourceId) return guardUnavailableShareAccess(link)
   return { ok: true, shareLinkId: link.id, patientId: link.patient_id, resourceKind, resourceId, expiresAt: link.expires_at }
 }
 

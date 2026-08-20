@@ -142,7 +142,7 @@ describe('AC: all five enums exist with exactly the values pinned above', () => 
       appointment_status: ['requested', 'confirmed', 'completed', 'cancelled', 'no_show'],
       report_status: ['preliminary', 'signed'],
       visit_status: ['scheduled', 'completed', 'cancelled'],
-      actor_kind: ['account', 'share_recipient', 'system'],
+      actor_kind: ['account', 'share_recipient', 'system', 'anonymous'],
     }
     const rows = psql(
       mainRun.dbName,
