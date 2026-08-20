@@ -126,7 +126,7 @@ type FakeBookingAppointment = { id: string; slot_id: string; patient_id: string;
 type FakeAppointment = {
   id: string
   patient_id: string
-  status: 'confirmed'
+  status: 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   out_of_hours: boolean
   created_at: string
   slots: { starts_at: string; ends_at: string }
@@ -555,6 +555,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let availabilityBlocks: FakeAvailabilityBlock[] = []
   let scheduleSlots: FakeScheduleSlot[] = []
   let scheduleAppointments: FakeScheduleAppointment[] = []
+  let patientAppointments = APPOINTMENTS.map((appointment) => ({
+    ...appointment,
+    slots: { ...appointment.slots },
+    providers: { ...appointment.providers },
+    services: { ...appointment.services },
+  }))
+  let patientAppointmentSlotIds = new Map<string, string>()
   let generatedSlotRangesByProvider = new Map<string, string[]>()
   const bookingServices = [
     { id: E2_BOOK_SERVICE_ID, slug: 'ultrasound', name: 'Ultrasound' },
@@ -620,6 +627,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   function resetBookingState(): void {
+    const createdAppointmentIds = new Set(bookingAppointments.map(({ id }) => id))
+    patientAppointments = patientAppointments.filter(({ id }) => !createdAppointmentIds.has(id))
+    for (const id of createdAppointmentIds) patientAppointmentSlotIds.delete(id)
     bookingGeneration += 1
     const start = new Date(Date.now() + 72 * 60 * 60 * 1_000)
     start.setUTCMinutes(0, 0, 0)
@@ -848,7 +858,133 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     slot.status = 'booked'
     const appointment = { id: randomUUID(), slot_id: slot.id, patient_id: patient.id, service_id: serviceId, idempotency_key: key }
     bookingAppointments.push(appointment)
+    const provider = providers.find((candidate) => candidate.id === slot.provider_id)!
+    const service = bookingServices.find((candidate) => candidate.id === serviceId)!
+    patientAppointments.push({
+      id: appointment.id,
+      patient_id: patient.id,
+      status: 'requested',
+      out_of_hours: false,
+      created_at: new Date().toISOString(),
+      slots: { starts_at: slot.starts_at, ends_at: slot.ends_at },
+      providers: { full_name: provider.full_name, time_zone: provider.time_zone },
+      services: { name: service.name },
+    })
+    patientAppointmentSlotIds.set(appointment.id, slot.id)
     sendJson(res, 200, [bookingRpcRow(slot, serviceId, appointment, null, false)])
+  }
+
+  async function handleRescheduleAppointment(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const appointment = patientAppointments.find((candidate) =>
+      candidate.id === body.p_appointment_id && candidate.patient_id === patient?.id,
+    )
+    const slot = bookingSlots.find((candidate) => candidate.id === body.p_slot_id)
+    if (!appointment || (appointment.status !== 'requested' && appointment.status !== 'confirmed')) {
+      sendJson(res, 200, [{ result_error: 'not_reschedulable' }])
+      return
+    }
+    if (new Date(appointment.slots.starts_at).getTime() - Date.now() < 24 * 60 * 60 * 1_000) {
+      sendJson(res, 200, [{ result_error: 'minimum_notice' }])
+      return
+    }
+    if (!slot || slot.status !== 'open') {
+      sendJson(res, 200, [{ result_error: 'slot_unavailable' }])
+      return
+    }
+
+    const provider = providers.find((candidate) => candidate.id === slot.provider_id)!
+    const previousSlotId = patientAppointmentSlotIds.get(appointment.id)
+    const previousSlot = previousSlotId
+      ? bookingSlots.find((candidate) => candidate.id === previousSlotId)
+      : undefined
+    if (previousSlot) {
+      previousSlot.status = 'open'
+    } else {
+      const previousProvider = providers.find((candidate) => candidate.full_name === appointment.providers.full_name)!
+      bookingSlots.push({
+        id: randomUUID(),
+        provider_id: previousProvider.id,
+        starts_at: appointment.slots.starts_at,
+        ends_at: appointment.slots.ends_at,
+        status: 'open',
+      })
+    }
+    slot.status = 'booked'
+    patientAppointmentSlotIds.set(appointment.id, slot.id)
+    appointment.slots = { starts_at: slot.starts_at, ends_at: slot.ends_at }
+    appointment.providers = { full_name: provider.full_name, time_zone: provider.time_zone }
+    appointment.out_of_hours = false
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: new Date().toISOString(),
+      actor_kind: 'account',
+      actor_ref: caller!.id,
+      action: 'booking.reschedule',
+      target_kind: 'appointment',
+      target_id: appointment.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{
+      result_error: null,
+      appointment_id: appointment.id,
+      appointment_slot_id: slot.id,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      appointment_status: appointment.status,
+      provider_name: provider.full_name,
+      provider_time_zone: provider.time_zone,
+      service_name: appointment.services.name,
+      out_of_hours: appointment.out_of_hours,
+    }])
+  }
+
+  async function handlePatientCancelAppointment(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const appointment = patientAppointments.find((candidate) =>
+      candidate.id === body.p_appointment_id && candidate.patient_id === patient?.id,
+    )
+    if (!appointment || (appointment.status !== 'requested' && appointment.status !== 'confirmed')) {
+      sendJson(res, 200, [{ result_error: 'not_reschedulable' }])
+      return
+    }
+    if (new Date(appointment.slots.starts_at).getTime() - Date.now() < 24 * 60 * 60 * 1_000) {
+      sendJson(res, 200, [{ result_error: 'minimum_notice' }])
+      return
+    }
+
+    const provider = providers.find((candidate) => candidate.full_name === appointment.providers.full_name)!
+    const slot = bookingSlots.find((candidate) => candidate.id === patientAppointmentSlotIds.get(appointment.id))
+    if (slot) slot.status = 'open'
+    appointment.status = 'cancelled'
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: new Date().toISOString(),
+      actor_kind: 'account',
+      actor_ref: caller!.id,
+      action: 'booking.cancel',
+      target_kind: 'appointment',
+      target_id: appointment.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{
+      result_error: null,
+      appointment_id: appointment.id,
+      appointment_slot_id: slot?.id ?? null,
+      starts_at: appointment.slots.starts_at,
+      ends_at: appointment.slots.ends_at,
+      appointment_status: appointment.status,
+      provider_name: provider.full_name,
+      provider_time_zone: provider.time_zone,
+      service_name: appointment.services.name,
+      out_of_hours: appointment.out_of_hours,
+    }])
   }
 
   function handleBookingRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -1169,7 +1305,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
 
     if (url.pathname === '/rest/v1/appointments') {
       if (!callerProvider) {
-        sendPostgrestRows(req, res, patientScopedRows(req, url, APPOINTMENTS))
+        sendPostgrestRows(req, res, patientScopedRows(req, url, patientAppointments))
         return
       }
       const rows = applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => {
@@ -1444,6 +1580,17 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     appointment.status = nextStatus as FakeScheduleAppointment['status']
     if (nextStatus === 'cancelled') slot.status = 'open'
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: new Date().toISOString(),
+      actor_kind: 'account',
+      actor_ref: caller!.id,
+      action: rpc === 'cancel' ? 'booking.cancel' : 'appointment.transition',
+      target_kind: 'appointment',
+      target_id: appointment.id,
+      outcome: 'granted',
+      detail: null,
+    })
     sendJson(res, 200, [{
       result_error: null,
       appointment_id: appointment.id,
@@ -1459,6 +1606,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
 
   function resetIdentityState(res: ServerResponse): void {
     patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
+    patientAppointments = APPOINTMENTS.map((appointment) => ({
+      ...appointment,
+      slots: { ...appointment.slots },
+      providers: { ...appointment.providers },
+      services: { ...appointment.services },
+    }))
+    patientAppointmentSlotIds = new Map()
     identityAttempts = []
     deletionRequests = []
     shareLinks = [{ ...FOREIGN_SHARE_LINK }]
@@ -1647,12 +1801,21 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleBookAppointment(req, res)
       return
     }
+    if (url.pathname === '/rest/v1/rpc/reschedule_appointment') {
+      void handleRescheduleAppointment(req, res)
+      return
+    }
     if (url.pathname === '/rest/v1/rpc/transition_appointment') {
       void handleScheduleMutation(req, res, 'transition')
       return
     }
     if (url.pathname === '/rest/v1/rpc/cancel_appointment') {
-      void handleScheduleMutation(req, res, 'cancel')
+      const caller = authenticatedUser(req)
+      if (caller && providers.some((provider) => provider.user_id === caller.id)) {
+        void handleScheduleMutation(req, res, 'cancel')
+      } else {
+        void handlePatientCancelAppointment(req, res)
+      }
       return
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {

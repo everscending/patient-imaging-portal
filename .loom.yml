@@ -31,6 +31,8 @@ gates:
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts"
     - "npx playwright test e2e/e5-wiring.spec.ts --project=e5-wiring"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts"
+    - "npx playwright test e2e/e7-wiring.spec.ts --project=product"
+    - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts"
     - "npx playwright test e2e/book.spec.ts --project=product"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts"
     - "npx playwright test e2e/provider-schedule.spec.ts --project=product"

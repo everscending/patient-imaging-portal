@@ -83,6 +83,8 @@ run_ui() {
   step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
   step PLAYWRIGHT_E5 npx playwright test e2e/e5-wiring.spec.ts --project=e5-wiring
   step PLAYWRIGHT_E5_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts
+  step PLAYWRIGHT_E7 npx playwright test e2e/e7-wiring.spec.ts --project=product
+  step PLAYWRIGHT_E7_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts
   # JOR-253 requires the booking acceptance file to be named explicitly in
   # the UI tier, together with the report evidence consumed by the gate.
   step PLAYWRIGHT_BOOK npx playwright test e2e/book.spec.ts --project=product
