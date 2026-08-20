@@ -986,22 +986,37 @@ export type GuardResult =
   | { ok: false; status: 401 | 403 | 404 }
 
 /**
- * Verifies session, identity link, and ownership; writes exactly one
- * audit event either way. Never throws for an authorization failure —
+ * Authenticates the session, checks the identity link and ownership, and
+ * writes exactly one audit event either way. Never throws for an authorization failure —
  * the caller maps `status` straight to a response.
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
- * A route that already resolved AuthenticationResult passes it through so
- * the guard and audit writer reuse that one cryptographically verified JWT.
  */
 export async function guardPhiAccess(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
-  authentication?: AuthenticationResult,
+): Promise<GuardResult>
+
+// Manifest routes authenticate before parameter validation, then reuse this
+// opaque, runtime-branded guard context for authorization and awaited audit.
+export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication>
+export async function guardAuthenticatedPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication: PhiRequestAuthentication,
 ): Promise<GuardResult>
 ```
+
+`PhiRequestAuthentication` is created and runtime-branded only inside
+`lib/access/guard.ts`; a route cannot construct it from decoded claims or a raw
+session JWT. The manifest route may read the authenticated session it contains
+to resolve the account role and fetch the already-authorized response, while
+the guard passes that same session internally to the awaited audit write. No
+second remote Auth call occurs, and the public guard accepts neither a raw
+session JWT nor a caller-built authentication context.
 
 **Ownership means something different per actor kind, and the guard owns all
 five definitions** — no route handler writes its own:

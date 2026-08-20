@@ -18,12 +18,7 @@ import { SESSION_COOKIE_NAME } from '../session-cookie'
 export type VerifyOutcome = { ok: true; patientRef: string; linkedAt: string } | { ok: false }
 
 export type StatusResult = { linked: true; patientRef: string; linkedAt: string } | { linked: false }
-declare const verifiedSession: unique symbol
-export type AuthenticatedSession = { accessToken: string; userId: string; readonly [verifiedSession]: true }
-export type AuthenticationResult =
-  | { status: 'authenticated'; session: AuthenticatedSession }
-  | { status: 'unauthenticated' }
-  | { status: 'unavailable' }
+export type AuthenticatedSession = { accessToken: string; userId: string }
 
 type ServiceClient = ReturnType<typeof serviceClient>
 
@@ -39,33 +34,17 @@ export function computeSourceRef(request: Request): string {
   return createHash('sha256').update(config.sourceRefSalt + firstEntry).digest('hex')
 }
 
-// The single remote session-JWT verification seam. The unavailable variant
-// stays distinct so a PHI guard can audit the denied decision before failing
-// closed instead of misreporting an Auth outage as an ordinary 401.
-export async function resolveAuthentication(): Promise<AuthenticationResult> {
-  try {
-    const cookieStore = await cookies()
-    const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
-    if (!accessToken) return { status: 'unauthenticated' }
-
-    const { data, error } = await authClient().auth.getUser(accessToken)
-    if (error) {
-      return error.status === 401 || error.status === 403
-        ? { status: 'unauthenticated' }
-        : { status: 'unavailable' }
-    }
-    return data.user
-      ? { status: 'authenticated', session: { accessToken, userId: data.user.id } as AuthenticatedSession }
-      : { status: 'unauthenticated' }
-  } catch {
-    return { status: 'unavailable' }
-  }
-}
-
+// Reads the caller's session the same way lib/audit/events.ts does — no
+// NextRequest in scope in a route handler that also needs the raw `Request`
+// for computeSourceRef — then resolves it to an account id via Supabase
+// Auth. Null covers both "no cookie" and "cookie doesn't resolve to a user".
 export async function resolveAuthenticatedSession(): Promise<AuthenticatedSession | null> {
-  const authentication = await resolveAuthentication()
-  if (authentication.status === 'unavailable') throw new Error('authentication dependency unavailable')
-  return authentication.status === 'authenticated' ? authentication.session : null
+  const cookieStore = await cookies()
+  const accessToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (!accessToken) return null
+  const { data, error } = await authClient().auth.getUser(accessToken)
+  if (error || !data.user) return null
+  return { accessToken, userId: data.user.id }
 }
 
 export async function resolveCallerId(): Promise<string | null> {

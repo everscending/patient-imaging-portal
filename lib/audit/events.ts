@@ -5,7 +5,7 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 
-import type { AuthenticatedSession } from '../access/identity'
+import type { AuthenticatedSession } from '../access/guard'
 import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 

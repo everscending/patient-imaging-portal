@@ -706,11 +706,15 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
     expect(source).toContain(
       'export type GuardResult = { ok: true; patientId: string | null } | { ok: false; status: 401 | 403 | 404 }',
     )
-    expect(source).toContain(`export async function guardPhiAccess(
+    expect(source).toContain(
+      'export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {',
+    )
+    expect(source).toContain('export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication> {')
+    expect(source).toContain(`export async function guardAuthenticatedPhiAccess(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
-  authentication?: AuthenticationResult,
+  authentication: PhiRequestAuthentication,
 ): Promise<GuardResult> {`)
   })
 })

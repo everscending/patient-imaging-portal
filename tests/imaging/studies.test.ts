@@ -38,15 +38,18 @@ const { guardMock, callerMock, anonMock, signingMock, cookieMock, reset } = vi.h
   }
 })
 
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
-vi.mock('../../lib/access/identity', () => ({
-  resolveCallerId: callerMock,
-  resolveAuthentication: async () => {
+vi.mock('../../lib/access/guard', () => ({
+  guardPhiAccess: guardMock,
+  guardAuthenticatedPhiAccess: guardMock,
+  authenticatePhiRequest: async () => {
     const userId = await callerMock()
     return userId
       ? { status: 'authenticated', session: { accessToken: 'caller-token', userId } }
       : { status: 'unauthenticated' }
   },
+}))
+vi.mock('../../lib/access/identity', () => ({
+  resolveCallerId: callerMock,
   resolveAuthenticatedSession: async () => {
     const userId = await callerMock()
     return userId ? { accessToken: 'caller-token', userId } : null
@@ -161,7 +164,7 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(signingMock).not.toHaveBeenCalled()
   })
 
-  test('owningVerifiedPatientReadsStudyDetail', async function owningVerifiedPatientReadsStudyDetail() {
+  test('owningAuthenticatedPatientReadsStudyDetail', async function owningAuthenticatedPatientReadsStudyDetail() {
     anonMock.mockReturnValue(client({
       studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
       visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],

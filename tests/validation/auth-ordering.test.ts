@@ -45,14 +45,17 @@ vi.mock('next/headers', () => ({
 vi.mock('../../lib/session-cookie', () => ({ SESSION_COOKIE_NAME: 'pip_session' }))
 vi.mock('../../lib/config', () => ({ config: { maxRequestBodyBytes: 1024 } }))
 vi.mock('../../lib/access/identity', () => ({
-  resolveAuthentication: vi.fn(async () => {
-    const session = authenticatedSession()
-    return session ? { status: 'authenticated', session } : { status: 'unauthenticated' }
-  }),
   resolveAuthenticatedSession: vi.fn(async () => authenticatedSession()),
   resolveCallerId: vi.fn(async () => authenticatedSession()?.userId ?? null),
 }))
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardPhiAccessMock }))
+vi.mock('../../lib/access/guard', () => ({
+  guardPhiAccess: guardPhiAccessMock,
+  guardAuthenticatedPhiAccess: guardPhiAccessMock,
+  authenticatePhiRequest: vi.fn(async () => {
+    const session = authenticatedSession()
+    return session ? { status: 'authenticated', session } : { status: 'unauthenticated' }
+  }),
+}))
 vi.mock('../../lib/db/client', () => ({
   anonClient: anonClientMock,
   authClient: authClientMock,
