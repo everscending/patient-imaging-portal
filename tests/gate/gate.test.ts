@@ -161,6 +161,27 @@ describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the 
       'npx vitest run --project unit tests/observability/timing.test.ts',
     )
     expect(api).toContain('npx vitest run --project e8')
+    expect(api).toContain('scripts/demo-run.sh')
+    expect(api).toContain(
+      'npx vitest run --project unit tests/adversarial/log-scan.test.ts',
+    )
+  })
+
+  test('api propagates a demo failure before running the PHI scanner', () => {
+    const result = run(['api'], {
+      GATE_FAKE_EXIT_TSC: '0',
+      GATE_FAKE_EXIT_ESLINT: '0',
+      GATE_FAKE_EXIT_VITEST_UNIT: '0',
+      GATE_FAKE_EXIT_VITEST_ACCESS_GRANT_AUTH: '0',
+      GATE_FAKE_EXIT_VITEST_TIMING: '0',
+      GATE_FAKE_EXIT_VITEST_INTEGRATION: '0',
+      GATE_FAKE_EXIT_VITEST_E8: '0',
+      GATE_FAKE_EXIT_DEMO_RUN: '9',
+      GATE_FAKE_EXIT_VITEST_LOG_SCAN: '0',
+    })
+    expect(result.status).toBe(9)
+    expect(result.stderr).toContain('DEMO_RUN')
+    expect(result.stderr).not.toContain('VITEST_LOG_SCAN')
   })
 })
 

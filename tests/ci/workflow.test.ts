@@ -23,6 +23,8 @@ const REQUIRED_UI_GATE_PREFIX = [
   'npx vitest run --project unit tests/observability/timing.test.ts',
   'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
   'npx vitest run --project e8',
+  'scripts/demo-run.sh',
+  'npx vitest run --project unit tests/adversarial/log-scan.test.ts',
 ]
 const REQUIRED_E2_ENTRY = [
   'npx playwright test --project=e2-wiring',

@@ -75,6 +75,8 @@ run_api() {
   step VITEST_TIMING npx vitest run --project unit tests/observability/timing.test.ts
   step VITEST_INTEGRATION npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts
   step VITEST_E8 npx vitest run --project e8
+  step DEMO_RUN scripts/demo-run.sh
+  step VITEST_LOG_SCAN npx vitest run --project unit tests/adversarial/log-scan.test.ts
 }
 
 run_ui() {
