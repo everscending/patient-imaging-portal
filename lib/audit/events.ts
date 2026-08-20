@@ -35,7 +35,7 @@ export type AuditAction =
   | 'profile.deletion_request'
 
 export type RecordAuditEventInput = {
-  actorKind: 'account' | 'share_recipient' | 'system'
+  actorKind: 'account' | 'share_recipient' | 'system' | 'anonymous'
   actorRef: string | null
   action: AuditAction
   targetKind: string
@@ -54,7 +54,7 @@ type DetailValue = string | number | boolean
 export type AuditLogEvent = {
   id: number | string
   occurred_at: string
-  actor_kind: 'account' | 'share_recipient' | 'system'
+  actor_kind: 'account' | 'share_recipient' | 'system' | 'anonymous'
   actor_ref: string | null
   action: string
   target_kind: string
@@ -100,7 +100,7 @@ async function callerAccessToken(): Promise<string | null> {
 }
 
 function serviceRoleAllowed(input: RecordAuditEventInput, fromPhiGuard: boolean): boolean {
-  const guardDenial = fromPhiGuard && input.actorKind === 'account' && input.actorRef === null && input.outcome === 'denied'
+  const guardDenial = fromPhiGuard && (input.actorKind === 'account' || input.actorKind === 'anonymous') && input.actorRef === null && input.outcome === 'denied'
   const reminderJob = input.actorKind === 'system' && input.actorRef === null && input.action === 'reminder.dispatch'
   return guardDenial || reminderJob
 }
