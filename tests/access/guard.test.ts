@@ -141,6 +141,37 @@ const {
 
   function makeClient() {
     return {
+      async rpc(name: string, input: FakeRow) {
+        if (name !== 'grant_patient_imaging_access') {
+          throw new Error(`fake client: unexpected rpc "${name}"`)
+        }
+        const targetKind = input.p_target_kind
+        const targetId = input.p_target_id
+        if ((targetKind !== 'study' && targetKind !== 'clip') || typeof targetId !== 'string') {
+          return { data: null, error: { message: 'invalid imaging grant input' } }
+        }
+        const table = targetKind === 'study' ? 'studies' : 'cine_clips'
+        if (readFailureTable === 'patients' || readFailureTable === table) {
+          return { data: null, error: { message: 'SECRET_DATABASE_ERROR_MUST_NOT_ESCAPE' } }
+        }
+        const patient = tables.patients!.find((row) => row.user_id === sessionUserId)
+        const owned = patient
+          ? tables[table]!.some((row) => row.id === targetId && row.patient_id === patient.id)
+          : false
+        const status = patient ? (owned ? 200 : 404) : 403
+        audits.push({
+          actorKind: 'account',
+          actorRef: sessionUserId,
+          action: targetKind === 'study' ? 'study.view' : 'clip.view',
+          targetKind,
+          targetId,
+          outcome: owned ? 'granted' : 'denied',
+        })
+        return {
+          data: { patient_id: owned ? patient!.id : null, status },
+          error: null,
+        }
+      },
       from(table: string) {
         if (!(table in tables)) throw new Error(`fake client: unexpected table "${table}"`)
         const filters: Array<[string, unknown]> = []
@@ -602,8 +633,9 @@ describe('SEC-5: ownership checks select only the columns they need', () => {
     const provider = seedProvider({ id: 'minimum-provider', user_id: 'minimum-provider-user' })
     const visit = seedVisit({ patient_id: patient.id, provider_id: provider.id })
     const study = seedStudy({ visit_id: visit.id, patient_id: patient.id })
+    const image = seedImage({ study_id: study.id, patient_id: patient.id })
 
-    await guardPhiAccess({ kind: 'patient', userId: 'minimum-user' }, { kind: 'study', id: study.id }, 'study.view')
+    await guardPhiAccess({ kind: 'patient', userId: 'minimum-user' }, { kind: 'image', id: image.id }, 'image.view')
 
     expect(selectedColumns.length).toBeGreaterThan(0)
     expect(selectedColumns.map(({ columns }) => columns)).not.toContain('*')

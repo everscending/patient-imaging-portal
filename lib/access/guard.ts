@@ -116,6 +116,7 @@ type ReportWithStudyRow = { id: string; patient_id: string; study_id: string }
 type StudyRow = { id: string; patient_id: string; visit_id: string }
 type VisitRow = { id: string }
 type ShareLinkRow = { id: string; patient_id: string; image_id: string | null; report_id: string | null; expires_at: string; revoked_at: string | null }
+type PatientImagingGrantRow = { patient_id: string | null; status: number }
 
 // study/image/clip/appointment share the same ownership shape for a patient
 // or an admin actor: one row, keyed by id (and by patient_id for a patient).
@@ -197,6 +198,25 @@ async function decidePatientReport(client: Client, reportId: string, patientId: 
   // admin actor never reaches this function, so it never needs to check it.
   if (report.status === 'preliminary') return { ok: false, status: 404 }
   return { ok: true, patientId }
+}
+
+async function decidePatientImagingGrant(
+  client: Client,
+  target: Extract<PhiTarget, { kind: 'study' | 'clip' }>,
+): Promise<GuardResult> {
+  const { data, error } = await client.rpc('grant_patient_imaging_access', {
+    p_target_kind: target.kind,
+    p_target_id: target.id,
+  })
+  const grant = data as PatientImagingGrantRow | null
+  if (error || !grant) throw new Error('guard: authorization dependency read failed')
+  if (grant.status === 200 && typeof grant.patient_id === 'string') {
+    return { ok: true, patientId: grant.patient_id }
+  }
+  if ((grant.status === 403 || grant.status === 404) && grant.patient_id === null) {
+    return { ok: false, status: grant.status }
+  }
+  throw new Error('guard: authorization dependency returned an invalid grant')
 }
 
 async function decidePatient(client: Client, userId: string, target: PhiTarget): Promise<GuardResult> {
@@ -366,9 +386,15 @@ type AccessDecision = {
   authenticatedUserId?: string
   session?: AuthenticatedSession
   dependencyFailed?: boolean
+  auditRecorded?: boolean
 }
 
-async function decide(actor: Actor, target: PhiTarget, authentication?: SessionAuthentication): Promise<AccessDecision> {
+async function decide(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication?: SessionAuthentication,
+): Promise<AccessDecision> {
   if (actor.kind === 'anonymous') return { result: { ok: false, status: 404 } }
 
   if (actor.kind === 'share_recipient') {
@@ -394,8 +420,20 @@ async function decide(actor: Actor, target: PhiTarget, authentication?: SessionA
 
   try {
     switch (actor.kind) {
-      case 'patient':
+      case 'patient': {
+        if (
+          (target.kind === 'study' && action === 'study.view')
+          || (target.kind === 'clip' && action === 'clip.view')
+        ) {
+          return {
+            result: await decidePatientImagingGrant(client, target),
+            authenticatedUserId,
+            session: sessionResult.session,
+            auditRecorded: true,
+          }
+        }
         return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
+      }
       case 'provider':
         return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
       case 'admin':
@@ -417,17 +455,19 @@ async function guardWithAuthentication(
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
 
-  const accessDecision = await decide(actor, target, authentication)
+  const accessDecision = await decide(actor, target, action, authentication)
   const decision = accessDecision.result
 
-  await recordPhiAccessDecision({
-    actorKind,
-    actorRef: accessDecision.authenticatedUserId ?? actorRef,
-    action: recordedAction(target, action),
-    targetKind,
-    targetId,
-    outcome: decision.ok ? 'granted' : 'denied',
-  }, accessDecision.session)
+  if (!accessDecision.auditRecorded) {
+    await recordPhiAccessDecision({
+      actorKind,
+      actorRef: accessDecision.authenticatedUserId ?? actorRef,
+      action: recordedAction(target, action),
+      targetKind,
+      targetId,
+      outcome: decision.ok ? 'granted' : 'denied',
+    }, accessDecision.session)
+  }
 
   if (accessDecision.dependencyFailed) {
     throw new Error('guardPhiAccess: authorization dependency unavailable')
