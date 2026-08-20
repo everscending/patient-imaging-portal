@@ -431,7 +431,7 @@ describe('JOR-212 public demo-run evidence', () => {
   })
 
   test('producerPublishesOneCompleteArtifactAndScansEveryDrivenRow', () => {
-    execFileSync(SCRIPT_PATH, { cwd: REPO_ROOT, env: process.env, stdio: 'pipe', timeout: 300_000 })
+    execFileSync(SCRIPT_PATH, { cwd: REPO_ROOT, stdio: 'pipe', timeout: 300_000 })
     const artifact = readFileSync(ARTIFACT_PATH, 'utf8')
     const rows = drivenRows()
     try {
