@@ -568,7 +568,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   const callsByEmail = new Map<string, Record<string, number>>()
-  // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
+  // JOR-247/JOR-305: dependency reachability, toggled only by the committed
+  // degraded-state checks. Database outage applies to every PostgREST route,
+  // so an affected product flow cannot stay green behind a health-only fake.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
     storage: 'ok',
@@ -1570,6 +1572,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (req.method === 'POST' && url.pathname === '/__test__/health-state') {
       void handleHealthState(req, res)
+      return
+    }
+    if (url.pathname.startsWith('/rest/v1/') && healthState.database !== 'ok') {
+      answerAsDependency(req, res, healthState.database)
       return
     }
     if (
