@@ -475,9 +475,10 @@ export async function guardAuthenticatedPhiAccess(
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
 ): Promise<GuardResult> {
   if (!phiRequestAuthentications.has(authentication)) {
     throw new Error('guardPhiAccess: invalid request authentication')
   }
-  return guardWithAuthentication(actor, target, action, authentication)
+  return guardWithAuthentication(actor, target, action, authentication, options)
 }

@@ -2,16 +2,23 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-const { guardMock, rpcMock, anonClientMock } = vi.hoisted(() => {
+const { authenticationMock, guardMock, rpcMock, anonClientMock } = vi.hoisted(() => {
   const rpc = vi.fn()
   return {
+    authenticationMock: vi.fn(async () => ({
+      status: 'authenticated',
+      session: { accessToken: 'access-token', userId: 'account-1' },
+    })),
     guardMock: vi.fn(),
     rpcMock: rpc,
     anonClientMock: vi.fn(() => ({ rpc })),
   }
 })
 
-vi.mock('../../lib/access/guard', () => ({ guardPhiAccess: guardMock }))
+vi.mock('../../lib/access/guard', () => ({
+  authenticatePhiRequest: authenticationMock,
+  guardAuthenticatedPhiAccess: guardMock,
+}))
 vi.mock('../../lib/db/client', () => ({ anonClient: anonClientMock }))
 
 import {
@@ -19,6 +26,7 @@ import {
   recordInvalidDeletionRequest,
   submitDeletionRequest,
 } from '../../lib/profile/deletion-requests'
+import { authenticatePhiRequest } from '../../lib/access/guard'
 
 beforeEach(() => {
   guardMock.mockReset()
@@ -29,12 +37,14 @@ beforeEach(() => {
 describe('profile deletion request domain boundary', () => {
   test('authorizationUsesThePhiGuardAndHandsTheGrantedAuditToTheRpc', async () => {
     guardMock.mockResolvedValue({ ok: true, patientId: 'patient-1' })
+    const authentication = await authenticatePhiRequest()
 
-    await expect(authorizeDeletionRequest('account-1')).resolves.toEqual({ ok: true, patientId: 'patient-1' })
+    await expect(authorizeDeletionRequest(authentication)).resolves.toEqual({ ok: true, patientId: 'patient-1' })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: 'account-1' },
       { kind: 'patient', id: null },
       'profile.deletion_request',
+      authentication,
       { grantedAudit: 'transactional-rpc' },
     )
   })

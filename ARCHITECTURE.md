@@ -1019,6 +1019,7 @@ export async function guardAuthenticatedPhiAccess(
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options?: { grantedAudit: 'transactional-rpc' },
 ): Promise<GuardResult>
 ```
 

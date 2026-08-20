@@ -253,7 +253,11 @@ vi.mock('../../lib/audit/events', () => ({
 }))
 
 import type { Actor, GuardResult, PhiTarget } from '../../lib/access/guard'
-import { guardPhiAccess as guardPhiAccessRaw } from '../../lib/access/guard'
+import {
+  authenticatePhiRequest,
+  guardAuthenticatedPhiAccess,
+  guardPhiAccess as guardPhiAccessRaw,
+} from '../../lib/access/guard'
 import type { AuditAction } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
@@ -726,6 +730,7 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
 ): Promise<GuardResult> {`)
   })
 })
@@ -735,11 +740,13 @@ describe('transactional PHI audit handoff', () => {
     seedPatient({ id: 'profile-patient-a', user_id: 'profile-user-a' })
     seedPatient({ id: 'profile-patient-b', user_id: 'profile-user-b' })
     setSessionUserId('profile-user-a')
+    const authentication = await authenticatePhiRequest()
 
-    const own = await guardPhiAccessRaw(
+    const own = await guardAuthenticatedPhiAccess(
       { kind: 'patient', userId: 'profile-user-a' },
       { kind: 'patient', id: null },
       'profile.deletion_request',
+      authentication,
       { grantedAudit: 'transactional-rpc' },
     )
     expect(own).toEqual({ ok: true, patientId: 'profile-patient-a' })

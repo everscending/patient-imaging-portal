@@ -1,4 +1,4 @@
-import { resolveAuthenticatedSession } from '../../../../lib/access/identity'
+import { authenticatePhiRequest } from '../../../../lib/access/guard'
 import {
   authorizeDeletionRequest,
   recordInvalidDeletionRequest,
@@ -8,10 +8,11 @@ import { deletionRequestSchema, parseBody } from '../../../../lib/validation'
 import { errorResponse } from '../../../../lib/validation/envelope'
 
 export async function POST(request: Request): Promise<Response> {
-  const session = await resolveAuthenticatedSession()
+  const authentication = await authenticatePhiRequest()
+  const session = authentication.status === 'authenticated' ? authentication.session : null
   let access: Awaited<ReturnType<typeof authorizeDeletionRequest>>
   try {
-    access = await authorizeDeletionRequest(session?.userId ?? '')
+    access = await authorizeDeletionRequest(authentication)
   } catch {
     return errorResponse(503, 'deletion_request_unavailable', 'The request could not be recorded. Try again.')
   }

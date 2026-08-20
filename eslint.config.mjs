@@ -32,9 +32,7 @@ const MODULE_TREE = [
 // read — §5's PhiTarget union has no identity-shaped variant either, and
 // lib/access/identity.ts is its own single-purpose seam for this one write
 // (ARCHITECTURE.md §4), audited directly via lib/audit/events.ts rather than
-// through lib/access/guard.ts. Profile deletion records a patient-owned intent
-// but returns no PHI; its own RLS insert and domain audit are the guard. None of
-// these routes has a PHI target to guard.
+// through lib/access/guard.ts. None of these routes has a PHI target to guard.
 const GUARD_ALLOWLIST = [
   'app/api/auth/login/route.ts',
   'app/api/auth/register/route.ts',
@@ -42,7 +40,6 @@ const GUARD_ALLOWLIST = [
   'app/api/identity/verify/route.ts',
   'app/api/identity/status/route.ts',
   'app/api/profile/route.ts',
-  'app/api/profile/deletion-request/route.ts',
 ]
 
 const APP_IMPORT_RE = /(^|\/)app\//

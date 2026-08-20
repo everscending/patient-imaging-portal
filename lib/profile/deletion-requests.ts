@@ -1,6 +1,10 @@
 import 'server-only'
 
-import { guardPhiAccess, type GuardResult } from '../access/guard'
+import {
+  guardAuthenticatedPhiAccess,
+  type GuardResult,
+  type PhiRequestAuthentication,
+} from '../access/guard'
 import { anonClient } from '../db/client'
 
 type RpcRow = {
@@ -13,11 +17,13 @@ export type DeletionRequestResult =
   | { ok: true; status: 'received'; requestedAt: string }
   | { ok: false; error: 'request_already_open' | 'identity_verification_required' }
 
-export async function authorizeDeletionRequest(actorUserId: string): Promise<GuardResult> {
-  return guardPhiAccess(
-    { kind: 'patient', userId: actorUserId },
+export async function authorizeDeletionRequest(authentication: PhiRequestAuthentication): Promise<GuardResult> {
+  const userId = authentication.status === 'authenticated' ? authentication.session.userId : ''
+  return guardAuthenticatedPhiAccess(
+    { kind: 'patient', userId },
     { kind: 'patient', id: null },
     'profile.deletion_request',
+    authentication,
     { grantedAudit: 'transactional-rpc' },
   )
 }
