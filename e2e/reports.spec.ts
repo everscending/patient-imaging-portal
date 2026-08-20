@@ -46,7 +46,7 @@ async function filesWithReportViewDeclaration(directory: string): Promise<string
 }
 
 async function registerAndLink(page: import('@playwright/test').Page): Promise<void> {
-  const email = `jor-218-${randomUUID()}@example.com`
+  const email = `jor-218-404-${randomUUID()}@example.com`
   expect((await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
   expect((await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
   expect(
@@ -72,7 +72,7 @@ test.describe.serial('JOR-218 reports', () => {
       await route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' })
     })
     await page.goto('/reports/00000000-0000-4000-8000-000000000001')
-    await expect(page.getByText('404')).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: '404', exact: true })).toBeVisible()
     await expect(page.getByTestId('report-view')).toHaveCount(0)
   })
 
