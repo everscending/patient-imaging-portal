@@ -146,24 +146,31 @@ function scanArtifact(text: string, rowSets: PhiRows[] = [seededRows(), E2_DEMO_
 
   const timingOperations = new Set<string>()
   for (const line of lines) {
-    const auditTarget = /^DEMO_AUDIT_DETAIL(?=$|[\s{])/.test(line)
-    const timingTarget = line.match(/\{[^}]*"op"\s*:\s*"(share\.create|booking\.create)(?=$|["\s,}])/)?.[1]
-    const json = auditTarget
-      ? line.startsWith('DEMO_AUDIT_DETAIL ') ? line.slice('DEMO_AUDIT_DETAIL '.length) : undefined
-      : line.match(/(\{.*\})/)?.[1]
+    const auditTarget = line.startsWith('DEMO_AUDIT_DETAIL')
+    const timingToken = line.match(/"op"\s*:\s*"(share\.create|booking\.create)(?=$|["\s,}])/)?.[1]
+    const json = auditTarget && line.startsWith('DEMO_AUDIT_DETAIL ')
+      ? line.slice('DEMO_AUDIT_DETAIL '.length)
+      : auditTarget ? undefined : line
     if (!json) {
       if (auditTarget) integrityErrors.push('audit detail line is malformed')
-      if (timingTarget) integrityErrors.push(`timing line is malformed: ${timingTarget}`)
       continue
     }
-    let value: Record<string, unknown>
+    let parsed: unknown
     try {
-      value = JSON.parse(json) as Record<string, unknown>
+      parsed = JSON.parse(json)
     } catch {
       if (auditTarget) integrityErrors.push('audit detail line is malformed')
-      if (timingTarget) integrityErrors.push(`timing line is malformed: ${timingTarget}`)
+      if (!auditTarget && line.trimStart().startsWith('{') && timingToken) {
+        integrityErrors.push(`timing line is malformed: ${timingToken}`)
+      }
       continue
     }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      if (auditTarget) integrityErrors.push('audit detail line is invalid')
+      continue
+    }
+    const value = parsed as Record<string, unknown>
+    const timingTarget = value.op === 'share.create' || value.op === 'booking.create' ? value.op : undefined
     if (auditTarget) {
       if (!Object.hasOwn(value, 'detail')) {
         integrityErrors.push('audit detail field is missing')
@@ -325,6 +332,18 @@ describe('JOR-212 mandatory adversarial PHI subjects', () => {
     expect(result).toEqual({ hits: [], integrityErrors: [] })
   })
 
+  test('completeTimingJsonWithNestedFieldBeforeTarget_failsExactShape', () => {
+    const result = scanArtifact(
+      completeArtifact('{"context":{},"op":"share.create","ms":12,"outcome":"ok","requestId":"valid","recipient":"safe@example.test"}'),
+    )
+    expect(result.integrityErrors).toContain('timing line has an unapproved field: share.create')
+  })
+
+  test('unrelatedTimingProseWithBrace_passes', () => {
+    const result = scanArtifact(completeArtifact('documentation { mentions "op":"share.create" as an example'))
+    expect(result).toEqual({ hits: [], integrityErrors: [] })
+  })
+
   test('emptyOrTruncatedArtifact_failsClosed', () => {
     expect(scanArtifact('').integrityErrors.length).toBeGreaterThan(0)
     expect(scanArtifact(completeArtifact().replace('DEMO_STEP_COMPLETE reminder\n', '')).integrityErrors).toContain(
@@ -341,6 +360,13 @@ describe('JOR-212 public demo-run evidence', () => {
 
   test('auditDetailWithoutDelimiter_failsEvenWhenRequiredRecordsAreValid', () => {
     const result = scanArtifact(completeArtifact('DEMO_AUDIT_DETAIL{"action":"study.view"}'))
+    expect(result.integrityErrors).toContain('audit detail line is malformed')
+  })
+
+  test('auditDetailWithColonDelimiter_failsEvenWhenRequiredRecordsAreValid', () => {
+    const result = scanArtifact(
+      completeArtifact('DEMO_AUDIT_DETAIL:{"action":"study.view","targetId":"valid","outcome":"granted","detail":null}'),
+    )
     expect(result.integrityErrors).toContain('audit detail line is malformed')
   })
 
