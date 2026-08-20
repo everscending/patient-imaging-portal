@@ -698,7 +698,7 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
   | { kind: 'schedule'; id: string } // id = provider id
-  | { kind: 'share_link'; id: null } // unresolved share token
+  | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
   | { kind: 'audit_log' } // no id — the whole log, admin only`,
     )
@@ -831,6 +831,34 @@ describe('mandatory adversarial: share_recipient naming any resource other than 
 
     const result = await guardPhiAccess({ kind: 'share_recipient', shareLinkId: 'm9-share' }, { kind: 'image', id: otherImage.id }, 'image.view')
     expect(result).toEqual({ ok: false, status: 404 })
+  })
+})
+
+describe('mandatory adversarial: patient share-link revocation ownership', () => {
+  test('patientShareLinkOwnershipGrantsOwnedAndDeniesForeignOrMissingWithOneAuditEach', async function patientShareLinkOwnershipGrantsOwnedAndDeniesForeignOrMissingWithOneAuditEach() {
+    const patient = seedPatient({ id: 'revoke-patient', user_id: 'revoke-user' })
+    const otherPatient = seedPatient({ id: 'revoke-other-patient', user_id: 'revoke-other-user' })
+    const owned = seedShareLink({ id: 'revoke-owned', patient_id: patient.id })
+    const foreign = seedShareLink({ id: 'revoke-foreign', patient_id: otherPatient.id })
+    const target = (id: string): PhiTarget => ({ kind: 'share_link', id })
+
+    const results = [
+      await guardPhiAccess({ kind: 'patient', userId: 'revoke-user' }, target(owned.id), 'share.revoke'),
+      await guardPhiAccess({ kind: 'patient', userId: 'revoke-user' }, target(foreign.id), 'share.revoke'),
+      await guardPhiAccess({ kind: 'patient', userId: 'revoke-user' }, target('revoke-missing'), 'share.revoke'),
+    ]
+
+    expect(results).toEqual([
+      { ok: true, patientId: patient.id },
+      { ok: false, status: 404 },
+      { ok: false, status: 404 },
+    ])
+    expect(auditCalls).toEqual([
+      expect.objectContaining({ action: 'share.revoke', targetKind: 'share_link', targetId: owned.id, outcome: 'granted' }),
+      expect.objectContaining({ action: 'share.revoke', targetKind: 'share_link', targetId: foreign.id, outcome: 'denied' }),
+      expect.objectContaining({ action: 'share.revoke', targetKind: 'share_link', targetId: 'revoke-missing', outcome: 'denied' }),
+    ])
+    expect(serviceClientMock).not.toHaveBeenCalled()
   })
 })
 
