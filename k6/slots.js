@@ -1,6 +1,7 @@
 import http from 'k6/http'
 import { check, fail, sleep } from 'k6'
 import { Trend } from 'k6/metrics'
+import { authenticatedHeaders } from './lib/auth.js'
 
 const BASE_URL = __ENV.BASE_URL || `http://localhost:${__ENV.PORT || '4310'}`
 const EMAIL = __ENV.PATIENT_EMAIL || 'patient@demo.pip.test'
@@ -17,19 +18,8 @@ export const options = {
 
 const slotQuery = new Trend('pf5_slot_query_ms', true)
 
-function authenticatedHeaders() {
-  const response = http.post(`${BASE_URL}/api/auth/login`, JSON.stringify({ email: EMAIL, password: PASSWORD }), {
-    headers: { 'Content-Type': 'application/json' },
-    tags: { operation: 'setup_login' },
-  })
-  if (response.status !== 200) fail(`seeded patient login failed: ${response.status}`)
-  const session = response.cookies.pip_session?.[0]?.value
-  if (!session) fail('seeded patient login returned no session cookie')
-  return { Cookie: `pip_session=${session}` }
-}
-
 export function setup() {
-  const headers = authenticatedHeaders()
+  const headers = authenticatedHeaders(BASE_URL, EMAIL, PASSWORD)
   const servicesResponse = http.get(`${BASE_URL}/api/services`, { headers, tags: { operation: 'setup_services' } })
   const service = servicesResponse.json('services.0')
   if (servicesResponse.status !== 200 || !service?.id) fail('seeded dataset has no service')

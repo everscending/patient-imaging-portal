@@ -49,7 +49,7 @@ describe('JOR-221 performance contract', () => {
     expect(booking).toMatch(/const RUN_ID = __ENV\.RUN_ID/)
     expect(booking).toMatch(/\^\[0-9a-f\]\{8\}\$/)
     expect(booking).toMatch(/let completed = false[\s\S]*if \(completed\)[\s\S]*completed = true/)
-    expect(booking).toMatch(/booking\.status === 200 \|\| response\.status === 201|response\.status === 200 \|\| response\.status === 201/)
+    expect(booking).toMatch(/response\.status === 200 \|\| response\.status === 201/)
     expect(booking).toMatch(/booking\.status === 201[\s\S]*http\.post\(`\$\{BASE_URL\}\/api\/shares`/)
     expect(booking).toMatch(/recipientEmail:[^\n]*RUN_ID[^\n]*__VU/)
   })
@@ -129,9 +129,11 @@ describe('JOR-221 performance contract', () => {
     }
     // Only the two pre-elective misses JOR-302 accepted may carry the tag.
     expect(acceptedExceedances.sort()).toEqual(['PF-1', 'PF-3'])
-    expect(baseline).toMatch(/JOR-302/)
-    expect(baseline).toMatch(/EL-1/)
-    expect(baseline).toMatch(/T67/)
+    const disposition = baseline.match(/^## Disposition[\s\S]*?(?=\n## |$(?!\n))/m)?.[0]
+    expect(disposition, 'baseline has a "## Disposition" section').toBeDefined()
+    expect(disposition).toMatch(/JOR-302/)
+    expect(disposition).toMatch(/EL-1/)
+    expect(disposition).toMatch(/T67/)
   })
 
   test('adversarial: an undisclosed miss cannot borrow the accepted-exceedance tag', () => {
