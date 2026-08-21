@@ -86,7 +86,48 @@ function readReportDetail(reportId: unknown) {
   }
 }
 
+// db/migrations/012_study_access_classification.sql classifies the caller and
+// decides study access in the one round that also appends the audit row, so
+// the mock reproduces that whole decision rather than a role lookup the route
+// no longer performs: admin outranks provider, a provider needs the study's
+// visit, a patient needs the study's patient_id, and an account with no
+// identity link is 403 whether or not the study exists.
+async function grantStudyAccess(input: Row) {
+  const study = state.tables.studies.find((row) => row.id === input.p_study_id)
+  const visit = state.tables.visits.find((row) => row.id === study?.visit_id)
+  const admin = state.tables.staff_admins.some((row) => row.user_id === state.userId)
+  const provider = state.tables.providers.find((row) => row.user_id === state.userId)
+  const patient = state.tables.patients.find((row) => row.user_id === state.userId)
+  const actorKind = admin ? 'admin' : provider ? 'provider' : 'patient'
+  const allowed = study !== undefined && (
+    admin
+      ? true
+      : provider
+        ? visit?.provider_id === provider.id
+        : patient !== undefined && study.patient_id === patient.id
+  )
+  const audit = {
+    actor_kind: 'account',
+    actor_ref: state.userId,
+    action: 'study.view',
+    target_kind: 'study',
+    target_id: input.p_study_id,
+    outcome: allowed ? 'granted' : 'denied',
+  }
+  await state.persist(audit)
+  state.tables.audit_events.push(audit)
+  return {
+    data: {
+      actor_kind: actorKind,
+      patient_id: allowed ? study!.patient_id : null,
+      status: allowed ? 200 : (actorKind === 'patient' && !patient ? 403 : 404),
+    },
+    error: null,
+  }
+}
+
 async function scalarRpc(name: string, input: Row) {
+  if (name === 'grant_study_access') return grantStudyAccess(input)
   if (name === 'grant_patient_imaging_access') {
     const kind = input.p_target_kind
     const id = input.p_target_id
@@ -140,18 +181,26 @@ function psql(sql: string) { return execFileSync('docker', ['exec', 'pip-testpg'
 const lit = (v: unknown) => v === null || v === undefined ? 'null' : `'${String(v).replaceAll("'", "''")}'`
 function audits() { const out = psql("select action||'|'||outcome||'|'||coalesce(target_id::text,'-') from audit_events order by id;"); return out ? out.split('\n') : [] }
 function session(userId: string | null, token = 'caller-token') { state.userId = userId ?? ''; state.token = userId ? token : '' }
-function fixtures(): Record<string, Row[]> { return {
+function fixtures(): Record<string, Row[]> {
+  // studies and cine_clips carry their PostgREST embeds, the way the manifest
+  // reads request them now: a study brings its visit, a clip brings both.
+  const visitA = { id: VISIT_A, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'completed', occurred_at: '2026-01-01T12:00:00Z' }
+  const visitB = { id: VISIT_B, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'completed', occurred_at: '2026-01-02T12:00:00Z' }
+  const studyA = { id: OWNED_STUDY, patient_id: PATIENT_A, visit_id: VISIT_A, description: 'Owned', visits: visitA }
+  const studyB = { id: FOREIGN_STUDY, patient_id: PATIENT_B, visit_id: VISIT_B, description: 'Foreign', visits: visitB }
+  return {
   patients: [{ id: PATIENT_A, user_id: ACCOUNT_A, patient_ref: 'PT-0001', date_of_birth: '1980-01-01' }, { id: PATIENT_B, user_id: null, patient_ref: 'PT-0002', date_of_birth: '1990-02-02' }],
   providers: [{ id: PROVIDER_A, user_id: PROVIDER_ACCOUNT, full_name: 'Provider A', time_zone: 'America/Chicago' }, { id: PROVIDER_B, user_id: '88888888-8888-4888-8888-888888888888', full_name: 'Provider B', time_zone: 'America/Chicago' }], staff_admins: [],
-  visits: [{ id: VISIT_A, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'completed', occurred_at: '2026-01-01T12:00:00Z' }, { id: VISIT_B, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'completed', occurred_at: '2026-01-02T12:00:00Z' }],
-  studies: [{ id: OWNED_STUDY, patient_id: PATIENT_A, visit_id: VISIT_A, description: 'Owned' }, { id: FOREIGN_STUDY, patient_id: PATIENT_B, visit_id: VISIT_B, description: 'Foreign' }],
-  cine_clips: [{ id: OWNED_CLIP, patient_id: PATIENT_A, study_id: OWNED_STUDY, frame_count: 1, default_fps: 12, poster_key: null }, { id: FOREIGN_CLIP, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, frame_count: 1, default_fps: 12, poster_key: null }], cine_frames: [], images: [{ id: FOREIGN_IMAGE, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, width: 10, height: 10, ordinal: 0, storage_key: 'foreign', thumb_key: null }],
+  visits: [visitA, visitB],
+  studies: [studyA, studyB],
+  cine_clips: [{ id: OWNED_CLIP, patient_id: PATIENT_A, study_id: OWNED_STUDY, frame_count: 1, default_fps: 12, poster_key: null, studies: studyA }, { id: FOREIGN_CLIP, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, frame_count: 1, default_fps: 12, poster_key: null, studies: studyB }], cine_frames: [], images: [{ id: FOREIGN_IMAGE, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, width: 10, height: 10, ordinal: 0, storage_key: 'foreign', thumb_key: null }],
   reports: [{ id: OWNED_REPORT, patient_id: PATIENT_A, study_id: OWNED_STUDY, status: 'signed', findings: 'owned', impression: 'owned', signed_at: '2026-01-01T13:00:00Z', signed_by: PROVIDER_A, studies: { description: 'Owned' } }, { id: FOREIGN_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'signed', findings: 'private', impression: 'private', signed_at: '2026-01-02T13:00:00Z', signed_by: PROVIDER_B, studies: { description: 'Foreign' } }, { id: PRELIM_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'preliminary', findings: 'draft', impression: 'draft', signed_at: null, signed_by: null, studies: { description: 'Foreign' } }],
   appointments: [
     { id: OWNED_APPT, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'requested', out_of_hours: false, slots: { starts_at: '2026-08-21T12:00:00Z', ends_at: '2026-08-21T12:30:00Z' }, providers: { full_name: 'Provider A', time_zone: 'America/Chicago' }, services: { name: 'Imaging' } },
     { id: FOREIGN_APPT, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'requested', out_of_hours: false, slots: { starts_at: '2026-08-22T12:00:00Z', ends_at: '2026-08-22T12:30:00Z' }, providers: { full_name: 'Provider B', time_zone: 'America/Chicago' }, services: { name: 'Imaging' } },
   ], share_links: [{ id: FOREIGN_SHARE, patient_id: PATIENT_B, image_id: FOREIGN_IMAGE, report_id: null, revoked_at: null }], identity_attempts: [], audit_events: [],
-} }
+  }
+}
 
 beforeAll(async () => { run = await startRun(await ensureContainer()); state.persist = async (row) => { psql(`insert into audit_events(actor_kind,actor_ref,action,target_kind,target_id,outcome) values(${lit(row.actor_kind)},${lit(row.actor_ref)},${lit(row.action)},${lit(row.target_kind)},${lit(row.target_id)},${lit(row.outcome)});`) } })
 afterAll(async () => stopRun(run))
@@ -323,6 +372,18 @@ describe('cross-patient public HTTP denials', () => {
     session(PROVIDER_ACCOUNT, 'provider-token')
     const responses = [await schedule(new Request(`https://x?date=2026-08-20&providerId=${PROVIDER_B}`)), await study(new Request('https://x'), ctx({ studyId: FOREIGN_STUDY })), await report(new Request('https://x'), ctx({ reportId: FOREIGN_REPORT })), await patchAppointment(json('https://x', 'PATCH', { action: 'cancel' }), ctx({ id: FOREIGN_APPT }))]
     expect(responses.map((r) => r.status)).toEqual([404, 404, 404, 404]); expect(audits()).toEqual([`schedule.view|denied|${PROVIDER_B}`, `study.view|denied|${FOREIGN_STUDY}`, `report.view|denied|${FOREIGN_REPORT}`, `appointment.view|denied|${FOREIGN_APPT}`])
+    expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
+  })
+  test('providerAndDualRoleAdminKeepStudyDetailAccessThroughTheClassifyingGrant', async function providerAndDualRoleAdminKeepStudyDetailAccessThroughTheClassifyingGrant() {
+    session(PROVIDER_ACCOUNT, 'provider-token')
+    const providerOwn = await study(new Request('https://x'), ctx({ studyId: OWNED_STUDY }))
+    // The same account is now staff as well: admin authority outranks the
+    // provider's visit scope, so the foreign study becomes readable.
+    state.tables.staff_admins.push({ id: 'admin-1', user_id: PROVIDER_ACCOUNT })
+    const dualRoleForeign = await study(new Request('https://x'), ctx({ studyId: FOREIGN_STUDY }))
+
+    expect([providerOwn.status, dualRoleForeign.status]).toEqual([200, 200])
+    expect(audits()).toEqual([`study.view|granted|${OWNED_STUDY}`, `study.view|granted|${FOREIGN_STUDY}`])
     expect(psql('select count(*) from audit_events where detail is not null;')).toBe('0')
   })
   test('unlinkedAndAnonymousRequestsRemainDistinctAndAuditedOnce', async function unlinkedAndAnonymousRequestsRemainDistinctAndAuditedOnce() {

@@ -11,6 +11,10 @@ type Client = ReturnType<typeof anonClient>
 
 type StudyRow = { id: string; description: string; visit_id: string }
 type VisitRow = { id: string; occurred_at: string; status: 'completed' | 'scheduled' | 'cancelled'; provider_id: string }
+// The visit a study belongs to used to cost a second, dependent round. It is
+// a to-one embedded resource, so PostgREST returns it with the study itself.
+type StudyWithVisitRow = StudyRow & { visits: VisitRow | null }
+const STUDY_WITH_VISIT_COLUMNS = 'id, description, visit_id, visits(id, occurred_at, status, provider_id)'
 type ProviderRow = { id: string; full_name: string }
 type ImageRow = { id: string; width: number; height: number; ordinal: number; storage_key: string; thumb_key: string | null }
 type ClipRow = { id: string; study_id: string; frame_count: number; default_fps: number; poster_key: string | null }
@@ -35,6 +39,10 @@ async function row<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Pr
 async function completedVisit(client: Client, visitId: string): Promise<VisitRow | null> {
   const visit = await row<VisitRow>(client.from('visits').select('id, occurred_at, status, provider_id').eq('id', visitId).maybeSingle())
   return visit?.status === 'completed' ? visit : null
+}
+
+function embeddedCompletedVisit(study: StudyWithVisitRow | null): VisitRow | null {
+  return study?.visits?.status === 'completed' ? study.visits : null
 }
 
 export async function listStudies(client: Client): Promise<{ studies: Array<Record<string, string | number>> }> {
@@ -68,20 +76,19 @@ export async function listStudies(client: Client): Promise<{ studies: Array<Reco
 }
 
 export async function studyDetail(client: Client, studyId: string): Promise<Record<string, unknown> | null> {
-  const studyPromise = row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle())
+  const studyPromise = row<StudyWithVisitRow>(client.from('studies').select(STUDY_WITH_VISIT_COLUMNS).eq('id', studyId).maybeSingle())
   const detailRows = Promise.allSettled([
     rows<ImageRow>(client.from('images').select('id, width, height, ordinal, storage_key, thumb_key').eq('study_id', studyId).order('ordinal')),
     rows<ClipRow>(client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('study_id', studyId)),
   ])
 
   const study = await studyPromise
-  if (!study) {
+  const visit = embeddedCompletedVisit(study)
+  if (!study || !visit) {
     await detailRows
     return null
   }
-  const visit = await completedVisit(client, study.visit_id)
   const [imagesResult, clipsResult] = await detailRows
-  if (!visit) return null
   if (imagesResult.status === 'rejected') throw imagesResult.reason
   if (clipsResult.status === 'rejected') throw clipsResult.reason
   const [images, clips] = [imagesResult.value, clipsResult.value]
@@ -119,24 +126,22 @@ export async function studyDetail(client: Client, studyId: string): Promise<Reco
 }
 
 export async function clipManifest(client: Client, studyId: string, clipId: string): Promise<Record<string, unknown> | null> {
-  const identityRows = Promise.all([
-    row<ClipRow>(
-      client.from('cine_clips').select('id, study_id, frame_count, default_fps, poster_key').eq('id', clipId).eq('study_id', studyId).maybeSingle(),
-    ),
-    row<StudyRow>(client.from('studies').select('id, description, visit_id').eq('id', studyId).maybeSingle()),
-  ])
+  const identityPromise = row<ClipRow & { studies: StudyWithVisitRow | null }>(
+    client.from('cine_clips')
+      .select(`id, study_id, frame_count, default_fps, poster_key, studies(${STUDY_WITH_VISIT_COLUMNS})`)
+      .eq('id', clipId).eq('study_id', studyId).maybeSingle(),
+  )
   const frameRows = Promise.allSettled([
     rows<FrameRow>(client.from('cine_frames').select('frame_index, storage_key').eq('clip_id', clipId).order('frame_index')),
   ])
 
-  const [clip, study] = await identityRows
-  if (!clip || !study) {
+  const clip = await identityPromise
+  const visit = clip ? embeddedCompletedVisit(clip.studies) : null
+  if (!clip || !visit) {
     await frameRows
     return null
   }
-  const visit = await completedVisit(client, study.visit_id)
   const [storedFramesResult] = await frameRows
-  if (!visit) return null
   if (storedFramesResult.status === 'rejected') throw storedFramesResult.reason
   const storedFrames = storedFramesResult.value
   const keysByIndex = new Map(storedFrames.map((frame) => [frame.frame_index, frame.storage_key]))

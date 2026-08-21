@@ -7,10 +7,14 @@ import { recordPhiAccessDecision, recordRequiredPhiAccessDecision } from '../aud
 import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
+// `account` is an authenticated caller whose role is not resolved yet: the
+// grant round classifies it as patient, provider or admin while it decides, so
+// a route never spends a round of its own on the role first.
 export type Actor =
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
+  | { kind: 'account'; userId: string }
   | { kind: 'share_recipient'; shareLinkId: string }
   | { kind: 'anonymous' }
 
@@ -58,6 +62,7 @@ function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipie
     case 'patient':
     case 'provider':
     case 'admin':
+    case 'account':
       // The supplied account id is only a claim until the session is
       // authenticated. Missing/invalid sessions must not attribute an
       // elevated audit write to that unauthenticated value.
@@ -202,14 +207,11 @@ async function decidePatientReport(client: Client, reportId: string, patientId: 
   return { ok: true, patientId }
 }
 
-async function decidePatientImagingGrant(
-  client: Client,
-  target: Extract<PhiTarget, { kind: 'study' | 'clip' }>,
-): Promise<GuardResult> {
-  const { data, error } = await client.rpc('grant_patient_imaging_access', {
-    p_target_kind: target.kind,
-    p_target_id: target.id,
-  })
+// One caller-scoped round that decides access and appends the single audit row
+// inside the same transaction — so the caller must not write a granted row of
+// its own. `decide` marks these results `auditRecorded`.
+async function decideImagingGrant(client: Client, rpc: string, args: Record<string, string>): Promise<GuardResult> {
+  const { data, error } = await client.rpc(rpc, args)
   const grant = data as PatientImagingGrantRow | null
   if (error || !grant) throw new Error('guard: authorization dependency read failed')
   if (grant.status === 200 && typeof grant.patient_id === 'string') {
@@ -428,13 +430,29 @@ async function decide(
 
   try {
     switch (actor.kind) {
+      case 'account': {
+        // The only actor kind that arrives unclassified; the study grant round
+        // resolves the role, the ownership decision, and the audit together.
+        if (target.kind !== 'study' || action !== 'study.view') {
+          throw new Error('guard: an unclassified account actor decides only study.view')
+        }
+        return {
+          result: await decideImagingGrant(client, 'grant_study_access', { p_study_id: target.id }),
+          authenticatedUserId,
+          session: sessionResult.session,
+          auditRecorded: true,
+        }
+      }
       case 'patient': {
         if (
           (target.kind === 'study' && action === 'study.view')
           || (target.kind === 'clip' && action === 'clip.view')
         ) {
           return {
-            result: await decidePatientImagingGrant(client, target),
+            result: await decideImagingGrant(client, 'grant_patient_imaging_access', {
+              p_target_kind: target.kind,
+              p_target_id: target.id,
+            }),
             authenticatedUserId,
             session: sessionResult.session,
             auditRecorded: true,
