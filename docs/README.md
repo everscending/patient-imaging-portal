@@ -35,6 +35,7 @@ so none is linked below — a link with nothing behind it is worse than no link.
 - [Deploy record](deploy.md) — the Supabase and Vercel projects, where §8's
   variables and the `phi` bucket are set, and the run record for every
   deploy.
+- [Credential-free DEL-4 runtime](local-del4-runtime.md)
 
 ## Agent operating docs (`docs/agents/`)
 
