@@ -110,14 +110,38 @@ describe('JOR-221 performance contract', () => {
       ['PF-5', 1_000],
       ['PF-6', 1_000],
     ])
-    const rows = [...baseline.matchAll(/^\| (PF-[1-6])[^|]*\|[^|]*\|[^|]*\| ([\d.]+) ms p95(?:; samples: (\d+))? \|$/gm)]
+    // A row may only exceed its target when tagged "accepted exceedance" —
+    // that tag requires the disposition paragraph below (JOR-302/EL-1/T67),
+    // so a miss can never slide through silently, only as a disclosed one.
+    const rows = [...baseline.matchAll(/^\| (PF-[1-6])[^|]*\|[^|]*\|[^|]*\| ([\d.]+) ms p95(?:; samples: (\d+))?(; accepted exceedance)? \|$/gm)]
     expect(rows).toHaveLength(limits.size)
-    for (const [, requirement, milliseconds, samples] of rows) {
-      expect(Number(milliseconds), requirement).toBeLessThan(limits.get(requirement)!)
+    const acceptedExceedances: string[] = []
+    for (const [, requirement, milliseconds, samples, acceptedTag] of rows) {
+      if (acceptedTag) {
+        expect(Number(milliseconds), requirement).toBeGreaterThanOrEqual(limits.get(requirement)!)
+        acceptedExceedances.push(requirement)
+      } else {
+        expect(Number(milliseconds), requirement).toBeLessThan(limits.get(requirement)!)
+      }
       if (requirement === 'PF-4' || requirement === 'PF-6') {
         expect(Number(samples), `${requirement} server-timing sample count`).toBeGreaterThanOrEqual(20)
       }
     }
+    // Only the two pre-elective misses JOR-302 accepted may carry the tag.
+    expect(acceptedExceedances.sort()).toEqual(['PF-1', 'PF-3'])
+    expect(baseline).toMatch(/JOR-302/)
+    expect(baseline).toMatch(/EL-1/)
+    expect(baseline).toMatch(/T67/)
+  })
+
+  test('adversarial: an undisclosed miss cannot borrow the accepted-exceedance tag', () => {
+    const baseline = source('baseline').replace(
+      '| PF-2 cine first frame | p95 < 1.0 s | `pf2_cine_first_frame_ms`: 100-frame manifest plus first signed Storage frame bytes | 707.00 ms p95 |',
+      '| PF-2 cine first frame | p95 < 1.0 s | `pf2_cine_first_frame_ms`: 100-frame manifest plus first signed Storage frame bytes | 1707.00 ms p95; accepted exceedance |',
+    )
+    const rows = [...baseline.matchAll(/^\| (PF-[1-6])[^|]*\|[^|]*\|[^|]*\| ([\d.]+) ms p95(?:; samples: (\d+))?(; accepted exceedance)? \|$/gm)]
+    const acceptedExceedances = rows.filter(([, , , , tag]) => tag).map(([, requirement]) => requirement)
+    expect(acceptedExceedances.sort()).not.toEqual(['PF-1', 'PF-3'])
   })
 
   test('gateNamesPerformanceContractAndPlaybackEvidence', () => {
