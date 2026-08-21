@@ -160,6 +160,14 @@ type FakeIdentityAttempt = {
   attempted_at: string
 }
 
+type FakeDeletionRequest = {
+  id: string
+  patient_id: string
+  requested_by: string
+  requested_at: string
+  status: 'received' | 'in_review' | 'completed' | 'declined'
+}
+
 type FakeShareLink = {
   id: string
   token_hash: string
@@ -205,6 +213,16 @@ const OTHER_PATIENT: FakePatient = {
   phone: null,
 }
 
+const EMPTY_PATIENT: FakePatient = {
+  id: '66006600-6600-4600-8600-660066006600',
+  user_id: null,
+  patient_ref: 'PT-6600',
+  date_of_birth: '1990-01-02',
+  full_name: 'Empty Fixture Patient',
+  email: 'empty.fixture@example.test',
+  phone: null,
+}
+
 export const E2_PROVIDER_ID = '66336633-6633-4633-8633-663366336633'
 export const E2_OTHER_PROVIDER_ID = '66446644-6644-4644-8644-664466446644'
 export const E2_PROVIDER_EMAIL = 'avery.chen@example.test'
@@ -221,6 +239,7 @@ export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
+export const E2_FOREIGN_SHARE_ID = 'dd00dd00-dd00-4d00-8d00-dd00dd00dd00'
 export const E2_BOOK_SERVICE_ID = '77667766-7766-4766-8766-776677667766'
 export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
 export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
@@ -418,6 +437,19 @@ const REPORTS: FakeReport[] = [
   },
 ]
 
+const FOREIGN_SHARE_LINK: FakeShareLink = {
+  id: E2_FOREIGN_SHARE_ID,
+  token_hash: 'f'.repeat(64),
+  patient_id: OTHER_PATIENT.id,
+  created_by: '55995599-5599-4599-8599-559955995599',
+  recipient_email: 'foreign-recipient@example.test',
+  expires_at: '2099-01-01T00:00:00.000Z',
+  revoked_at: null,
+  image_id: null,
+  report_id: E2_FOREIGN_REPORT_ID,
+  created_at: '2026-08-19T00:00:00.000Z',
+}
+
 const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
   ['/rest/v1/appointments', APPOINTMENTS],
   ['/rest/v1/visits', VISITS],
@@ -433,6 +465,7 @@ const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
 const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
 const APPLY_AVAILABILITY_RPC_PATH = ['/rest/v1/rpc/apply', 'provider', 'availability'].join('_')
 const PATIENT_IMAGING_GRANT_RPC_PATH = '/rest/v1/rpc/grant_patient_imaging_access'
+const PROFILE_DELETION_RPC_PATH = '/rest/v1/rpc/request_profile_deletion'
 
 export type FakeAuthServer = {
   url: string
@@ -510,9 +543,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   ])
   const sessionsByToken = new Map<string, FakeSession>()
   const staffAdminUserIds = new Set<string>()
-  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
+  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
-  let shareLinks: FakeShareLink[] = []
+  let deletionRequests: FakeDeletionRequest[] = []
+  let shareLinks: FakeShareLink[] = [{ ...FOREIGN_SHARE_LINK }]
   let emailOutbox: FakeEmailOutbox[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
@@ -535,7 +569,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   const callsByEmail = new Map<string, Record<string, number>>()
-  // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
+  // JOR-247/JOR-305: dependency reachability, toggled only by the committed
+  // degraded-state checks. Database outage applies to every PostgREST route,
+  // so an affected product flow cannot stay green behind a health-only fake.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
     storage: 'ok',
@@ -937,6 +973,73 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
 
     sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleDeletionRequests(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    sendJson(res, req.method === 'POST' ? 403 : 405, {
+      code: req.method === 'POST' ? '42501' : undefined,
+      message: req.method === 'POST' ? 'permission denied for deletion_requests' : 'method not allowed',
+    })
+  }
+
+  async function handleProfileDeletionRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 403, { code: '42501', message: 'deletion request caller is unavailable' })
+      return
+    }
+    const patient = patients.find((candidate) => candidate.user_id === caller.id)
+    const body = await readJsonBody(req)
+    const denied = (result_error: string) => {
+      auditEvents.push({
+        id: nextAuditEventId++,
+        occurred_at: new Date().toISOString(),
+        actor_kind: 'account',
+        actor_ref: caller.id,
+        action: 'profile.deletion_request',
+        target_kind: 'patient',
+        target_id: patient?.id ?? null,
+        outcome: 'denied',
+        detail: null,
+      })
+      sendJson(res, 200, [{ result_error, request_status: null, requested_at: null }])
+    }
+    if (body.p_request_valid !== true) {
+      denied('validation_failed')
+      return
+    }
+    if (!patient) {
+      denied('identity_verification_required')
+      return
+    }
+    if (deletionRequests.some((request) => request.patient_id === patient.id && (request.status === 'received' || request.status === 'in_review'))) {
+      denied('request_already_open')
+      return
+    }
+    const requestedAt = new Date().toISOString()
+    deletionRequests.push({
+      id: randomUUID(),
+      patient_id: patient.id,
+      requested_by: caller.id,
+      requested_at: requestedAt,
+      status: 'received',
+    })
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: requestedAt,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: 'profile.deletion_request',
+      target_kind: 'patient',
+      target_id: patient.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{ result_error: null, request_status: 'received', requested_at: requestedAt }])
   }
 
   function filteredOutbox(url: URL): FakeEmailOutbox[] {
@@ -1397,9 +1500,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   function resetIdentityState(res: ServerResponse): void {
-    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
+    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
     identityAttempts = []
-    shareLinks = []
+    deletionRequests = []
+    shareLinks = [{ ...FOREIGN_SHARE_LINK }]
     emailOutbox = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
@@ -1483,7 +1587,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
-      sendJson(res, 200, { patients, identityAttempts, auditEvents })
+      sendJson(res, 200, { patients, identityAttempts, deletionRequests, auditEvents })
       return
     }
     if (req.method === 'POST' && url.pathname === '/__test__/clock') {
@@ -1510,6 +1614,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleHealthState(req, res)
       return
     }
+    if (url.pathname.startsWith('/rest/v1/') && healthState.database !== 'ok') {
+      answerAsDependency(req, res, healthState.database)
+      return
+    }
     if (
       req.method === 'GET' &&
       url.pathname === '/rest/v1/patients' &&
@@ -1525,6 +1633,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/share_links') {
       void handleShareLinks(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/deletion_requests') {
+      void handleDeletionRequests(req, res)
       return
     }
     if (url.pathname === '/rest/v1/email_outbox') {
@@ -1577,6 +1689,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleApplyAvailability(req, res)
       return
     }
+    if (url.pathname === PROFILE_DELETION_RPC_PATH) {
+      void handleProfileDeletionRequest(req, res)
+      return
+    }
     if (url.pathname === '/rest/v1/rpc/book_appointment') {
       void handleBookAppointment(req, res)
       return
@@ -1594,6 +1710,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'POST' && url.pathname === '/storage/v1/object/sign/phi') {
+      if (healthState.storage !== 'ok') {
+        answerAsDependency(req, res, healthState.storage)
+        return
+      }
       void readJsonBody(req).then((body) => {
         const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : []
         sendJson(res, 200, paths.map((path) => ({

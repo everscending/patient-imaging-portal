@@ -104,6 +104,7 @@ const {
   anonClientMock,
   serviceClientMock,
   authClientMock,
+  recordRequiredPhiAccessDecisionMock,
   selectedColumns,
   resetFake,
   setReadFailureTable,
@@ -134,6 +135,9 @@ const {
   let readFailureTable: string | null = null
   let authFailureMode: 'none' | 'throw' | 'dependency-error' = 'none'
   const selections: Array<{ table: string; columns: string }> = []
+  const requiredAuditMock = vi.fn(async (input: FakeRow) => {
+    audits.push(input)
+  })
 
   function matches(row: FakeRow, filters: Array<[string, unknown]>): boolean {
     return filters.every(([column, value]) => row[column] === value)
@@ -216,6 +220,7 @@ const {
         },
       },
     })),
+    recordRequiredPhiAccessDecisionMock: requiredAuditMock,
     selectedColumns: selections,
     resetFake: () => {
       for (const key of Object.keys(tables)) tables[key]!.length = 0
@@ -275,10 +280,15 @@ vi.mock('../../lib/audit/events', () => ({
   recordPhiAccessDecision: vi.fn(async (input: FakeRow) => {
     auditCalls.push(input)
   }),
+  recordRequiredPhiAccessDecision: recordRequiredPhiAccessDecisionMock,
 }))
 
 import type { Actor, GuardResult, PhiTarget } from '../../lib/access/guard'
-import { guardPhiAccess as guardPhiAccessRaw } from '../../lib/access/guard'
+import {
+  authenticatePhiRequest,
+  guardAuthenticatedPhiAccess,
+  guardPhiAccess as guardPhiAccessRaw,
+} from '../../lib/access/guard'
 import type { AuditAction } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
@@ -376,6 +386,7 @@ beforeEach(() => {
   anonClientMock.mockClear()
   serviceClientMock.mockClear()
   authClientMock.mockClear()
+  recordRequiredPhiAccessDecisionMock.mockClear()
 })
 
 afterEach(() => {
@@ -730,6 +741,7 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   | { kind: 'clip'; id: string }
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
+  | { kind: 'patient'; id: string | null }
   | { kind: 'schedule'; id: string } // id = provider id
   | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
@@ -738,16 +750,57 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
     expect(source).toContain(
       'export type GuardResult = { ok: true; patientId: string | null } | { ok: false; status: 401 | 403 | 404 }',
     )
-    expect(source).toContain(
-      'export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {',
-    )
+    expect(source).toContain(`export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+): Promise<GuardResult> {`)
     expect(source).toContain('export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication> {')
     expect(source).toContain(`export async function guardAuthenticatedPhiAccess(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
 ): Promise<GuardResult> {`)
+  })
+})
+
+describe('transactional PHI audit handoff', () => {
+  test('ownedPatientTargetDefersGrantButForeignTargetRequiresOneDeniedAudit', async () => {
+    seedPatient({ id: 'profile-patient-a', user_id: 'profile-user-a' })
+    seedPatient({ id: 'profile-patient-b', user_id: 'profile-user-b' })
+    setSessionUserId('profile-user-a')
+    const authentication = await authenticatePhiRequest()
+
+    const own = await guardAuthenticatedPhiAccess(
+      { kind: 'patient', userId: 'profile-user-a' },
+      { kind: 'patient', id: null },
+      'profile.deletion_request',
+      authentication,
+      { grantedAudit: 'transactional-rpc' },
+    )
+    expect(own).toEqual({ ok: true, patientId: 'profile-patient-a' })
+    expect(auditCalls).toHaveLength(0)
+
+    const foreign = await guardPhiAccessRaw(
+      { kind: 'patient', userId: 'profile-user-a' },
+      { kind: 'patient', id: 'profile-patient-b' },
+      'profile.deletion_request',
+      { grantedAudit: 'transactional-rpc' },
+    )
+    expect(foreign).toEqual({ ok: false, status: 404 })
+    expect(auditCalls).toEqual([
+      expect.objectContaining({
+        actorRef: 'profile-user-a',
+        action: 'profile.deletion_request',
+        targetKind: 'patient',
+        targetId: 'profile-patient-b',
+        outcome: 'denied',
+      }),
+    ])
+    expect(recordRequiredPhiAccessDecisionMock).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -109,7 +109,22 @@ export function CineControls({
         button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
         .cine-controls__scrub, .cine-controls__rate { display: grid; gap: 0.25rem; font-weight: 600; }
         .cine-controls__track-wrap { position: relative; display: block; min-height: var(--pip-tap-target); }
-        input[type='range'] { width: 100%; min-height: var(--pip-tap-target); margin: 0; }
+        input[type='range'] {
+          --cine-range-surface: var(--pip-color-base-100);
+          --cine-range-track: var(--pip-color-primary);
+          --cine-range-thumb: var(--pip-color-base-100);
+          --cine-range-focus: var(--pip-color-accent);
+          width: 100%;
+          min-height: var(--pip-tap-target);
+          margin: 0;
+          appearance: none;
+          background: transparent;
+        }
+        input[type='range']::-webkit-slider-runnable-track { height: 0.5rem; border-radius: 999px; background: var(--cine-range-track); }
+        input[type='range']::-webkit-slider-thumb { width: 1.5rem; height: 1.5rem; margin-top: -0.5rem; appearance: none; border: 2px solid var(--cine-range-track); border-radius: 50%; background: var(--cine-range-thumb); }
+        input[type='range']::-moz-range-track { height: 0.5rem; border-radius: 999px; background: var(--cine-range-track); }
+        input[type='range']::-moz-range-thumb { width: 1.5rem; height: 1.5rem; border: 2px solid var(--cine-range-track); border-radius: 50%; background: var(--cine-range-thumb); }
+        input[type='range']:focus-visible { outline-color: var(--cine-range-focus); }
         .cine-controls__gap-markers { position: absolute; inset: 0.5rem 0.5rem; pointer-events: none; }
         .cine-controls__gap-markers i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--pip-color-error); transform: translateX(-1px); }
         select { max-width: 10rem; padding: 0.25rem 0.5rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.5rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); }

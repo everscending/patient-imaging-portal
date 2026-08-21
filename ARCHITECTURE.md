@@ -73,6 +73,8 @@ lib/
   imaging/signing.ts         mints signed Storage URLs
   reports/reports.ts         report reads, signed-only predicate
   reports/ReportView.tsx     the ONE report renderer (viewer + share)
+  profile/deletion-requests.ts
+                             deletion-request guard handoff + transactional RPC
   scheduling/availability.ts working hours, blocks, slot generation
   scheduling/booking.ts      book, reschedule, cancel — owns the transaction
   scheduling/lifecycle.ts    FR-14 status transitions
@@ -570,10 +572,12 @@ create table deletion_requests (
   requested_by    uuid not null references auth.users(id),
   requested_at    timestamptz not null default now(),
   status          text not null default 'received'
-                  check (status in ('received','in_review','completed','declined')),
-  unique (patient_id, status) deferrable initially deferred
+                  check (status in ('received','in_review','completed','declined'))
 );
 create index on deletion_requests (patient_id, requested_at desc);
+create unique index deletion_requests_one_open_per_patient
+  on deletion_requests (patient_id)
+  where status in ('received','in_review');
 
 -- ── audit (SEC-4) ───────────────────────────────────────────────────────
 create table audit_events (
@@ -597,6 +601,12 @@ create table audit_events (
 create index on audit_events (occurred_at desc);
 create index on audit_events (actor_ref, occurred_at desc);
 ```
+
+`received` and `in_review` are the two open states, so they are mutually
+exclusive for one patient. `completed` and `declined` are terminal history and
+may recur. Migration `010_profile_deletion_requests.sql` replaces the original
+`(patient_id, status)` constraint with this partial index without rewriting or
+deleting existing rows.
 
 ### Pinned: the closed set of audit actions
 
@@ -728,7 +738,9 @@ grant insert, update on appointments, identity_attempts,
 grant insert on slots to app_user;           -- generation only, never status
 grant insert on appointment_transitions, audit_events to app_user;
 grant insert, update on email_outbox to app_user;      -- drained by the job
-grant insert on deletion_requests to app_user;
+-- no direct deletion_requests write: requested_by, requested_at, status and
+-- patient_id are derived inside the narrow transactional RPC below.
+grant execute on function request_profile_deletion(boolean) to app_user;
 grant execute on function regenerate_provider_slots(uuid, timestamptz, timestamptz, tstzrange[]) to app_user;
 -- the function is SECURITY DEFINER, so this grant lets the app ask for that ONE
 -- narrow operation without holding DELETE on `slots` — or on anything else.
@@ -909,9 +921,6 @@ create policy shares_update_own on share_links for update      -- revocation
   using (patient_id = current_patient_id())
   with check (patient_id = current_patient_id());
 
-create policy deletion_requests_insert_own on deletion_requests for insert
-  with check (patient_id = current_patient_id());
-
 -- slot generation runs as the owning provider
 create policy slots_insert_own on slots for insert
   with check (provider_id = current_provider_id() or is_admin());
@@ -973,6 +982,7 @@ export type PhiTarget =
   | { kind: 'clip';        id: string }
   | { kind: 'report';      id: string }
   | { kind: 'appointment'; id: string }
+  | { kind: 'patient';     id: string | null } // null = caller's own profile
   | { kind: 'schedule';    id: string }   // id = provider id
   | { kind: 'share_link';  id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
@@ -987,8 +997,8 @@ export type GuardResult =
 
 /**
  * Authenticates the session, checks the identity link and ownership, and
- * writes exactly one audit event either way. Never throws for an authorization failure —
- * the caller maps `status` straight to a response.
+ * writes exactly one audit event either way. An ADR-0014 transaction can own
+ * the granted audit row; denials remain required here and fail closed.
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
@@ -997,6 +1007,7 @@ export async function guardPhiAccess(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
+  options?: { grantedAudit: 'transactional-rpc' },
 ): Promise<GuardResult>
 
 // Study-detail and cine-manifest routes authenticate before parameter
@@ -1008,8 +1019,15 @@ export async function guardAuthenticatedPhiAccess(
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options?: { grantedAudit: 'transactional-rpc' },
 ): Promise<GuardResult>
 ```
+
+The profile deletion domain passes `{ kind: 'patient', id: null }` through this
+guard. On a grant it uses the ADR-0014 option because
+`request_profile_deletion(boolean)` commits the request row and granted audit
+row in the same database transaction. The guard still owns every refusal and
+will not return a refused result unless its single PHI-free audit row persisted.
 
 `PhiRequestAuthentication` is created and runtime-branded only inside
 `lib/access/guard.ts`; a route cannot construct it from decoded claims or a raw
@@ -1174,12 +1192,22 @@ verification and never by the profile form.
 POST /api/profile/deletion-request
   → {}
   ← 202 { "status": "received", "requestedAt": "…" }
+  ← 401 { "error": "session_required", "message": "…" }
+  ← 403 { "error": "identity_verification_required", "message": "…" }
   ← 409 { "error": "request_already_open", "message": "…" }
+  ← 422 { "error": "validation_failed", "message": "…" }
 ```
 
 SEC-5 asks that a patient can *request* deletion; the request is recorded and
 audited as `profile.deletion_request`, and the policy in
-`docs/retention-and-deletion.md` states what happens next.
+`docs/retention-and-deletion.md` states what happens next. The route cannot
+write the table directly. Its domain module invokes a `SECURITY DEFINER` RPC
+whose only caller input is whether the already-parsed body is valid. The RPC
+derives `patient_id`, `requested_by`, `requested_at`, and `status` server-side.
+The request row and its granted audit row commit atomically; validation,
+unlinked-account, and already-open refusals each commit exactly one PHI-free
+denied audit row. An audit failure therefore produces neither `202` nor the
+nominal refusal response.
 
 ```
 GET  /api/identity/status
@@ -1985,8 +2013,8 @@ identity-form · identity-error
 profile-form · profile-save · profile-patient-ref
 patient-tabbar · study-list · study-card · image-viewer · image-zoom · image-filmstrip
 cine-viewer · cine-play · cine-next · cine-prev · cine-fps · cine-frame-gap
-report-view · report-findings · report-impression
-share-create · share-list · share-revoke · share-unavailable · shared-resource
+report-view · report-findings · report-impression · reports-empty
+share-create · share-list · share-revoke · share-unavailable · share-empty · shared-resource
 service-select · provider-select
 slot-list · slot-grid · slot-item · book-submit · booking-conflict · booking-success
 appointment-list · appointment-item · appointment-out-of-hours
@@ -2007,16 +2035,31 @@ same runner, so they cannot drift.
 |------|------|
 | `logic` | `tsc --noEmit`, eslint, `vitest run` |
 | `api` | `logic` + integration tests against a migrated test database |
-| `ui` | `api` + the Playwright/JSON-validator pairs listed by `scripts/gate.sh`: focused E8, E5, booking, provider-schedule, responsive, cumulative product→E2, cumulative product→E3, and E4 |
+| `ui` | `api` + the exact Playwright/JSON-validator inventory below |
+
+The `ui` additions use one serial Playwright invocation for `product`, E2, E3,
+E4, E5, and E8. Playwright runs `product` once before its E2/E3 dependents. The
+single JSON report is then validated for each mandatory specification:
+
+1. `e2e/e8-wiring.spec.ts`
+2. `e2e/e5-wiring.spec.ts`
+3. `e2e/book.spec.ts`
+4. `e2e/provider-schedule.spec.ts`
+5. `e2e/empty-states.spec.ts`
+6. `e2e/responsive.spec.ts`
+7. `e2e/accessibility.spec.ts`
+8. `e2e/e2-wiring.spec.ts`
+9. `e2e/e3-wiring.spec.ts`
+10. `e2e/e4-wiring.spec.ts`
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
-`e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
-separately by the `ui` gate;
-`book.spec.ts`, `provider-schedule.spec.ts`, and `responsive.spec.ts` are
-focused `product` entries, each immediately followed by its matching JSON report
-validator.
+`e4-wiring`, `e5-wiring`, and `e8-wiring` remain isolated projects selected by
+that same `ui` invocation;
+`book.spec.ts`, `provider-schedule.spec.ts`, `empty-states.spec.ts`,
+`responsive.spec.ts`, and `accessibility.spec.ts` are ordinary `product` entries
+whose evidence is retained in the same report.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
 dispatch. E0 invokes the cumulative `ui` gate once
@@ -2044,9 +2087,10 @@ the installed Playwright version.
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8
-asks that the linter and the tests run on every push, not that documents be
-linted — so ADR-0012 removed it. A document-only ticket takes `logic`, and the
-reviewer walkthrough (DEL-5) is what judges the documentation.
+asks that the linter and tests run once per branch through its pull request and
+on pushes to `main`, not that documents be linted — so ADR-0012 removed it. A
+document-only ticket takes `logic`, and the reviewer walkthrough (DEL-5) is what
+judges the documentation.
 
 `scripts/gate.sh` is a **repo-bootstrap-epic deliverable** and must merge before
 any ticket carrying a tier that invokes it.

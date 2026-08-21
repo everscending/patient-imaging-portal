@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { StudyCard } from '../../../components/imaging/StudyCard'
 import type { StudySummary } from '../../../components/imaging/StudyCard'
+import { EmptyState } from '../../../components/system/EmptyState'
 
 type StudiesState =
   | { kind: 'loading' }
@@ -90,7 +91,7 @@ export default function StudiesPage() {
         ) : null}
         {state.kind === 'ready' ? (
           state.studies.length === 0 ? (
-            <p>No images yet — images appear here once a completed visit has been processed by the clinic.</p>
+            <EmptyState message="No images yet — images appear here once a completed visit has been processed by the clinic." />
           ) : (
             state.studies.map((study) => <StudyCard key={study.id} study={study} />)
           )
