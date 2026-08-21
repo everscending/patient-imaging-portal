@@ -21,6 +21,11 @@ import {
   releaseIdentityFixtureLock,
 } from './fixtures/identity-fixture-lock'
 import { resolveTicketDiffBase } from './fixtures/git-ticket-base'
+import {
+  expectNoPageOverflow,
+  expectTapTarget,
+  resetFixtures,
+} from './fixtures/a11y-helpers'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'ResponsivePatientPassword9'
@@ -84,16 +89,6 @@ const PINNED_PROP_CONTRACTS: {
   imageViewerWithoutExistingOptionalProp: false,
 }
 
-async function fixtureUrl(): Promise<string> {
-  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
-  return (JSON.parse(raw) as { url: string }).url
-}
-
-async function resetFixtures(request: APIRequestContext): Promise<void> {
-  expect((await request.post(`${await fixtureUrl()}/__test__/reset-identity`)).ok()).toBe(true)
-  expect((await request.post(`${await fixtureUrl()}/__test__/reset-booking`)).ok()).toBe(true)
-}
-
 async function registerAndSignIn(request: APIRequestContext): Promise<void> {
   const email = `responsive-${randomUUID()}@example.test`
   expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
@@ -126,25 +121,6 @@ async function expectHorizontalOverflowOwnedBy(locator: Locator): Promise<void> 
   expect(metrics.overflowX).toMatch(/^(auto|scroll)$/)
   expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth)
   expect(metrics.scrollLeft).toBeGreaterThan(0)
-}
-
-async function expectNoPageOverflow(page: Page): Promise<void> {
-  const scrollLeft = await page.evaluate(() => {
-    const root = document.scrollingElement ?? document.documentElement
-    root.scrollLeft = 0
-    root.scrollLeft = root.scrollWidth - root.clientWidth
-    const result = root.scrollLeft
-    root.scrollLeft = 0
-    return result
-  })
-  expect(scrollLeft).toBe(0)
-}
-
-async function expectTapTarget(locator: Locator): Promise<void> {
-  await expect(locator).toBeVisible()
-  const box = await locator.boundingBox()
-  expect(box?.width).toBeGreaterThanOrEqual(44)
-  expect(box?.height).toBeGreaterThanOrEqual(44)
 }
 
 async function expectNoForbiddenTextColour(page: Page): Promise<void> {
