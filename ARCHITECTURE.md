@@ -2038,9 +2038,11 @@ same runner, so they cannot drift.
 | `api` | `logic` + integration tests against a migrated test database |
 | `ui` | `api` + the exact Playwright/JSON-validator inventory below |
 
-The `ui` additions use one serial Playwright invocation for `product`, E2, E3,
-E4, E5, and E8. Playwright runs `product` once before its E2/E3 dependents. The
-single JSON report is then validated for each mandatory specification:
+The `ui` additions use one serial Playwright invocation for `product` (which
+also carries E9's spec inside the `product` project rather than a dedicated
+one — see e2e/e9-wiring.spec.ts), E2, E3, E4, E5, and E8. Playwright runs
+`product` once before its E2/E3 dependents. The single JSON report is then
+validated for each mandatory specification:
 
 1. `e2e/e8-wiring.spec.ts`
 2. `e2e/e5-wiring.spec.ts`
@@ -2050,9 +2052,9 @@ single JSON report is then validated for each mandatory specification:
 6. `e2e/responsive.spec.ts`
 7. `e2e/accessibility.spec.ts`
 8. `e2e/e9-wiring.spec.ts`
-8. `e2e/e2-wiring.spec.ts`
-9. `e2e/e3-wiring.spec.ts`
-10. `e2e/e4-wiring.spec.ts`
+9. `e2e/e2-wiring.spec.ts`
+10. `e2e/e3-wiring.spec.ts`
+11. `e2e/e4-wiring.spec.ts`
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative

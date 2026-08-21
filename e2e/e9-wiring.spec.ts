@@ -1,4 +1,8 @@
 // JOR-230 — E9's live cross-patient refusal, audit, and log-scan proof.
+// Runs inside Playwright's "product" project: playwright.config.ts's
+// testIgnore /e[0123458]-wiring\.spec\.ts/ omits 9, so this file isn't
+// excluded there — intentional (see ARCHITECTURE.md §15), not an accident
+// of the character class.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -59,11 +63,11 @@ function parseEnvironment(raw: string): Record<string, string> {
   }))
 }
 
-function startLocalRuntime(): Record<string, string> {
+function startLocalRuntime(port: number): Record<string, string> {
   const output = execFileSync('bash', ['scripts/local-del4-runtime.sh', 'run', 'env'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
-    env: { ...env, PORT: '45330' },
+    env: { ...env, PORT: String(port) },
     timeout: 300_000,
   })
   const values = parseEnvironment(output)
@@ -166,10 +170,16 @@ function incrementUuid(id: string): string {
   return `${id.slice(0, -1)}${((last + 1) % 16).toString(16)}`
 }
 
+function requireSeededFixture<T>(rows: T[], description: string): T {
+  const [row] = rows
+  if (!row) throw new Error(`E9 fixture: expected ${description} in the seeded dataset, found none`)
+  return row
+}
+
 test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
   test.beforeAll(async () => {
     test.setTimeout(360_000)
-    localEnvironment = startLocalRuntime()
+    localEnvironment = startLocalRuntime(await unusedPort())
     localSupabaseUrl = localEnvironment.NEXT_PUBLIC_SUPABASE_URL!
     scratchDir = await mkdtemp(path.join(tmpdir(), 'e9-wiring-'))
     execFileSync('git', ['clone', '--local', '--no-hardlinks', '--quiet', REPO_ROOT, scratchDir])
@@ -203,6 +213,10 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
       const foreignImage = (await serviceRows<{ id: string }>(`images?select=id&study_id=eq.${foreignStudy.id}&limit=1`))[0]!
       const foreignReport = (await serviceRows<Report>(`reports?select=id,patient_id,study_id,status&study_id=eq.${foreignStudy.id}&limit=1`))[0]!
       const foreignAppointment = (await serviceRows<{ id: string }>(`appointments?select=id&patient_id=neq.${owner.id}&limit=1`))[0]!
+      const ownPreliminary = requireSeededFixture(
+        await serviceRows<Report>(`reports?select=id,patient_id,study_id,status&patient_id=eq.${owner.id}&status=eq.preliminary&limit=1`),
+        'a preliminary report for the linked demo patient',
+      )
       const guesses = [
         ['study.view', foreignStudy.id, () => expectRefusal(patient.request, 'get', `/api/studies/${foreignStudy.id}`)],
         ['study.view', incrementUuid(foreignStudy.id), () => expectRefusal(patient.request, 'get', `/api/studies/${incrementUuid(foreignStudy.id)}`)],
@@ -214,6 +228,8 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
         ['appointment.view', incrementUuid(foreignAppointment.id), () => expectRefusal(patient.request, 'patch', `/api/appointments/${incrementUuid(foreignAppointment.id)}`, { action: 'cancel' })],
         ['share.create', foreignImage.id, () => expectRefusal(patient.request, 'post', '/api/shares', { resourceKind: 'image', resourceId: foreignImage.id, recipientEmail: 'foreign@example.test' })],
         ['share.create', incrementUuid(foreignImage.id), () => expectRefusal(patient.request, 'post', '/api/shares', { resourceKind: 'image', resourceId: incrementUuid(foreignImage.id), recipientEmail: 'missing@example.test' })],
+        // Pinned row: report preliminary, patient actor -> 404 (own report, own visit — not a foreign-ownership case).
+        ['report.view', ownPreliminary.id, () => expectRefusal(patient.request, 'get', `/api/reports/${ownPreliminary.id}`)],
       ] as const
       for (const [action, targetId, attack] of guesses) {
         await attack()
@@ -222,6 +238,33 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
 
       const ownStudy = (await serviceRows<Study>(`studies?select=id,patient_id,visit_id&patient_id=eq.${owner.id}&limit=1`))[0]!
       expect((await anonymous.get(`/api/studies/${ownStudy.id}`)).status()).toBe(401)
+
+      // Pinned row: expired session -> 401. GoTrue rejects a garbage token the
+      // same way it rejects a genuinely time-expired one (lib/session-cookie.ts
+      // never computes its own TTL) — same technique as
+      // e2e/auth.spec.ts's patientPage_garbageSessionCookie_redirectsToLogin.
+      const expiredSession = await playwrightRequest.newContext({
+        baseURL: appUrl,
+        storageState: {
+          cookies: [{
+            name: 'pip_session',
+            value: 'e9-expired-session-token',
+            domain: '127.0.0.1',
+            path: '/',
+            expires: -1,
+            httpOnly: true,
+            secure: false,
+            sameSite: 'Lax',
+          }],
+          origins: [],
+        },
+      })
+      try {
+        expect((await expiredSession.get(`/api/studies/${ownStudy.id}`)).status()).toBe(401)
+      } finally {
+        await expiredSession.dispose()
+      }
+
       const email = `e9-unlinked-${randomUUID()}@example.test`
       expect((await unlinked.post('/api/auth/register', { data: { email, password: DEMO_ACCOUNT_PASSWORD } })).status()).toBe(201)
       expect((await unlinked.post('/api/auth/login', { data: { email, password: DEMO_ACCOUNT_PASSWORD } })).status()).toBe(200)
@@ -261,15 +304,28 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
       })
       expect(foreignCreate.status(), await foreignCreate.text()).toBe(201)
       const foreignShare = await foreignCreate.json() as { id: string; url: string }
+
+      // AC: a share link belonging to another patient is refused. Proven here
+      // on the authenticated share-management surface (DELETE by id) before
+      // any revocation happens, so the 404 is caused by foreign ownership
+      // alone. E5's anonymous bearer-token route (/s/[token], exercised
+      // below) intentionally has no ownership check — whoever holds the link
+      // can view it — so foreign ownership isn't observable there by design.
+      expect((await owner.request.delete(`/api/shares/${foreignShare.id}`)).status()).toBe(404)
+      expect(await deniedAudit('share.revoke', foreignShare.id), 'share.revoke:foreign-ownership').toHaveLength(1)
+
       expect((await foreign.delete(`/api/shares/${foreignShare.id}`)).status()).toBe(204)
 
+      const targetReportByUrl = new Map([[expired.url, ownerReport.id], [foreignShare.url, foreignReport.id]])
       for (const url of [expired.url, foreignShare.url]) {
         const pathname = `/api${new URL(url).pathname}`
+        const targetId = targetReportByUrl.get(url)!
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const response = await owner.request.get(pathname)
           expect(response.status()).toBe(410)
           expect(response.headers()['cache-control']).toContain('no-store')
           expect(await response.json()).toEqual({ error: 'share_unavailable', message: 'This link is no longer available.' })
+          expect(await deniedAudit('share.use', targetId), `share.use:${targetId}#${attempt}`).toHaveLength(attempt + 1)
         }
       }
     } finally {
@@ -284,20 +340,32 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
     try {
       const providerRow = (await serviceRows<Provider>(`providers?select=id,user_id&user_id=eq.${provider.userId}`))[0]!
       const foreignProvider = (await serviceRows<Provider>(`providers?select=id,user_id&id=neq.${providerRow.id}&limit=1`))[0]!
-      const ownVisit = (await serviceRows<Visit>(`visits?select=id,provider_id&provider_id=eq.${providerRow.id}&limit=1`))[0]!
       const foreignVisit = (await serviceRows<Visit>(`visits?select=id,provider_id&provider_id=eq.${foreignProvider.id}&limit=1`))[0]!
-      const ownStudy = (await serviceRows<Study>(`studies?select=id,patient_id,visit_id&visit_id=eq.${ownVisit.id}&limit=1`))[0]!
       const foreignStudy = (await serviceRows<Study>(`studies?select=id,patient_id,visit_id&visit_id=eq.${foreignVisit.id}&limit=1`))[0]!
-      const preliminary = (await serviceRows<Report>(`reports?select=id,patient_id,study_id,status&study_id=eq.${ownStudy.id}&status=eq.preliminary&limit=1`))[0]
+
+      // Searches across every one of this provider's studies (not just the
+      // first) so the pinned "provider/admin may read assigned preliminary
+      // reports" row is guaranteed found rather than silently skipped when
+      // the first study happens to have none.
+      const ownVisits = await serviceRows<Visit>(`visits?select=id,provider_id&provider_id=eq.${providerRow.id}`)
+      const ownStudies = await serviceRows<Study>(
+        `studies?select=id,patient_id,visit_id&visit_id=in.(${ownVisits.map((visit) => visit.id).join(',')})`,
+      )
+      const preliminary = requireSeededFixture(
+        await serviceRows<Report>(
+          `reports?select=id,patient_id,study_id,status&status=eq.preliminary&study_id=in.(${ownStudies.map((study) => study.id).join(',')})`,
+        ),
+        `a preliminary report across ${DEMO_PROVIDER_EMAIL}'s studies`,
+      )
 
       await expectRefusal(provider.request, 'get', `/api/provider/schedule?date=2026-08-24&providerId=${foreignProvider.id}`)
+      expect(await deniedAudit('schedule.view', foreignProvider.id), 'schedule.view:foreign-provider').toHaveLength(1)
       await expectRefusal(provider.request, 'get', `/api/studies/${foreignStudy.id}`)
+      expect(await deniedAudit('study.view', foreignStudy.id), 'study.view:foreign-study').toHaveLength(1)
       const foreignReport = (await serviceRows<Report>(`reports?select=id,patient_id,study_id,status&study_id=eq.${foreignStudy.id}&limit=1`))[0]!
       await expectRefusal(provider.request, 'get', `/api/reports/${foreignReport.id}`)
-      if (preliminary) {
-        expect((await provider.request.get(`/api/reports/${preliminary.id}`)).status()).toBe(200)
-        expect((await admin.request.get(`/api/reports/${preliminary.id}`)).status()).toBe(200)
-      }
+      expect((await provider.request.get(`/api/reports/${preliminary.id}`)).status()).toBe(200)
+      expect((await admin.request.get(`/api/reports/${preliminary.id}`)).status()).toBe(200)
     } finally {
       await admin.request.dispose()
       await provider.request.dispose()
@@ -325,7 +393,8 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
         actorRef: admin.userId,
         outcome: 'granted',
       }))
-      expect(JSON.stringify(body)).not.toMatch(/@demo\.pip\.test|\b\d{4}-\d{2}-\d{2}\b|Morgan Rivers|findings|impression/i)
+      // Real needle set (T52's, via log-scan-engine), not a hand-picked regex.
+      expect(scanArtifact(JSON.stringify(body), [SEED_ROWS]).hits).toEqual([])
     } finally {
       await admin.request.dispose()
     }
