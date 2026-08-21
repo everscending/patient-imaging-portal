@@ -53,45 +53,85 @@ class Query {
   async single() { return this.maybeSingle() }
   then<TResult1 = { data: unknown; error: null }>(ok?: ((v: { data: unknown; error: null }) => TResult1 | PromiseLike<TResult1>) | null) { return this.execute().then(ok ?? undefined) }
 }
+// db/migrations/011_report_detail_access.sql re-checks the caller's exact
+// relationship in SQL instead of leaning on RLS over the joined patient row,
+// so the mock has to reproduce that check rather than the old embed shape:
+// the patient sees only their own signed report, the visit's provider sees
+// any status, an admin sees everything, everyone else gets no row at all.
+function readReportDetail(reportId: unknown) {
+  state.reads.push('reports')
+  const report = state.tables.reports.find((row) => row.id === reportId)
+  const study = state.tables.studies.find((row) => row.id === report?.study_id)
+  const visit = state.tables.visits.find((row) => row.id === study?.visit_id)
+  const callerPatient = state.tables.patients.find((row) => row.user_id === state.userId)
+  const callerProvider = state.tables.providers.find((row) => row.user_id === state.userId)
+  const visible = report !== undefined && study !== undefined && (
+    (callerPatient !== undefined && report.patient_id === callerPatient.id && report.status === 'signed') ||
+    (callerProvider !== undefined && visit?.provider_id === callerProvider.id) ||
+    state.tables.staff_admins.some((row) => row.user_id === state.userId)
+  )
+  if (!visible) return { data: null, error: null }
+  return {
+    data: {
+      id: report.id,
+      study_id: report.study_id,
+      study_description: study.description,
+      patient_ref: state.tables.patients.find((row) => row.id === report.patient_id)?.patient_ref ?? null,
+      findings: report.findings,
+      impression: report.impression,
+      signed_by_name: state.tables.providers.find((row) => row.id === report.signed_by)?.full_name ?? null,
+      signed_at: report.signed_at,
+    },
+    error: null,
+  }
+}
+
+async function scalarRpc(name: string, input: Row) {
+  if (name === 'grant_patient_imaging_access') {
+    const kind = input.p_target_kind
+    const id = input.p_target_id
+    if ((kind !== 'study' && kind !== 'clip') || typeof id !== 'string') {
+      return { data: null, error: { message: 'invalid imaging grant input' } }
+    }
+    const patient = state.tables.patients.find((row) => row.user_id === state.userId)
+    const table = kind === 'study' ? 'studies' : 'cine_clips'
+    const owned = patient
+      ? state.tables[table].some((row) => row.id === id && row.patient_id === patient.id)
+      : false
+    const status = patient ? (owned ? 200 : 404) : 403
+    const audit = {
+      actor_kind: 'account',
+      actor_ref: state.userId,
+      action: kind === 'study' ? 'study.view' : 'clip.view',
+      target_kind: kind,
+      target_id: id,
+      outcome: owned ? 'granted' : 'denied',
+    }
+    await state.persist(audit)
+    state.tables.audit_events.push(audit)
+    return { data: { patient_id: owned ? patient!.id : null, status }, error: null }
+  }
+  if (name !== 'link_patient_identity') throw new Error(name)
+  const patient = state.tables.patients.find((row) => row.id === input.p_patient_id)
+  if (!patient || patient.user_id) return { data: 'claimed_by_other', error: null }
+  patient.user_id = input.p_caller_id
+  state.tables.identity_attempts.push({
+    user_id: input.p_caller_id,
+    succeeded: true,
+    attempted_at: input.p_attempted_at,
+  })
+  return { data: 'linked_now', error: null }
+}
+
 function client() {
   return {
     from: (table: string) => new Query(table),
-    async rpc(name: string, input: Row) {
-      if (name === 'grant_patient_imaging_access') {
-        const kind = input.p_target_kind
-        const id = input.p_target_id
-        if ((kind !== 'study' && kind !== 'clip') || typeof id !== 'string') {
-          return { data: null, error: { message: 'invalid imaging grant input' } }
-        }
-        const patient = state.tables.patients.find((row) => row.user_id === state.userId)
-        const table = kind === 'study' ? 'studies' : 'cine_clips'
-        const owned = patient
-          ? state.tables[table].some((row) => row.id === id && row.patient_id === patient.id)
-          : false
-        const status = patient ? (owned ? 200 : 404) : 403
-        const audit = {
-          actor_kind: 'account',
-          actor_ref: state.userId,
-          action: kind === 'study' ? 'study.view' : 'clip.view',
-          target_kind: kind,
-          target_id: id,
-          outcome: owned ? 'granted' : 'denied',
-        }
-        await state.persist(audit)
-        state.tables.audit_events.push(audit)
-        return { data: { patient_id: owned ? patient!.id : null, status }, error: null }
-      }
-      if (name !== 'link_patient_identity') throw new Error(name)
-      const patient = state.tables.patients.find((row) => row.id === input.p_patient_id)
-      if (!patient || patient.user_id) return { data: 'claimed_by_other', error: null }
-      patient.user_id = input.p_caller_id
-      state.tables.identity_attempts.push({
-        user_id: input.p_caller_id,
-        succeeded: true,
-        attempted_at: input.p_attempted_at,
-      })
-      return { data: 'linked_now', error: null }
-    },
+    // read_report_detail returns a row set, so PostgREST hands back a builder
+    // with .maybeSingle(); the scalar-returning RPCs resolve directly.
+    rpc: (name: string, input: Row) =>
+      name === 'read_report_detail'
+        ? { maybeSingle: async () => readReportDetail(input.p_report_id) }
+        : scalarRpc(name, input),
   } as never
 }
 
@@ -106,7 +146,7 @@ function fixtures(): Record<string, Row[]> { return {
   visits: [{ id: VISIT_A, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'completed', occurred_at: '2026-01-01T12:00:00Z' }, { id: VISIT_B, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'completed', occurred_at: '2026-01-02T12:00:00Z' }],
   studies: [{ id: OWNED_STUDY, patient_id: PATIENT_A, visit_id: VISIT_A, description: 'Owned' }, { id: FOREIGN_STUDY, patient_id: PATIENT_B, visit_id: VISIT_B, description: 'Foreign' }],
   cine_clips: [{ id: OWNED_CLIP, patient_id: PATIENT_A, study_id: OWNED_STUDY, frame_count: 1, default_fps: 12, poster_key: null }, { id: FOREIGN_CLIP, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, frame_count: 1, default_fps: 12, poster_key: null }], cine_frames: [], images: [{ id: FOREIGN_IMAGE, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, width: 10, height: 10, ordinal: 0, storage_key: 'foreign', thumb_key: null }],
-  reports: [{ id: OWNED_REPORT, patient_id: PATIENT_A, study_id: OWNED_STUDY, status: 'signed', findings: 'owned', impression: 'owned', signed_at: '2026-01-01T13:00:00Z', studies: { description: 'Owned' }, patients: { patient_ref: 'PT-0001' }, providers: { full_name: 'Provider A' } }, { id: FOREIGN_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'signed', findings: 'private', impression: 'private', signed_at: '2026-01-02T13:00:00Z', studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: { full_name: 'Provider B' } }, { id: PRELIM_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'preliminary', findings: 'draft', impression: 'draft', signed_at: null, studies: { description: 'Foreign' }, patients: { patient_ref: 'PT-0002' }, providers: null }],
+  reports: [{ id: OWNED_REPORT, patient_id: PATIENT_A, study_id: OWNED_STUDY, status: 'signed', findings: 'owned', impression: 'owned', signed_at: '2026-01-01T13:00:00Z', signed_by: PROVIDER_A, studies: { description: 'Owned' } }, { id: FOREIGN_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'signed', findings: 'private', impression: 'private', signed_at: '2026-01-02T13:00:00Z', signed_by: PROVIDER_B, studies: { description: 'Foreign' } }, { id: PRELIM_REPORT, patient_id: PATIENT_B, study_id: FOREIGN_STUDY, status: 'preliminary', findings: 'draft', impression: 'draft', signed_at: null, signed_by: null, studies: { description: 'Foreign' } }],
   appointments: [
     { id: OWNED_APPT, patient_id: PATIENT_A, provider_id: PROVIDER_A, status: 'requested', out_of_hours: false, slots: { starts_at: '2026-08-21T12:00:00Z', ends_at: '2026-08-21T12:30:00Z' }, providers: { full_name: 'Provider A', time_zone: 'America/Chicago' }, services: { name: 'Imaging' } },
     { id: FOREIGN_APPT, patient_id: PATIENT_B, provider_id: PROVIDER_B, status: 'requested', out_of_hours: false, slots: { starts_at: '2026-08-22T12:00:00Z', ends_at: '2026-08-22T12:30:00Z' }, providers: { full_name: 'Provider B', time_zone: 'America/Chicago' }, services: { name: 'Imaging' } },
