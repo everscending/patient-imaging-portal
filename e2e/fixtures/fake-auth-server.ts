@@ -1533,6 +1533,51 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     })
   }
 
+  // db/migrations/011_report_detail_access.sql reads the report detail through
+  // a SECURITY DEFINER function that re-checks the caller's own relationship,
+  // because the visit's provider has to reach the report without gaining
+  // SELECT on the patient row the detail joins. The patient still sees only
+  // their own signed report; anyone else gets no row rather than an error.
+  async function handleReadReportDetail(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const reportId = (await readJsonBody(req)).p_report_id
+    const report = REPORTS.find((row) => row.id === reportId)
+    const study = STUDIES.find((row) => row.id === report?.study_id)
+    const visit = VISITS.find((row) => row.id === study?.visit_id)
+    const callerPatient = patients.find((row) => row.user_id === caller.id)
+    const callerProvider = providers.find((row) => row.user_id === caller.id)
+    if (report === undefined || study === undefined) {
+      sendPostgrestRows(req, res, [])
+      return
+    }
+    const visible =
+      (callerPatient !== undefined && report.patient_id === callerPatient.id && report.status === 'signed') ||
+      (callerProvider !== undefined && visit?.provider_id === callerProvider.id) ||
+      staffAdminUserIds.has(caller.id)
+    if (!visible) {
+      sendPostgrestRows(req, res, [])
+      return
+    }
+    sendPostgrestRows(req, res, [{
+      id: report.id,
+      study_id: report.study_id,
+      study_description: study.description,
+      patient_ref: patients.find((row) => row.id === report.patient_id)?.patient_ref ?? null,
+      findings: report.findings,
+      impression: report.impression,
+      signed_by_name: providers.find((row) => row.id === report.signed_by)?.full_name ?? null,
+      signed_at: report.signed_at,
+    }])
+  }
+
   function appointmentFallsOutsideWorkingHours(providerId: string, hours: FakeWorkingHour[]): boolean {
     const appointmentWeekday = 1
     const appointmentTime = '16:00:00'
@@ -1869,6 +1914,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === PROFILE_DELETION_RPC_PATH) {
       void handleProfileDeletionRequest(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/read_report_detail') {
+      void handleReadReportDetail(req, res)
       return
     }
     if (url.pathname === '/rest/v1/rpc/book_appointment') {
