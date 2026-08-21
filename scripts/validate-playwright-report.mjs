@@ -10,10 +10,16 @@ if (!Array.isArray(report.suites) || typeof report.stats !== 'object' || report.
   throw new Error(`invalid Playwright JSON report: ${reportPath}`)
 }
 
-function containsSuite(suites, file) {
-  return suites.some((suite) => suite.file === file || (Array.isArray(suite.suites) && containsSuite(suite.suites, file)))
+function suiteTests(suites, file) {
+  return suites.flatMap((suite) => [
+    ...(suite.file === file && Array.isArray(suite.specs)
+      ? suite.specs.flatMap((spec) => Array.isArray(spec.tests) ? spec.tests : [])
+      : []),
+    ...(Array.isArray(suite.suites) ? suiteTests(suite.suites, file) : []),
+  ])
 }
 
-if (!containsSuite(report.suites, path.basename(requiredSuite))) {
-  throw new Error(`Playwright JSON report does not contain required suite: ${requiredSuite}`)
+const tests = suiteTests(report.suites, path.basename(requiredSuite))
+if (!tests.some((test) => typeof test?.status === 'string' && test.status !== 'skipped')) {
+  throw new Error(`Playwright JSON report has no completed test for required suite: ${requiredSuite}`)
 }

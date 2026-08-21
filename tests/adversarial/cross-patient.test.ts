@@ -53,7 +53,47 @@ class Query {
   async single() { return this.maybeSingle() }
   then<TResult1 = { data: unknown; error: null }>(ok?: ((v: { data: unknown; error: null }) => TResult1 | PromiseLike<TResult1>) | null) { return this.execute().then(ok ?? undefined) }
 }
-function client() { return { from: (table: string) => new Query(table), async rpc(name: string, input: Row) { if (name !== 'link_patient_identity') throw new Error(name); const patient = state.tables.patients.find((r) => r.id === input.p_patient_id); if (!patient || patient.user_id) return { data: 'claimed_by_other', error: null }; patient.user_id = input.p_caller_id; state.tables.identity_attempts.push({ user_id: input.p_caller_id, succeeded: true, attempted_at: input.p_attempted_at }); return { data: 'linked_now', error: null } } } as never }
+function client() {
+  return {
+    from: (table: string) => new Query(table),
+    async rpc(name: string, input: Row) {
+      if (name === 'grant_patient_imaging_access') {
+        const kind = input.p_target_kind
+        const id = input.p_target_id
+        if ((kind !== 'study' && kind !== 'clip') || typeof id !== 'string') {
+          return { data: null, error: { message: 'invalid imaging grant input' } }
+        }
+        const patient = state.tables.patients.find((row) => row.user_id === state.userId)
+        const table = kind === 'study' ? 'studies' : 'cine_clips'
+        const owned = patient
+          ? state.tables[table].some((row) => row.id === id && row.patient_id === patient.id)
+          : false
+        const status = patient ? (owned ? 200 : 404) : 403
+        const audit = {
+          actor_kind: 'account',
+          actor_ref: state.userId,
+          action: kind === 'study' ? 'study.view' : 'clip.view',
+          target_kind: kind,
+          target_id: id,
+          outcome: owned ? 'granted' : 'denied',
+        }
+        await state.persist(audit)
+        state.tables.audit_events.push(audit)
+        return { data: { patient_id: owned ? patient!.id : null, status }, error: null }
+      }
+      if (name !== 'link_patient_identity') throw new Error(name)
+      const patient = state.tables.patients.find((row) => row.id === input.p_patient_id)
+      if (!patient || patient.user_id) return { data: 'claimed_by_other', error: null }
+      patient.user_id = input.p_caller_id
+      state.tables.identity_attempts.push({
+        user_id: input.p_caller_id,
+        succeeded: true,
+        attempted_at: input.p_attempted_at,
+      })
+      return { data: 'linked_now', error: null }
+    },
+  } as never
+}
 
 let run: Run
 function psql(sql: string) { return execFileSync('docker', ['exec', 'pip-testpg', 'psql', '-U', 'postgres', '-d', run.dbName, '-v', 'ON_ERROR_STOP=1', '-tA', '-c', sql], { encoding: 'utf8' }).trim() }

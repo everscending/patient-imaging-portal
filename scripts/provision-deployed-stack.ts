@@ -361,10 +361,12 @@ export async function main(): Promise<void> {
 }
 
 if (process.env.PROVISION_DEPLOYED_STACK === '1') {
-  main().catch(() => {
+  try {
+    await main()
+  } catch {
     // Provider/database errors can echo request details. The preceding stage
     // lines identify the failed boundary without forwarding those details.
     console.error('provision-deployed-stack: failed')
     process.exitCode = 1
-  })
+  }
 }

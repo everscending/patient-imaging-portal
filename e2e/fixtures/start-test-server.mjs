@@ -52,10 +52,18 @@ const child = spawn('node', ['scripts/run-next.mjs', 'dev'], {
 })
 
 let exiting = false
+async function stopChild() {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  await new Promise((resolve) => {
+    child.once('exit', resolve)
+    child.kill('SIGTERM')
+  })
+}
+
 async function cleanupAndExit(code) {
   if (exiting) return
   exiting = true
-  child.kill()
+  await stopChild()
   await fakeAuthServer.close()
   process.exit(code)
 }

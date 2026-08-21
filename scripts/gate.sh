@@ -79,33 +79,19 @@ run_api() {
 
 run_ui() {
   run_api
-  step PLAYWRIGHT_E8 npx playwright test e2e/e8-wiring.spec.ts --project=e8-wiring
+  # One Playwright process runs every product/wiring project. Playwright
+  # resolves the product dependency once, so E2/E3 no longer repeat it.
+  step PLAYWRIGHT npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring
   step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
-  step PLAYWRIGHT_E5 npx playwright test e2e/e5-wiring.spec.ts --project=e5-wiring
   step PLAYWRIGHT_E5_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts
-  step PLAYWRIGHT_E7 npx playwright test e2e/e7-wiring.spec.ts --project=product
   step PLAYWRIGHT_E7_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts
-  # JOR-253 requires the booking acceptance file to be named explicitly in
-  # the UI tier, together with the report evidence consumed by the gate.
-  step PLAYWRIGHT_BOOK npx playwright test e2e/book.spec.ts --project=product
   step PLAYWRIGHT_BOOK_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts
-  step PLAYWRIGHT_PROVIDER_SCHEDULE npx playwright test e2e/provider-schedule.spec.ts --project=product
   step PLAYWRIGHT_PROVIDER_SCHEDULE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts
-  step PLAYWRIGHT_EMPTY_STATES npx playwright test e2e/empty-states.spec.ts --project=product
   step PLAYWRIGHT_EMPTY_STATES_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/empty-states.spec.ts
-  step PLAYWRIGHT_RESPONSIVE npx playwright test e2e/responsive.spec.ts --project=product
   step PLAYWRIGHT_RESPONSIVE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/responsive.spec.ts
-  # JOR-237 makes the keyboard/accessibility proof and its JSON evidence an
-  # explicit UI-tier contract rather than relying on the aggregate project.
-  step PLAYWRIGHT_ACCESSIBILITY npx playwright test e2e/accessibility.spec.ts --project=product
   step PLAYWRIGHT_ACCESSIBILITY_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts
-  # e2-wiring depends on product, so this invocation runs the parallel product
-  # suite first and the shared-state E2 proof after the ticket-specific proofs.
-  step PLAYWRIGHT npx playwright test --project=e2-wiring
   step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
-  step PLAYWRIGHT_E3 npx playwright test --project=e3-wiring
   step PLAYWRIGHT_E3_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts
-  step PLAYWRIGHT_E4 npx playwright test --project=e4-wiring
   step PLAYWRIGHT_E4_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts
 }
 

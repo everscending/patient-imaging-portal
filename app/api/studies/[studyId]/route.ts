@@ -41,5 +41,8 @@ export async function GET(_: Request, context: { params: Promise<Record<string, 
   if (!access.ok) return denied(access.status)
   if (!session) return denied(401)
   const detail = await studyDetail(anonClient(session.accessToken), parsed.value.studyId)
-  return detail ? Response.json(detail) : denied(404)
+  if (!detail) return denied(404)
+  const publicDetail = { ...detail }
+  delete publicDetail.imageSigningFailed
+  return Response.json(publicDetail)
 }

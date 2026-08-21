@@ -16,7 +16,10 @@ export async function GET(request: Request): Promise<Response> {
   const client = anonClient(session.accessToken)
 
   const { data, error } = await client.from('services').select('id, slug, name').order('name')
-  if (error) return errorResponse(500, 'services_unavailable', 'Services are temporarily unavailable.')
+  if (error) {
+    console.error(JSON.stringify({ op: 'services.list', dependency: 'database', outcome: 'down' }))
+    return errorResponse(503, 'services_unavailable', 'Services are temporarily unavailable.')
+  }
 
   return Response.json({ services: (data ?? []).map((service) => ({ id: service.id, slug: service.slug, name: service.name })) })
 }

@@ -78,12 +78,20 @@ async function waitForServer(url: string, child: ChildProcess): Promise<Response
   throw new Error(`live fixture did not become ready: ${String(lastError)}`)
 }
 
+async function expectPortCanRebind(port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => server.close((error) => error === undefined ? resolve() : reject(error)))
+  })
+}
+
 afterEach(async () => {
   await Promise.all(
     children.splice(0).map(
       (child) =>
         new Promise<void>((resolve) => {
-          if (child.exitCode !== null) return resolve()
+          if (child.exitCode !== null || child.signalCode !== null) return resolve()
           child.once('exit', () => resolve())
           child.kill('SIGTERM')
         }),
@@ -129,6 +137,35 @@ test(
     })
     expect(registration.status).toBe(201)
     expect((await fetch(`${baseUrl}/api/identity/status`)).status).toBe(401)
+
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+    child.kill('SIGTERM')
+    await exited
+    await expectPortCanRebind(port)
+  },
+  120_000,
+)
+
+test(
+  'JOR-306: stopping the Playwright fixture releases its application port before exit',
+  async function stoppingFixtureReleasesPortBeforeExit() {
+    const port = await unusedPort()
+    const child = spawn('/usr/bin/env', [
+      `PORT=${port}`,
+      'WATCHPACK_POLLING=true',
+      process.execPath,
+      path.join(REPO_ROOT, 'e2e', 'fixtures', 'start-test-server.mjs'),
+    ], {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    children.push(child)
+
+    await waitForServer(`http://127.0.0.1:${port}/login`, child)
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+    child.kill('SIGTERM')
+    await exited
+    await expectPortCanRebind(port)
   },
   120_000,
 )

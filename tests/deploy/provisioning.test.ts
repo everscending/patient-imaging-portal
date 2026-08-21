@@ -26,6 +26,7 @@ describe('deployed schema provisioning', () => {
       '008_transition_appointment.sql',
       '009_anonymous_audit_actor.sql',
       '009_hosted_jwt_claims.sql',
+      '010_patient_imaging_access_grant.sql',
       '010_profile_deletion_requests.sql',
     ])
 
