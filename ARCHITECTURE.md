@@ -1499,6 +1499,7 @@ letting a missing value surface as a runtime null. All of these appear in
 | `NEXT_PUBLIC_SUPABASE_URL` | — | `lib/db/client.ts` | required |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | `lib/db/client.ts` | required |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | `lib/db/client.ts` | required · **server only, never `NEXT_PUBLIC_`** |
+| `NEXT_PUBLIC_PRACTICE_NAME` | `Patient Imaging Portal` | `components/branding/Wordmark.tsx` (landing, patient/provider shells) | JOR-310 · one wordmark string, no multi-tenancy |
 | `APP_BASE_URL` | `http://localhost:4310` | `lib/share/links.ts`, `lib/notify/email.ts` | share links are absolute |
 | `RESEND_API_KEY` | — | `lib/notify/email.ts` | absent ⇒ transport falls back to `log` (GAP-3) |
 | `RESEND_FROM` | — | `lib/notify/email.ts` | verified sender |

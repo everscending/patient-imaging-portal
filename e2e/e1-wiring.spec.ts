@@ -39,7 +39,7 @@ test.describe('Running skeleton — acceptance: the app answers on config.port',
   test('acceptance: the landing page renders on the live skeleton', async ({ page }) => {
     const response = await page.goto('/')
     expect(response?.status()).toBe(200)
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Patient Imaging Portal')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Your imaging care, all in one place')
   })
 })
 

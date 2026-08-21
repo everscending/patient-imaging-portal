@@ -28,6 +28,7 @@ export type Config = {
   port: number // default 4310
   playwrightBaseUrl: string | null // explicit external runtime for Playwright only
   testPgPort: number | null // ADR-0013: unset ⇒ ephemeral port
+  practiceName: string // default 'Patient Imaging Portal' (JOR-310) — the one wordmark string
 }
 
 // SEC-6, SEC-7: names the variable, never its value.
@@ -143,6 +144,7 @@ function loadConfig(): Config {
   const port = intWithDefault('PORT', 4310)
   const playwrightBaseUrl = optionalString('PLAYWRIGHT_BASE_URL')
   const testPgPort = optionalPositiveInt('TEST_PG_PORT')
+  const practiceName = stringWithDefault('NEXT_PUBLIC_PRACTICE_NAME', 'Patient Imaging Portal')
 
   // The comparison is >=, not >: a cadence equal to the window already
   // drifts a band open under any scheduler jitter (ADR-0012).
@@ -176,6 +178,7 @@ function loadConfig(): Config {
     port,
     playwrightBaseUrl,
     testPgPort,
+    practiceName,
   }
 }
 

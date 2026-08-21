@@ -16,6 +16,7 @@ const ALL_ENV_KEYS = [
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
+  'NEXT_PUBLIC_PRACTICE_NAME',
   'APP_BASE_URL',
   'RESEND_API_KEY',
   'RESEND_FROM',
@@ -102,6 +103,7 @@ describe('defaults — acceptance: config reads every default with only the four
     expect(config.resendApiKey).toBeNull()
     expect(config.resendFrom).toBeNull()
     expect(config.cronSecret).toBeNull()
+    expect(config.practiceName).toBe('Patient Imaging Portal')
   })
 })
 
@@ -236,9 +238,9 @@ describe('.env.example — acceptance + adversarial: complete, ordered, placehol
     .filter((line) => line.length > 0 && !line.startsWith('#'))
     .map((line) => line.split('=')[0])
 
-  test('lists all 24 §8 rows, in §8 order, and nothing else', () => {
+  test('lists all 25 §8 rows, in §8 order, and nothing else', () => {
     expect(envExampleKeys).toEqual(ALL_ENV_KEYS)
-    expect(envExampleKeys).toHaveLength(24)
+    expect(envExampleKeys).toHaveLength(25)
   })
 
   test('ADR-0011: IDENTITY_UNLOCK_TTL_MINUTES appears nowhere in the app/config surface this ticket owns', () => {
