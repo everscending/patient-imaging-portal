@@ -6,6 +6,7 @@ import { notFound, redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import ProviderShell from '../../components/shell/ProviderShell'
 import { anonClient, authClient } from '../../lib/db/client'
+import { config } from '../../lib/config'
 import { SESSION_COOKIE_NAME } from '../../lib/session-cookie'
 
 type ProviderRow = {
@@ -30,7 +31,7 @@ export default async function ProviderLayout({ children }: { children: ReactNode
 
   if (admin) {
     return (
-      <ProviderShell identity={{ role: 'admin', actorName: 'Administrator' }}>
+      <ProviderShell practiceName={config.practiceName} identity={{ role: 'admin', actorName: 'Administrator' }}>
         {children}
       </ProviderShell>
     )
@@ -39,6 +40,7 @@ export default async function ProviderLayout({ children }: { children: ReactNode
   const providerIdentity = provider as ProviderRow
   return (
     <ProviderShell
+      practiceName={config.practiceName}
       identity={{
         role: 'provider',
         actorName: providerIdentity.full_name,

@@ -120,7 +120,7 @@ test.describe('Running skeleton — acceptance: the app answers on config.port',
   test('acceptance: the landing page renders on the live skeleton', async ({ page }) => {
     const response = await page.goto('/')
     expect(response?.status()).toBe(200)
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Patient Imaging Portal')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Your imaging care, all in one place')
   })
 })
 
@@ -130,7 +130,7 @@ test.describe('Deployed skeleton — acceptance + mandatory adversarial: live, c
     runRecord.deployedStatus = response?.status() ?? 0
     expect(response?.status()).toBe(200)
     expect(new URL(page.url()).protocol).toBe('https:')
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Patient Imaging Portal')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Your imaging care, all in one place')
   })
 
   test('acceptance + mandatory adversarial: deployedUrl_neverServesAStaleCommitAfterAPushToMain', async function deployedUrl_neverServesAStaleCommitAfterAPushToMain() {
