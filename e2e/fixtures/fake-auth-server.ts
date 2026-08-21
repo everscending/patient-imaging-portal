@@ -464,6 +464,7 @@ const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
 // name it directly.
 const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
 const APPLY_AVAILABILITY_RPC_PATH = ['/rest/v1/rpc/apply', 'provider', 'availability'].join('_')
+const PATIENT_IMAGING_GRANT_RPC_PATH = '/rest/v1/rpc/grant_patient_imaging_access'
 const PROFILE_DELETION_RPC_PATH = '/rest/v1/rpc/request_profile_deletion'
 
 export type FakeAuthServer = {
@@ -1333,6 +1334,46 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, 'linked_now')
   }
 
+  async function handlePatientImagingGrant(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const body = await readJsonBody(req)
+    const targetKind = body.p_target_kind
+    const targetId = body.p_target_id
+    if ((targetKind !== 'study' && targetKind !== 'clip') || typeof targetId !== 'string') {
+      sendJson(res, 400, { message: 'unsupported imaging target' })
+      return
+    }
+
+    const patient = patients.find((candidate) => candidate.user_id === caller.id)
+    const targets = targetKind === 'study' ? STUDIES : CINE_CLIPS
+    const owned = patient !== undefined && targets.some(
+      (target) => target.id === targetId && target.patient_id === patient.id,
+    )
+    auditEvents.push({
+      id: nextAuditEventId++,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: targetKind === 'study' ? 'study.view' : 'clip.view',
+      target_kind: targetKind,
+      target_id: targetId,
+      outcome: owned ? 'granted' : 'denied',
+      detail: null,
+      occurred_at: new Date().toISOString(),
+    })
+    sendJson(res, 200, {
+      patient_id: owned ? patient.id : null,
+      status: patient ? (owned ? 200 : 404) : 403,
+    })
+  }
+
   function appointmentFallsOutsideWorkingHours(providerId: string, hours: FakeWorkingHour[]): boolean {
     const appointmentWeekday = 1
     const appointmentTime = '16:00:00'
@@ -1639,6 +1680,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === LINK_PATIENT_RPC_PATH) {
       void handleLinkPatient(req, res)
+      return
+    }
+    if (url.pathname === PATIENT_IMAGING_GRANT_RPC_PATH) {
+      void handlePatientImagingGrant(req, res)
       return
     }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {

@@ -80,7 +80,7 @@ lib/
   scheduling/lifecycle.ts    FR-14 status transitions
   share/links.ts             mint, resolve, revoke
   notify/email.ts            the ONLY caller of Resend
-  audit/events.ts            the ONLY application writer to audit_events (ADR-0014: transactional RPC exception)
+  audit/events.ts            the ONLY TypeScript writer to audit_events (ADR-0003/0014: narrow database exceptions)
   observability/timing.ts    PF-4 / PF-6 server timing — no PHI
   time/zones.ts              instant ↔ zone conversion
 
@@ -105,7 +105,7 @@ Each line is mechanically checkable, and a lint rule enforces it.
 | `lib/**` must not import from `app/**` | Domain logic stays testable without a request. |
 | Only `lib/config.ts` reads `process.env` | One place validates the environment contract (§8). |
 | Only `lib/db/client.ts` imports `@supabase/supabase-js` | One place decides anon key vs service role. |
-| Only `lib/audit/events.ts` and ADR-0014 transactional RPCs write `audit_events` | SEC-4's append-only guarantee stays centralized; mutation-required audits share the mutation transaction. |
+| Only `lib/audit/events.ts`, the guard-owned ADR-0003 access-grant RPC, and ADR-0014 transactional mutation RPCs write `audit_events` | SEC-4's append-only guarantee stays centralized; an audit stays in the transaction whose decision it records. |
 | Only `lib/notify/email.ts` imports the Resend SDK | GAP-3's log-only fallback cannot be bypassed. |
 | No `app/api/**` handler touching PHI may skip `lib/access/guard.ts` | The guard *is* the authorization and the audit write (§5). |
 | Only `lib/imaging/signing.ts` mints signed Storage URLs | One TTL, one place. |
@@ -1036,6 +1036,17 @@ session it contains to resolve the account role and fetch the already-authorized
 response, while the guard passes that same session internally to the awaited
 audit write. No second remote Auth call occurs, and the public guard accepts
 neither a raw session JWT nor a caller-built authentication context.
+
+**Patient study and cine-clip access use one caller-scoped database round.**
+`grant_patient_imaging_access` runs as `SECURITY INVOKER`: it derives the
+authenticated account from PostgREST's verified JWT setting, resolves the
+identity link, checks the named study or clip through the caller's RLS, and
+appends the one granted-or-denied audit row before returning the guard result.
+The function is executable by `app_user`/the inherited `authenticated` role,
+never `anon`; it neither uses nor receives the service role. This is still the
+same guard decision, not a second authorization path, and manifest assembly and
+Storage signing begin only after the awaited function returns. Other actor and
+target combinations keep using `lib/audit/events.ts`.
 
 **Ownership means something different per actor kind, and the guard owns all
 five definitions** — no route handler writes its own:

@@ -504,9 +504,10 @@ describe('design decision: recordAuditEvent resolves void and never rethrows a w
 // the stub with real session/identity-link/ownership logic, so "always 401"
 // is no longer true of guardPhiAccess. That ticket's tests/access/guard.test.ts
 // is the guard's own behavior suite now; this file keeps only what is still
-// true of it — that it writes audit_events exclusively through
-// recordAuditEvent, never by hand.
-describe('AC: lib/audit/events.ts is the only writer; lib/access/guard.ts never inserts into audit_events itself', () => {
+// true of it — that TypeScript writes audit_events exclusively through
+// recordAuditEvent, never by hand. ADR-0003's guard-owned patient imaging RPC
+// is the narrow database-level exception.
+describe('AC: lib/audit/events.ts is the only TypeScript writer; lib/access/guard.ts never inserts into audit_events itself', () => {
   test('guardWritesAuditEventsOnlyThroughRecordAuditEvent', function guardWritesAuditEventsOnlyThroughRecordAuditEvent() {
     const source = readFileSync(path.join(REPO_ROOT, 'lib', 'access', 'guard.ts'), 'utf8')
     // Built at runtime, not spelled out literally, so this assertion itself

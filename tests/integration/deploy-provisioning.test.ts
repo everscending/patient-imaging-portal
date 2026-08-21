@@ -41,6 +41,9 @@ do $$ begin
   else
     alter role authenticated noinherit;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin noinherit;
+  end if;
 end $$;
 `
 
@@ -64,7 +67,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('12')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('13')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')
@@ -79,6 +82,24 @@ describe('deployed provisioning program', () => {
       psql(
         run.dbName,
         "select has_function_privilege('anon', 'link_patient_identity(uuid,uuid,text,text,timestamptz)', 'execute');",
+      ),
+    ).toBe('f')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('authenticated', 'grant_patient_imaging_access(text,uuid)', 'execute');",
+      ),
+    ).toBe('t')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('anon', 'grant_patient_imaging_access(text,uuid)', 'execute');",
+      ),
+    ).toBe('f')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('service_role', 'grant_patient_imaging_access(text,uuid)', 'execute');",
       ),
     ).toBe('f')
   }, 60_000)
