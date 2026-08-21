@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { E2_FOREIGN_STUDY_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
+import { E2_FOREIGN_STUDY_ID, E2_SEEDED_CLIP_ID, E2_SEEDED_STUDY_ID } from './fixtures/fake-auth-server'
 import {
   acquireIdentityFixtureLock,
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
@@ -298,5 +298,25 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
     expect(pageSource).not.toMatch(/fetch\s*\(\s*`\$\{protocol\}:\/\/\$\{host\}/)
     expect(pageSource).toContain('guardPhiAccess')
     expect(pageSource).toContain('studyDetail')
+  })
+
+  test('cineClipLink_visibleLabelledAndKeyboardReachesCineViewer', async function cineClipLink_visibleLabelledAndKeyboardReachesCineViewer({ page }) {
+    await openViewer(page)
+    const clipLink = page.getByTestId('study-clip-link')
+    await expect(clipLink).toBeVisible()
+    await expect(clipLink).toHaveAccessibleName('Cine clip — 100 frames')
+    const box = await clipLink.boundingBox()
+    expect(box!.height).toBeGreaterThanOrEqual(44)
+
+    await clipLink.focus()
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(`/studies/${E2_SEEDED_STUDY_ID}/clips/${E2_SEEDED_CLIP_ID}`)
+    await expect(page.getByTestId('cine-viewer')).toBeVisible()
+  })
+
+  test('noClips_studyDetailPageRendersNoClipLink', async function noClips_studyDetailPageRendersNoClipLink() {
+    const pageSource = await source('app/(patient)/studies/[studyId]/page.tsx')
+    expect(pageSource).toMatch(/study\.clips\.length > 0 \? \(/)
+    expect(pageSource).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
   })
 })
