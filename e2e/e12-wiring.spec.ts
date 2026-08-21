@@ -267,9 +267,12 @@ test.describe.serial('JOR-246 E12 phone-width, keyboard and coverage wiring', ()
       await expectTapTarget(page.getByRole('button', { name }))
     }
 
-    // Cine viewing
+    // Cine viewing — reached via the study page's own clip link, not a direct goto
     const clipId = requireSeededFixture(E2_SEEDED_CLIP_ID, 'cine clip')
-    await page.goto(`/studies/${studyId}/clips/${clipId}`)
+    const clipLink = page.getByTestId('study-clip-link')
+    await tabTo(page, clipLink)
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(new RegExp(`/studies/${studyId}/clips/${clipId}$`))
     await expect(page.getByTestId('cine-viewer')).toBeVisible()
     await expectNoPageOverflow(page)
     await expectNamedControls(page)
