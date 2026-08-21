@@ -123,13 +123,18 @@ describe('JOR-221 performance contract', () => {
   test('gateNamesPerformanceContractAndPlaybackEvidence', () => {
     const loom = readFileSync(path.join(REPO_ROOT, '.loom.yml'), 'utf8')
     const ui = execFileSync(path.join(REPO_ROOT, 'scripts/gate.sh'), ['ui', '--list'], { encoding: 'utf8' })
+    // playback-frames.spec.ts runs inside the single combined `product`
+    // Playwright invocation (playwright.config.ts's testIgnore excludes only
+    // the wiring specs), so only its report validator is a distinct command.
     for (const command of [
       'npx vitest run --project unit tests/performance/performance-contract.test.ts',
-      'npx playwright test e2e/playback-frames.spec.ts --project=product',
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/playback-frames.spec.ts',
     ]) {
       expect(loom).toContain(command)
       expect(ui).toContain(command)
     }
+    expect(readFileSync(path.join(REPO_ROOT, 'playwright.config.ts'), 'utf8')).not.toMatch(
+      /testIgnore:[^\n]*playback-frames/,
+    )
   })
 })
