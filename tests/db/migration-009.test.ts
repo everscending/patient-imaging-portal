@@ -45,6 +45,10 @@ function asAppUser(claims: string | null, sql: string): string {
   return `set role app_user; ${setting} ${sql}`
 }
 
+function asBookingExecutorLegacySubject(subject: string, sql: string): string {
+  return `set role booking_executor; set request.jwt.claim.sub = ${sqlLiteral(subject)}; ${sql}`
+}
+
 beforeAll(async () => {
   run = await startRun(await ensureContainer())
   patientUserId = randomUUID()
@@ -83,6 +87,17 @@ describe('009 hosted PostgREST JWT claims', () => {
     ).toBe('t')
   })
 
+  test('booking executor can invoke the RLS identity helpers its transactional functions require', () => {
+    expect(psql(`
+      select bool_and(has_function_privilege('booking_executor', signature, 'execute'))
+      from unnest(array[
+        'current_patient_id()'::regprocedure,
+        'current_provider_id()'::regprocedure,
+        'is_admin()'::regprocedure
+      ]) as signature;
+    `)).toBe('t')
+  })
+
   test('patient subject resolves through request.jwt.claims', () => {
     const claims = JSON.stringify({ sub: patientUserId })
     expect(psql(asAppUser(claims, `select coalesce(current_patient_id()::text, '');`))).toBe(patientId)
@@ -96,6 +111,10 @@ describe('009 hosted PostgREST JWT claims', () => {
   test('admin subject resolves through request.jwt.claims', () => {
     const claims = JSON.stringify({ sub: adminUserId })
     expect(psql(asAppUser(claims, `select is_admin();`))).toBe('t')
+  })
+
+  test('transactional RPC adapter accepts the local PostgREST subject setting when claims are absent', () => {
+    expect(psql(asBookingExecutorLegacySubject(patientUserId, 'select current_request_user_id()::text;'))).toBe(patientUserId)
   })
 
   test('missing claims fail closed without raising', () => {
