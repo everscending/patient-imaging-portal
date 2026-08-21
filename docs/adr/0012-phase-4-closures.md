@@ -66,10 +66,11 @@ code in the path. Two thin routes fix it, and `lib/validation` applies there
 exactly as everywhere else. Password hashing stays with Supabase Auth (ADR-0004).
 
 **Dropping the `docs` tier (#21).** It never traced to a requirement: CQ-8 asks
-that the linter and tests run on every push, not that documents be linted. The
-consequence is that a README-only ticket now runs the `logic` tier — slower than
-a document check, and no worse than any other ticket. A dead link survives until
-T73's reviewer walkthrough finds it, which is where DEL-5 is judged anyway.
+that the linter and tests run once per branch through its pull request and on
+pushes to `main`, not that documents be linted. The consequence is that a
+README-only ticket now runs the `logic` tier — slower than a document check, and
+no worse than any other ticket. A dead link survives until T73's reviewer
+walkthrough finds it, which is where DEL-5 is judged anyway.
 
 ## Consequences
 

@@ -29,7 +29,7 @@ let identityFixtureLockToken: string | undefined
 type PinnedImageViewerProps = {
   images: Array<{
     id: string; width: number; height: number; ordinal: number
-    url: string; thumbUrl: string | null; expiresAt: string
+    url: string | null; thumbUrl: string | null; expiresAt: string
   }>
   initialImageId?: string
   shareLinkTtlHours?: number

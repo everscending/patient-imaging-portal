@@ -80,7 +80,7 @@ lib/
   scheduling/lifecycle.ts    FR-14 status transitions
   share/links.ts             mint, resolve, revoke
   notify/email.ts            the ONLY caller of Resend
-  audit/events.ts            the ONLY application writer to audit_events (ADR-0014: transactional RPC exception)
+  audit/events.ts            the ONLY TypeScript writer to audit_events (ADR-0003/0014: narrow database exceptions)
   observability/timing.ts    PF-4 / PF-6 server timing — no PHI
   time/zones.ts              instant ↔ zone conversion
 
@@ -105,7 +105,7 @@ Each line is mechanically checkable, and a lint rule enforces it.
 | `lib/**` must not import from `app/**` | Domain logic stays testable without a request. |
 | Only `lib/config.ts` reads `process.env` | One place validates the environment contract (§8). |
 | Only `lib/db/client.ts` imports `@supabase/supabase-js` | One place decides anon key vs service role. |
-| Only `lib/audit/events.ts` and ADR-0014 transactional RPCs write `audit_events` | SEC-4's append-only guarantee stays centralized; mutation-required audits share the mutation transaction. |
+| Only `lib/audit/events.ts`, the guard-owned ADR-0003 access-grant RPC, and ADR-0014 transactional mutation RPCs write `audit_events` | SEC-4's append-only guarantee stays centralized; an audit stays in the transaction whose decision it records. |
 | Only `lib/notify/email.ts` imports the Resend SDK | GAP-3's log-only fallback cannot be bypassed. |
 | No `app/api/**` handler touching PHI may skip `lib/access/guard.ts` | The guard *is* the authorization and the audit write (§5). |
 | Only `lib/imaging/signing.ts` mints signed Storage URLs | One TTL, one place. |
@@ -1036,6 +1036,17 @@ session it contains to resolve the account role and fetch the already-authorized
 response, while the guard passes that same session internally to the awaited
 audit write. No second remote Auth call occurs, and the public guard accepts
 neither a raw session JWT nor a caller-built authentication context.
+
+**Patient study and cine-clip access use one caller-scoped database round.**
+`grant_patient_imaging_access` runs as `SECURITY INVOKER`: it derives the
+authenticated account from PostgREST's verified JWT setting, resolves the
+identity link, checks the named study or clip through the caller's RLS, and
+appends the one granted-or-denied audit row before returning the guard result.
+The function is executable by `app_user`/the inherited `authenticated` role,
+never `anon`; it neither uses nor receives the service role. This is still the
+same guard decision, not a second authorization path, and manifest assembly and
+Storage signing begin only after the awaited function returns. Other actor and
+target combinations keep using `lib/audit/events.ts`.
 
 **Ownership means something different per actor kind, and the guard owns all
 five definitions** — no route handler writes its own:
@@ -2026,29 +2037,29 @@ same runner, so they cannot drift.
 | `api` | `logic` + integration tests against a migrated test database |
 | `ui` | `api` + the exact Playwright/JSON-validator inventory below |
 
-The `ui` additions run in this exact order; each named Playwright invocation is
-immediately followed by `scripts/validate-playwright-report.mjs` for that same
-specification file:
+The `ui` additions use one serial Playwright invocation for `product`, E2, E3,
+E4, E5, and E8. Playwright runs `product` once before its E2/E3 dependents. The
+single JSON report is then validated for each mandatory specification:
 
-1. `e2e/e8-wiring.spec.ts --project=e8-wiring`
-2. `e2e/e5-wiring.spec.ts --project=e5-wiring`
-3. `e2e/book.spec.ts --project=product`
-4. `e2e/provider-schedule.spec.ts --project=product`
-5. `e2e/empty-states.spec.ts --project=product`
-6. `e2e/responsive.spec.ts --project=product`
-7. `e2e/accessibility.spec.ts --project=product`
-8. `--project=e2-wiring` with report evidence for `e2e/e2-wiring.spec.ts`
-9. `--project=e3-wiring` with report evidence for `e2e/e3-wiring.spec.ts`
-10. `e2e/e4-wiring.spec.ts --project=e4-wiring`
+1. `e2e/e8-wiring.spec.ts`
+2. `e2e/e5-wiring.spec.ts`
+3. `e2e/book.spec.ts`
+4. `e2e/provider-schedule.spec.ts`
+5. `e2e/empty-states.spec.ts`
+6. `e2e/responsive.spec.ts`
+7. `e2e/accessibility.spec.ts`
+8. `e2e/e2-wiring.spec.ts`
+9. `e2e/e3-wiring.spec.ts`
+10. `e2e/e4-wiring.spec.ts`
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
-`e4-wiring`, `e5-wiring`, and `e8-wiring` are focused projects invoked
-separately by the `ui` gate;
+`e4-wiring`, `e5-wiring`, and `e8-wiring` remain isolated projects selected by
+that same `ui` invocation;
 `book.spec.ts`, `provider-schedule.spec.ts`, `empty-states.spec.ts`,
-`responsive.spec.ts`, and `accessibility.spec.ts` are focused `product` entries,
-each immediately followed by its matching JSON report validator.
+`responsive.spec.ts`, and `accessibility.spec.ts` are ordinary `product` entries
+whose evidence is retained in the same report.
 `certification` contains the expensive E0/E1 fresh-clone wiring proofs and runs
 from `.github/workflows/certification.yml` on `main`, nightly, or by manual
 dispatch. E0 invokes the cumulative `ui` gate once
@@ -2076,9 +2087,10 @@ the installed Playwright version.
 
 **There are three tiers, not four.** An earlier draft carried a `docs` tier
 running a markdown linter and a link checker. It traced to no requirement — CQ-8
-asks that the linter and the tests run on every push, not that documents be
-linted — so ADR-0012 removed it. A document-only ticket takes `logic`, and the
-reviewer walkthrough (DEL-5) is what judges the documentation.
+asks that the linter and tests run once per branch through its pull request and
+on pushes to `main`, not that documents be linted — so ADR-0012 removed it. A
+document-only ticket takes `logic`, and the reviewer walkthrough (DEL-5) is what
+judges the documentation.
 
 `scripts/gate.sh` is a **repo-bootstrap-epic deliverable** and must merge before
 any ticket carrying a tier that invokes it.

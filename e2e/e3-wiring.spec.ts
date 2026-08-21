@@ -230,8 +230,8 @@ test.describe.serial('JOR-231 E3 imaging wiring', () => {
     try {
       await page.goto(`/studies/${E2_SEEDED_STUDY_ID}/clips/${E2_SEEDED_CLIP_ID}`, { waitUntil: 'domcontentloaded' })
       await expect(page.getByText('Loading cine clip…', { exact: true })).toBeVisible()
-      await expect(page.getByTestId('cine-viewer')).toBeVisible()
       await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+      await expect(page.getByTestId('cine-viewer')).toBeVisible()
       const firstFrame = page.locator('img[alt="Cine frame 1"]')
       await expect.poll(
         () => firstFrame.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
