@@ -6,6 +6,8 @@ import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 
+import { config } from '../lib/config'
+
 import {
   E2_BOOK_SERVICE_ID,
   E2_OTHER_PROVIDER_EMAIL,
@@ -20,6 +22,10 @@ import {
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
   releaseIdentityFixtureLock,
 } from './fixtures/identity-fixture-lock'
+
+const REAL_DEL4 = config.playwrightBaseUrl !== null
+const REAL_PATIENT_EMAIL = 'patient@demo.pip.test'
+const REAL_PASSWORD = 'DemoPass!2026'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const PASSWORD = 'E7PatientPassword9'
@@ -63,6 +69,7 @@ async function chooseFirstSlot(page: Page): Promise<string> {
 }
 
 test.describe.serial('JOR-205 E7 scheduling wiring', () => {
+  test.skip(REAL_DEL4, 'the real DEL-4 preflight owns this mode')
   test.beforeAll(async () => {
     test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
     identityFixtureLockToken = await acquireIdentityFixtureLock()
@@ -458,5 +465,42 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     expect(JSON.stringify(state.auditEvents.map(({ detail }) => detail))).not.toMatch(
       /Morgan Rivers|1988-03-14|PT-4471/,
     )
+  })
+})
+
+test.describe('JOR-205 E7 real DEL-4 preflight', () => {
+  test.skip(!REAL_DEL4, 'requires the credential-free local DEL-4 runtime')
+  test('seededPatientBooksReschedulesAndCancelsThroughThePublicApi', async ({ request }) => {
+    expect((await request.post('/api/auth/login', {
+      data: { email: REAL_PATIENT_EMAIL, password: REAL_PASSWORD },
+    })).status()).toBe(200)
+
+    const services = (await (await request.get('/api/services')).json()) as { services: Array<{ id: string }> }
+    expect(services.services.length).toBeGreaterThan(0)
+    const serviceId = services.services[0]!.id
+    const providers = (await (await request.get('/api/providers', { params: { serviceId } })).json()) as {
+      providers: Array<{ id: string }>
+    }
+    expect(providers.providers.length).toBeGreaterThan(0)
+    const providerId = providers.providers[0]!.id
+    const from = new Date(Date.now() + 25 * 60 * 60 * 1_000).toISOString()
+    const to = new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000).toISOString()
+    const slots = (await (await request.get('/api/slots', { params: { providerId, serviceId, from, to } })).json()) as {
+      slots: Array<{ id: string }>
+    }
+    expect(slots.slots.length).toBeGreaterThanOrEqual(2)
+
+    const created = await request.post('/api/appointments', {
+      data: { slotId: slots.slots[0]!.id, serviceId, idempotencyKey: randomUUID() },
+    })
+    expect(created.status(), await created.text()).toBe(201)
+    const appointment = (await created.json()) as { id: string }
+
+    expect((await request.patch(`/api/appointments/${appointment.id}`, {
+      data: { action: 'reschedule', slotId: slots.slots[1]!.id },
+    })).status()).toBe(200)
+    expect((await request.patch(`/api/appointments/${appointment.id}`, {
+      data: { action: 'cancel' },
+    })).status()).toBe(200)
   })
 })
