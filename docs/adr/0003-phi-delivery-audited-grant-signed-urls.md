@@ -39,6 +39,13 @@ One authorized API call per study, clip, or report:
    timestamp (SEC-4),
 5. returns the manifest plus signed Supabase Storage URLs with a short TTL.
 
+For an authenticated patient reading a study or cine clip, steps 2–4 execute
+inside one caller-scoped `SECURITY INVOKER` database function. The function
+uses the caller's RLS and appends the decision audit in the same awaited round;
+it is not a service-role shortcut. Manifest reads and signing remain after the
+completed access grant, so this changes latency without changing the grant or
+signed-URL boundary.
+
 ```
 GET /api/studies/:studyId/clips/:clipId
   → session valid?            401

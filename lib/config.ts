@@ -26,6 +26,7 @@ export type Config = {
   reminderCronMinutes: number // default 5; MUST be < reminderWindowMinutes
   seedSourceSeed: string // default 'patient-imaging-portal'
   port: number // default 4310
+  playwrightBaseUrl: string | null // explicit external runtime for Playwright only
   testPgPort: number | null // ADR-0013: unset ⇒ ephemeral port
 }
 
@@ -140,6 +141,7 @@ function loadConfig(): Config {
   const reminderCronMinutes = intWithDefault('REMINDER_CRON_MINUTES', 5)
   const seedSourceSeed = stringWithDefault('SEED_SOURCE_SEED', 'patient-imaging-portal')
   const port = intWithDefault('PORT', 4310)
+  const playwrightBaseUrl = optionalString('PLAYWRIGHT_BASE_URL')
   const testPgPort = optionalPositiveInt('TEST_PG_PORT')
 
   // The comparison is >=, not >: a cadence equal to the window already
@@ -172,6 +174,7 @@ function loadConfig(): Config {
     reminderCronMinutes,
     seedSourceSeed,
     port,
+    playwrightBaseUrl,
     testPgPort,
   }
 }

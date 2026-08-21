@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 vi.mock('../../lib/config', () => ({ config: { maxRequestBodyBytes: 65536 } }))
 
-const { cookieState, resetDatabase, fakeClient } = vi.hoisted(() => {
+const { cookieState, resetDatabase, fakeClient, setServicesUnavailable } = vi.hoisted(() => {
   const cookie = { authenticated: true }
+  let servicesUnavailable = false
   const db = {
     services: [{ id: '11111111-1111-4111-8111-111111111111', slug: 'renal', name: 'Renal ultrasound', created_at: 'ignored' }],
     providerServices: [{ provider_id: '22222222-2222-4222-8222-222222222222', service_id: '11111111-1111-4111-8111-111111111111' }],
@@ -17,7 +18,10 @@ const { cookieState, resetDatabase, fakeClient } = vi.hoisted(() => {
       { id: '55555555-5555-4555-8555-555555555555', provider_id: '22222222-2222-4222-8222-222222222222', status: 'open', starts_at: '2000-01-02T10:00:00.000Z', ends_at: '2000-01-02T10:30:00.000Z' },
     ] as Array<Record<string, string>>,
   }
-  const reset = () => { cookie.authenticated = true }
+  const reset = () => {
+    cookie.authenticated = true
+    servicesUnavailable = false
+  }
   const client = vi.fn(() => ({
     auth: { getUser: async () => cookie.authenticated ? { data: { user: { id: 'account-1' } }, error: null } : { data: { user: null }, error: { message: 'invalid' } } },
     from(table: string) {
@@ -36,7 +40,11 @@ const { cookieState, resetDatabase, fakeClient } = vi.hoisted(() => {
           return { data: found ?? null, error: null }
         },
         then(resolve: (value: unknown) => void) {
-          if (table === 'services') return resolve({ data: db.services, error: null })
+          if (table === 'services') {
+            return resolve(servicesUnavailable
+              ? { data: null, error: { message: 'database host and credential must never be logged' } }
+              : { data: db.services, error: null })
+          }
           if (table === 'provider_services') {
             const serviceId = filters.find(([, pair]) => pair.startsWith('service_id:'))?.[1].slice('service_id:'.length)
             const rows = db.providerServices.filter((row) => row.service_id === serviceId).map((row) => ({ providers: db.providers.find((provider) => provider.id === row.provider_id) ?? null }))
@@ -55,7 +63,14 @@ const { cookieState, resetDatabase, fakeClient } = vi.hoisted(() => {
       return api
     },
   }))
-  return { cookieState: cookie, resetDatabase: reset, fakeClient: client }
+  return {
+    cookieState: cookie,
+    resetDatabase: reset,
+    fakeClient: client,
+    setServicesUnavailable: () => {
+      servicesUnavailable = true
+    },
+  }
 })
 
 vi.mock('../../lib/db/client', () => ({ anonClient: fakeClient }))
@@ -146,6 +161,27 @@ describe('FR-14 and EC-11 lifecycle matrix', () => {
 })
 
 describe('FR-11 discovery endpoints', () => {
+  test('databaseOutageReturnsDegradedEnvelopeAndStructuredPhiFreeLog', async function databaseOutageReturnsDegradedEnvelopeAndStructuredPhiFreeLog() {
+    setServicesUnavailable()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const response = await servicesRoute(new Request('http://localhost/api/services'))
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: 'services_unavailable',
+      message: 'Services are temporarily unavailable.',
+    })
+    expect(error).toHaveBeenCalledOnce()
+    expect(error).toHaveBeenCalledWith(JSON.stringify({
+      op: 'services.list',
+      dependency: 'database',
+      outcome: 'down',
+    }))
+    expect(error.mock.calls.flat().join(' ')).not.toMatch(/host|credential|stack|patient/i)
+    error.mockRestore()
+  })
+
   test('endpointWireShapesExposeOnlyDiscoveryFields', async () => {
     expect(await (await servicesRoute(new Request('http://localhost/api/services'))).json()).toEqual({ services: [{ id: serviceId, slug: 'renal', name: 'Renal ultrasound' }] })
     expect(await (await providersRoute(new Request(`http://localhost/api/providers?serviceId=${serviceId}`))).json()).toEqual({ providers: [{ id: providerId, fullName: 'Dr. Ada', timeZone: 'America/Chicago' }] })

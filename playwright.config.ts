@@ -1,6 +1,8 @@
 import { defineConfig } from '@playwright/test'
 import { config } from './lib/config'
 
+const externalBaseUrl = config.playwrightBaseUrl
+
 // baseURL is derived from config.port (ARCHITECTURE.md §9) — never a literal,
 // so a second worktree booting on its own PORT never collides with this one.
 export default defineConfig({
@@ -10,7 +12,7 @@ export default defineConfig({
   projects: [
     {
       name: 'product',
-      testIgnore: /e[012345]-wiring\.spec\.ts/,
+      testIgnore: /e[0123458]-wiring\.spec\.ts/,
     },
     {
       // The E2 fixture exposes mutable identity and audit state. Running it
@@ -48,14 +50,16 @@ export default defineConfig({
     },
   ],
   use: {
-    baseURL: `http://localhost:${config.port}`,
+    baseURL: externalBaseUrl ?? `http://localhost:${config.port}`,
   },
   // Boots the fake Supabase Auth server plus the real Next app against it
   // (e2e/fixtures/start-test-server.mjs, JOR-229) — first `next dev` compile
   // can be slow, hence the generous timeout.
-  webServer: {
-    command: 'node e2e/fixtures/start-test-server.mjs',
-    url: `http://localhost:${config.port}`,
-    timeout: 120_000,
-  },
+  ...(externalBaseUrl ? {} : {
+    webServer: {
+      command: 'node e2e/fixtures/start-test-server.mjs',
+      url: `http://localhost:${config.port}`,
+      timeout: 120_000,
+    },
+  }),
 })

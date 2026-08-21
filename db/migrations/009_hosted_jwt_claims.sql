@@ -3,14 +3,25 @@
 -- schema privileges, so keep their narrow adapter here.
 create or replace function current_request_user_id() returns uuid
 language plpgsql stable security definer set search_path = public as $$
+declare
+  v_claims text;
 begin
-  return (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid;
+  v_claims := nullif(current_setting('request.jwt.claims', true), '');
+  if v_claims is not null then
+    return (v_claims::jsonb ->> 'sub')::uuid;
+  end if;
+  -- Local PostgREST supplies this compatibility setting; malformed hosted
+  -- claims still reach the exception below and fail closed.
+  return nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
 exception when invalid_text_representation then
   return null;
 end $$;
 
 revoke all on function current_request_user_id() from public;
 grant execute on function current_request_user_id() to booking_executor;
+grant execute on function current_patient_id() to booking_executor;
+grant execute on function current_provider_id() to booking_executor;
+grant execute on function is_admin() to booking_executor;
 
 create or replace function current_patient_id() returns uuid
 language plpgsql stable security definer set search_path = public as $$
