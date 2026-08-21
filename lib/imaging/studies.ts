@@ -88,6 +88,7 @@ export async function studyDetail(client: Client, studyId: string): Promise<Reco
     id: study.id,
     description: study.description,
     occurredAt: visit.occurred_at,
+    imageSigningFailed: signed.some((entry) => entry.batchFailed),
     images: images.map((image) => ({
       id: image.id,
       width: image.width,

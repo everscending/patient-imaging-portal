@@ -8,7 +8,7 @@ import { config } from '../../../../lib/config'
 import { studyDetail } from '../../../../lib/imaging/studies'
 import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
 
-type StudyManifest = { description: string; images: ImageViewerProps['images'] }
+type StudyManifest = { description: string; imageSigningFailed: boolean; images: ImageViewerProps['images'] }
 
 async function getStudy(studyId: string): Promise<StudyManifest> {
   const callerId = await resolveCallerId()
@@ -36,7 +36,7 @@ export default async function StudyPage({ params }: { params: Promise<{ studyId:
   return (
     <main>
       <h1>{study.description}</h1>
-      <ImageViewer images={study.images} shareLinkTtlHours={config.shareLinkTtlHours} variant="portal" />
+      <ImageViewer images={study.images} signingFailed={study.imageSigningFailed} shareLinkTtlHours={config.shareLinkTtlHours} variant="portal" />
     </main>
   )
 }
