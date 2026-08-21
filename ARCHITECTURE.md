@@ -2034,7 +2034,7 @@ same runner, so they cannot drift.
 
 | Tier | Runs |
 |------|------|
-| `logic` | `tsc --noEmit`, eslint, `vitest run` |
+| `logic` | `tsc --noEmit`, eslint, unit tests, and CQ-1 coverage across the unit + database-backed integration Vitest projects |
 | `api` | `logic` + integration tests against a migrated test database |
 | `ui` | `api` + the exact Playwright/JSON-validator inventory below |
 

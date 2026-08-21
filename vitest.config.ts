@@ -1,17 +1,32 @@
 import { defineConfig } from 'vitest/config'
 
-// Two projects (ARCHITECTURE.md §15): `unit` is everything tests/** except
-// tests/integration/**, run by the `logic` tier; `integration` is
-// tests/integration/** plus the named booking concurrency proof, run by the
-// `api` tier against a migrated
-// pip_run_<random> database via tests/setup/postgres.ts's globalSetup
-// (ADR-0013). Coverage is configured so CQ-1's 80% threshold has a reporter
-// to enforce against once a later ticket sets it — no threshold here yet.
+// CQ-1 coverage runs the `unit` and `integration` Vitest projects in `logic`
+// (ARCHITECTURE.md §15). `integration` includes tests/integration/** plus the
+// named booking concurrency proof and uses a migrated pip_run_<random>
+// database via tests/setup/postgres.ts's globalSetup (ADR-0013). `api` also
+// runs `integration` without coverage. CQ-1 measures only its named core logic.
 export default defineConfig({
   test: {
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
+      include: [
+        'lib/access/guard.ts',
+        'lib/access/identity.ts',
+        'lib/imaging/signing.ts',
+        'lib/imaging/studies.ts',
+        'lib/notify/reminders.ts',
+        'lib/reports/reports.ts',
+        'lib/scheduling/booking.ts',
+        'lib/scheduling/lifecycle.ts',
+        'lib/share/links.ts',
+      ],
+      thresholds: {
+        statements: 80,
+        branches: 80,
+        functions: 80,
+        lines: 80,
+      },
     },
     // One shared pip-testpg container per machine (ADR-0013) — integration
     // test files that create their own pip_run_* databases must not run

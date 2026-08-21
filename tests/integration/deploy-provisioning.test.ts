@@ -256,5 +256,5 @@ describe('deployed provisioning program', () => {
     await expect(
       provisionSeed({ ...config, seedSourceSeed: 'changed-source' }, storage, authAdmin, sql),
     ).rejects.toThrow('applied seed does not match this checkout')
-  }, 90_000)
+  }, 150_000)
 })
