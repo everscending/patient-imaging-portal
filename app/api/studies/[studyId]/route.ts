@@ -1,4 +1,4 @@
-import { authenticatePhiRequest, guardAuthenticatedPhiAccess, type Actor } from '../../../../lib/access/guard'
+import { authenticatePhiRequest, guardAuthenticatedPhiAccess } from '../../../../lib/access/guard'
 import { anonClient } from '../../../../lib/db/client'
 import { studyDetail } from '../../../../lib/imaging/studies'
 import { parseParams, studyParamsSchema } from '../../../../lib/validation'
@@ -10,27 +10,17 @@ function denied(status: 401 | 403 | 404): Response {
   return errorResponse(404, 'not_found', 'The requested resource was not found.')
 }
 
-async function resolveActor(accessToken: string, userId: string): Promise<Actor> {
-  const client = anonClient(accessToken)
-  const [{ data: admin }, { data: provider }] = await Promise.all([
-    client.from('staff_admins').select('id').eq('user_id', userId).maybeSingle(),
-    client.from('providers').select('id').eq('user_id', userId).maybeSingle(),
-  ])
-  if (admin) return { kind: 'admin', userId }
-  if (provider) return { kind: 'provider', userId }
-  return { kind: 'patient', userId }
-}
-
 export async function GET(_: Request, context: { params: Promise<Record<string, string>> }): Promise<Response> {
   const authentication = await authenticatePhiRequest()
   const session = authentication.status === 'authenticated' ? authentication.session : null
   const parsed = parseParams(studyParamsSchema, await context.params)
   if (!parsed.ok) return parsed.response
-  const actor = session ? await resolveActor(session.accessToken, session.userId) : { kind: 'patient' as const, userId: '' }
   let access
   try {
+    // The guard round classifies the account itself — patient, provider, or
+    // admin — so the route never spends a round resolving the role first.
     access = await guardAuthenticatedPhiAccess(
-      actor,
+      { kind: 'account', userId: session?.userId ?? '' },
       { kind: 'study', id: parsed.value.studyId },
       'study.view',
       authentication,

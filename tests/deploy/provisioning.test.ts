@@ -29,6 +29,7 @@ describe('deployed schema provisioning', () => {
       '010_patient_imaging_access_grant.sql',
       '010_profile_deletion_requests.sql',
       '011_report_detail_access.sql',
+      '012_study_access_classification.sql',
     ])
 
     const program = buildMigrationProgram(files)

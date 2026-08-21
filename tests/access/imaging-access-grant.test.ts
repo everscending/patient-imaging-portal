@@ -4,7 +4,7 @@ vi.mock('server-only', () => ({}))
 vi.mock('../../lib/config', () => ({ config: {} }))
 
 type GrantResponse = {
-  data: { patient_id: string | null; status: number } | null
+  data: { patient_id: string | null; status: number; actor_kind?: string } | null
   error: { message: string } | null
 }
 
@@ -127,6 +127,66 @@ describe('patient imaging access grant dependency round', () => {
 
     await expect(result).resolves.toEqual({ ok: false, status: 404 })
     expect(auditWrites).toEqual([])
+  })
+
+  test('a study grant classifies the caller in the same round it decides and audits', async () => {
+    let settled = false
+    const result = guardPhiAccess(
+      { kind: 'account', userId: 'account-1' },
+      { kind: 'study', id: 'study-1' },
+      'study.view',
+    ).finally(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => expect(rpcCalls).toHaveLength(1))
+    // A mutant that resolves the actor first reaches from('staff_admins') and
+    // from('providers'), which the client mock refuses.
+    expect(rpcCalls).toEqual([{ name: 'grant_study_access', input: { p_study_id: 'study-1' } }])
+    expect(legacyReads).toEqual([])
+    expect(auditWrites).toEqual([])
+    expect(settled).toBe(false)
+
+    resolveGrant({ data: { actor_kind: 'provider', patient_id: 'patient-1', status: 200 }, error: null })
+
+    await expect(result).resolves.toEqual({ ok: true, patientId: 'patient-1' })
+    expect(auditWrites).toEqual([])
+  })
+
+  test('a classified study denial keeps its status without a second application audit write', async () => {
+    const result = guardPhiAccess(
+      { kind: 'account', userId: 'account-1' },
+      { kind: 'study', id: 'study-1' },
+      'study.view',
+    )
+
+    await vi.waitFor(() => expect(rpcCalls).toHaveLength(1))
+    resolveGrant({ data: { actor_kind: 'patient', patient_id: null, status: 403 }, error: null })
+
+    await expect(result).resolves.toEqual({ ok: false, status: 403 })
+    expect(legacyReads).toEqual([])
+    expect(auditWrites).toEqual([])
+  })
+
+  test('a failed classified study round appends one denial before the sanitized dependency error', async () => {
+    const result = guardPhiAccess(
+      { kind: 'account', userId: 'account-1' },
+      { kind: 'study', id: 'study-1' },
+      'study.view',
+    )
+
+    await vi.waitFor(() => expect(rpcCalls).toHaveLength(1))
+    resolveGrant({ data: null, error: { message: 'SECRET_ADAPTER_ERROR' } })
+
+    await expect(result).rejects.toThrow('guardPhiAccess: authorization dependency unavailable')
+    expect(auditWrites).toEqual([expect.objectContaining({
+      actorKind: 'account',
+      actorRef: 'account-1',
+      action: 'study.view',
+      targetKind: 'study',
+      targetId: 'study-1',
+      outcome: 'denied',
+    })])
   })
 
   test('a failed grant round appends one denial before the sanitized dependency error', async () => {

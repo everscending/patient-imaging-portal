@@ -973,6 +973,7 @@ export type Actor =
   | { kind: 'patient';          userId: string }
   | { kind: 'provider';         userId: string }
   | { kind: 'admin';            userId: string }
+  | { kind: 'account';          userId: string } // role resolved by the grant
   | { kind: 'share_recipient';  shareLinkId: string }
   | { kind: 'anonymous' }
 
@@ -1049,13 +1050,14 @@ Storage signing begin only after the awaited function returns. Other actor and
 target combinations keep using `lib/audit/events.ts`.
 
 **Ownership means something different per actor kind, and the guard owns all
-five definitions** — no route handler writes its own:
+six definitions** — no route handler writes its own:
 
 | Actor | Requires the FR-2 link? | "Owns the target" means |
 |-------|:---------------------:|-------------------------|
 | `patient` | **yes** | the target's `patient_id` is the caller's patient |
 | `provider` | no | the target's `provider_id` is the caller's provider — for a study or report, via its visit |
 | `admin` | no | always true, and **always audited** (SEC-2 scopes admin access and requires it logged) |
+| `account` | resolved | an unclassified authenticated caller: one grant round classifies it as `admin`, else `provider`, else `patient`, then applies that kind's rule above |
 | `share_recipient` | n/a | the target is the exact resource the validated token names, and nothing else |
 | `anonymous` | n/a | nothing; an unresolved share token is always denied |
 

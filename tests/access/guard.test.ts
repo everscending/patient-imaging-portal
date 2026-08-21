@@ -731,6 +731,7 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
+  | { kind: 'account'; userId: string }
   | { kind: 'share_recipient'; shareLinkId: string }
   | { kind: 'anonymous' }`,
     )

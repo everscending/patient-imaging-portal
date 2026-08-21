@@ -465,6 +465,7 @@ const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
 const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
 const APPLY_AVAILABILITY_RPC_PATH = ['/rest/v1/rpc/apply', 'provider', 'availability'].join('_')
 const PATIENT_IMAGING_GRANT_RPC_PATH = '/rest/v1/rpc/grant_patient_imaging_access'
+const STUDY_ACCESS_RPC_PATH = '/rest/v1/rpc/grant_study_access'
 const PROFILE_DELETION_RPC_PATH = '/rest/v1/rpc/request_profile_deletion'
 
 export type FakeAuthServer = {
@@ -810,6 +811,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const rawLimit = url.searchParams.get('limit')
     const limit = rawLimit === null ? null : Number(rawLimit)
     return limit !== null && Number.isInteger(limit) && limit >= 0 ? rows.slice(0, limit) : rows
+  }
+
+  function withVisit(study: FakeStudy): FakeStudy & { visits: FakeVisit | null } {
+    return { ...study, visits: VISITS.find((visit) => visit.id === study.visit_id) ?? null }
   }
 
   function sendPostgrestRows(req: IncomingMessage, res: ServerResponse, rows: unknown[]): void {
@@ -1359,6 +1364,21 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
 
+    // The manifest reads embed the study's visit (and, from a clip, the study
+    // that carries it) so one request answers what three used to.
+    if (url.pathname === '/rest/v1/studies') {
+      sendPostgrestRows(req, res, patientScopedRows(req, url, STUDIES).map(withVisit))
+      return
+    }
+
+    if (url.pathname === '/rest/v1/cine_clips') {
+      sendPostgrestRows(req, res, patientScopedRows(req, url, CINE_CLIPS).map((clip) => {
+        const study = STUDIES.find((row) => row.id === clip.study_id)
+        return { ...clip, studies: study ? withVisit(study) : null }
+      }))
+      return
+    }
+
     const tableRows = SEEDED_PATIENT_TABLES.get(url.pathname) as Array<Record<string, unknown> & { patient_id: string }> | undefined
     if (tableRows !== undefined) {
       sendPostgrestRows(req, res, patientScopedRows(req, url, tableRows))
@@ -1530,6 +1550,58 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, {
       patient_id: owned ? patient.id : null,
       status: patient ? (owned ? 200 : 404) : 403,
+    })
+  }
+
+  // db/migrations/012_study_access_classification.sql classifies the caller
+  // and decides study access in the round that also appends the audit row, so
+  // the study-detail route no longer resolves the role itself. Admin outranks
+  // provider; a provider needs the study's visit; a patient needs the study's
+  // patient_id; an account with no identity link is 403 either way.
+  async function handleStudyAccessGrant(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const studyId = (await readJsonBody(req)).p_study_id
+    if (typeof studyId !== 'string') {
+      sendJson(res, 400, { message: 'unsupported imaging target' })
+      return
+    }
+
+    const study = STUDIES.find((row) => row.id === studyId)
+    const visit = VISITS.find((row) => row.id === study?.visit_id)
+    const callerProvider = providers.find((row) => row.user_id === caller.id)
+    const callerPatient = patients.find((row) => row.user_id === caller.id)
+    const isAdmin = staffAdminUserIds.has(caller.id)
+    const actorKind = isAdmin ? 'admin' : callerProvider ? 'provider' : 'patient'
+    const granted = study !== undefined && (
+      isAdmin
+        ? true
+        : callerProvider
+          ? visit?.provider_id === callerProvider.id
+          : callerPatient !== undefined && study.patient_id === callerPatient.id
+    )
+    auditEvents.push({
+      id: nextAuditEventId++,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: 'study.view',
+      target_kind: 'study',
+      target_id: studyId,
+      outcome: granted ? 'granted' : 'denied',
+      detail: null,
+      occurred_at: new Date().toISOString(),
+    })
+    sendJson(res, 200, {
+      actor_kind: actorKind,
+      patient_id: granted ? study.patient_id : null,
+      status: granted ? 200 : (actorKind === 'patient' && !callerPatient ? 403 : 404),
     })
   }
 
@@ -1906,6 +1978,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === PATIENT_IMAGING_GRANT_RPC_PATH) {
       void handlePatientImagingGrant(req, res)
+      return
+    }
+    if (url.pathname === STUDY_ACCESS_RPC_PATH) {
+      void handleStudyAccessGrant(req, res)
       return
     }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
