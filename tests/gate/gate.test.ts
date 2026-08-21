@@ -282,7 +282,7 @@ describe('Next worktree root — regression: a lane watches only its own checkou
 
   test('adversarial_removingPollingFallback_recreatesNativeWatcherRisk', () => {
     const mutant = runnerSource.replace(
-      /\nif \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n}/,
+      /\n\s*if \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n\s*}/,
       '',
     )
 

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -64,4 +64,14 @@ async function main() {
 
 // Only run the launcher when this file is invoked directly (the CLI), not
 // when imported for its exports (tests/scripts/run-next-env.test.ts).
-if (import.meta.url === `file://${process.argv[1]}`) await main()
+// Realpath both sides: argv[1] may reach here through a symlink (macOS /var
+// → /private/var) while import.meta.url is already resolved.
+function isCliEntry() {
+  if (!process.argv[1]) return false
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+if (isCliEntry()) await main()
