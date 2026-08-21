@@ -38,6 +38,7 @@ gates:
     - "npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e10-wiring.spec.ts"
+    - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e12-wiring.spec.ts"

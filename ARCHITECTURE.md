@@ -2049,6 +2049,7 @@ single JSON report is then validated for each mandatory specification:
 5. `e2e/empty-states.spec.ts`
 6. `e2e/responsive.spec.ts`
 7. `e2e/accessibility.spec.ts`
+8. `e2e/e9-wiring.spec.ts`
 8. `e2e/e2-wiring.spec.ts`
 9. `e2e/e3-wiring.spec.ts`
 10. `e2e/e4-wiring.spec.ts`

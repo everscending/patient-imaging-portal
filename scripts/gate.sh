@@ -86,6 +86,7 @@ run_ui() {
   step PLAYWRIGHT npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring
   step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
   step PLAYWRIGHT_E10_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e10-wiring.spec.ts
+  step PLAYWRIGHT_E9_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts
   step PLAYWRIGHT_E5_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts
   step PLAYWRIGHT_E7_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts
   step PLAYWRIGHT_E12_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e12-wiring.spec.ts

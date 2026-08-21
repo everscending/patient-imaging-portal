@@ -73,6 +73,9 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     )
     expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts',
+    )
+    expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
     )
     expect(ui).toContain(
