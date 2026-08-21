@@ -1365,6 +1365,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       target_kind: targetKind,
       target_id: targetId,
       outcome: owned ? 'granted' : 'denied',
+      detail: null,
       occurred_at: new Date().toISOString(),
     })
     sendJson(res, 200, {
