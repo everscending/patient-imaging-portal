@@ -2,11 +2,10 @@
 // configured to an isolated local proxy in front of the credential-free DEL-4
 // Supabase runtime. Changing the proxy mode therefore pulls a dependency at
 // the application's configured wire boundary; no product route is replaced.
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomInt, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { env } from 'node:process'
 
@@ -14,7 +13,9 @@ import { expect, request as playwrightRequest, test, type APIRequestContext } fr
 
 import { DEMO_ACCOUNT_PASSWORD, DEMO_PATIENT_EMAIL, DEMO_PROVIDER_EMAIL } from '../db/seed/rows'
 
-const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
+import { cloneScratchWorktree, getRepoRoot, startLocalRuntime, stopChild, stopLocalRuntime, unusedPort, waitForApp } from './fixtures/local-runtime'
+
+const REPO_ROOT = getRepoRoot()
 
 type Dependency = 'database' | 'storage' | null
 type Boundary = { url: string; setDown: (dependency: Dependency) => void; close: () => Promise<void> }
@@ -90,71 +91,6 @@ async function startBoundary(target: string): Promise<Boundary> {
       server.closeAllConnections()
     }),
   }
-}
-
-async function unusedPort(): Promise<number> {
-  const server = createServer()
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const address = server.address()
-  if (address === null || typeof address === 'string') throw new Error('E10 application port is unavailable')
-  await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
-  return address.port
-}
-
-function parseEnvironment(raw: string): Record<string, string> {
-  return Object.fromEntries(
-    raw.split('\n').flatMap((line) => {
-      const trimmed = line.trim()
-      if (trimmed === '' || trimmed.startsWith('#')) return []
-      const separator = trimmed.indexOf('=')
-      if (separator === -1) return []
-      const value = trimmed.slice(separator + 1).replace(/^['"]|['"]$/g, '')
-      return [[trimmed.slice(0, separator), value]]
-    }),
-  )
-}
-
-function startLocalRuntime(): Record<string, string> {
-  const output = execFileSync('bash', ['scripts/local-del4-runtime.sh', 'run', 'env'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    env: { ...env, PORT: '45332' },
-    timeout: 300_000,
-  })
-  const values = parseEnvironment(output)
-  for (const key of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SOURCE_REF_SALT']) {
-    if (!values[key]) throw new Error(`E10 local runtime did not expose ${key}`)
-  }
-  return values
-}
-
-async function waitForApp(child: ChildProcess): Promise<void> {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
-    if (child.exitCode !== null) throw new Error(`E10 app exited (${child.exitCode}):\n${appOutput}`)
-    try {
-      const response = await fetch(`${appUrl}/api/health`)
-      if (response.status === 200) return
-    } catch {
-      // Next's first dev compile is still in progress.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-  throw new Error(`E10 app did not become ready:\n${appOutput}`)
-}
-
-async function stopChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => child.kill('SIGKILL'), 5_000)
-    child.once('exit', () => {
-      clearTimeout(timeout)
-      resolve()
-    })
-    child.kill('SIGTERM')
-  })
 }
 
 async function expectEnvelope(response: Awaited<ReturnType<APIRequestContext['get']>>): Promise<void> {
@@ -235,13 +171,11 @@ async function freshEmptyPatientRequest(): Promise<APIRequestContext> {
 test.describe.serial('JOR-232 E10 outage wiring', () => {
   test.beforeAll(async () => {
     test.setTimeout(360_000)
-    localEnvironment = startLocalRuntime()
+    localEnvironment = startLocalRuntime(REPO_ROOT, await unusedPort('E10'), 'E10')
     localSupabaseUrl = localEnvironment.NEXT_PUBLIC_SUPABASE_URL!
     boundary = await startBoundary(localSupabaseUrl)
-    scratchDir = await mkdtemp(path.join(tmpdir(), 'e10-wiring-'))
-    execFileSync('git', ['clone', '--local', '--no-hardlinks', '--quiet', REPO_ROOT, scratchDir])
-    await symlink(path.join(REPO_ROOT, 'node_modules'), path.join(scratchDir, 'node_modules'), 'dir')
-    const port = await unusedPort()
+    scratchDir = await cloneScratchWorktree(REPO_ROOT, 'e10-wiring-')
+    const port = await unusedPort('E10')
     appUrl = `http://127.0.0.1:${port}`
     app = spawn(process.execPath, [path.join(scratchDir, 'scripts', 'run-next.mjs'), 'dev'], {
       cwd: scratchDir,
@@ -263,7 +197,7 @@ test.describe.serial('JOR-232 E10 outage wiring', () => {
     })
     app.stdout?.on('data', (chunk: Buffer) => (appOutput += chunk.toString()))
     app.stderr?.on('data', (chunk: Buffer) => (appOutput += chunk.toString()))
-    await waitForApp(app)
+    await waitForApp({ child: app, appUrl, getOutput: () => appOutput, label: 'E10' })
   })
 
   test.afterEach(() => boundary.setDown(null))
@@ -272,7 +206,7 @@ test.describe.serial('JOR-232 E10 outage wiring', () => {
     if (app) await stopChild(app)
     if (boundary) await boundary.close()
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true })
-    execFileSync('bash', ['scripts/local-del4-runtime.sh', 'stop'], { cwd: REPO_ROOT, timeout: 120_000 })
+    stopLocalRuntime(REPO_ROOT)
   })
 
   test('mandatory adversarial: database outage never becomes an unhandled 500', async () => {

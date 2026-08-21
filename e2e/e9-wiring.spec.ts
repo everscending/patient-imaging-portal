@@ -3,11 +3,10 @@
 // testIgnore /e[0123458]-wiring\.spec\.ts/ omits 9, so this file isn't
 // excluded there — intentional (see ARCHITECTURE.md §15), not an accident
 // of the character class.
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { mkdtemp, rm, symlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { env } from 'node:process'
 
@@ -21,7 +20,9 @@ import {
 } from '../db/seed/rows'
 import { scanArtifact, SEED_ROWS } from '../tests/adversarial/log-scan-engine'
 
-const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
+import { cloneScratchWorktree, getRepoRoot, startLocalRuntime, stopChild, stopLocalRuntime, unusedPort, waitForApp } from './fixtures/local-runtime'
+
+const REPO_ROOT = getRepoRoot()
 
 let app: ChildProcess
 let appOutput = ''
@@ -53,66 +54,6 @@ type AuditLogEntry = {
   outcome: 'granted' | 'denied'
   targetId: string | null
   targetKind: string
-}
-
-function parseEnvironment(raw: string): Record<string, string> {
-  return Object.fromEntries(raw.split('\n').flatMap((line) => {
-    const separator = line.indexOf('=')
-    if (separator < 1) return []
-    return [[line.slice(0, separator), line.slice(separator + 1).replace(/^['"]|['"]$/g, '')]]
-  }))
-}
-
-function startLocalRuntime(port: number): Record<string, string> {
-  const output = execFileSync('bash', ['scripts/local-del4-runtime.sh', 'run', 'env'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    env: { ...env, PORT: String(port) },
-    timeout: 300_000,
-  })
-  const values = parseEnvironment(output)
-  for (const key of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SOURCE_REF_SALT']) {
-    if (!values[key]) throw new Error(`E9 local runtime did not expose ${key}`)
-  }
-  return values
-}
-
-async function unusedPort(): Promise<number> {
-  const { createServer } = await import('node:http')
-  const server = createServer()
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('E9 app port is unavailable')
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-  return address.port
-}
-
-async function waitForApp(): Promise<void> {
-  for (let attempt = 0; attempt < 240; attempt += 1) {
-    if (app.exitCode !== null) throw new Error(`E9 app exited (${app.exitCode}):\n${appOutput}`)
-    try {
-      if ((await fetch(`${appUrl}/api/health`)).status === 200) return
-    } catch {
-      // Next's first development compile is still in progress.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-  throw new Error(`E9 app did not become ready:\n${appOutput}`)
-}
-
-async function stopChild(): Promise<void> {
-  if (app.exitCode !== null) return
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => app.kill('SIGKILL'), 5_000)
-    app.once('exit', () => {
-      clearTimeout(timeout)
-      resolve()
-    })
-    app.kill('SIGTERM')
-  })
 }
 
 function serviceHeaders(prefer?: string): Record<string, string> {
@@ -179,12 +120,10 @@ function requireSeededFixture<T>(rows: T[], description: string): T {
 test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
   test.beforeAll(async () => {
     test.setTimeout(360_000)
-    localEnvironment = startLocalRuntime(await unusedPort())
+    localEnvironment = startLocalRuntime(REPO_ROOT, await unusedPort('E9'), 'E9')
     localSupabaseUrl = localEnvironment.NEXT_PUBLIC_SUPABASE_URL!
-    scratchDir = await mkdtemp(path.join(tmpdir(), 'e9-wiring-'))
-    execFileSync('git', ['clone', '--local', '--no-hardlinks', '--quiet', REPO_ROOT, scratchDir])
-    await symlink(path.join(REPO_ROOT, 'node_modules'), path.join(scratchDir, 'node_modules'), 'dir')
-    const port = await unusedPort()
+    scratchDir = await cloneScratchWorktree(REPO_ROOT, 'e9-wiring-')
+    const port = await unusedPort('E9')
     appUrl = `http://127.0.0.1:${port}`
     app = spawn(process.execPath, [path.join(scratchDir, 'scripts', 'run-next.mjs'), 'dev'], {
       cwd: scratchDir,
@@ -193,13 +132,13 @@ test.describe.serial('JOR-230 E9 cross-patient hardening wiring', () => {
     })
     app.stdout?.on('data', (chunk: Buffer) => (appOutput += chunk.toString()))
     app.stderr?.on('data', (chunk: Buffer) => (appOutput += chunk.toString()))
-    await waitForApp()
+    await waitForApp({ child: app, appUrl, getOutput: () => appOutput, label: 'E9' })
   })
 
   test.afterAll(async () => {
-    if (app) await stopChild()
+    if (app) await stopChild(app)
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true })
-    execFileSync('bash', ['scripts/local-del4-runtime.sh', 'stop'], { cwd: REPO_ROOT, timeout: 120_000 })
+    stopLocalRuntime(REPO_ROOT)
   })
 
   test('mandatory adversarial: patient guesses across every identifier surface return 404 and one audit each', async () => {
