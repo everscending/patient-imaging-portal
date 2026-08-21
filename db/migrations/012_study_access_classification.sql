@@ -12,10 +12,13 @@ returns jsonb
 language plpgsql security invoker set search_path = public as $$
 declare
   -- The classification helpers below read the subject through auth.uid(), so
-  -- this function has to agree with them on every runtime. Migration 009's
+  -- this function has to agree with them on every runtime. Migration 013's
   -- adapter is the one reader that accepts both the hosted claims object and
   -- the local PostgREST compatibility setting; reading the claim directly here
-  -- would raise on the local runtime while the helpers still resolved.
+  -- would raise on the local runtime while the helpers still resolved. It
+  -- resolves current_request_user_id() at call time against whatever
+  -- migration 013 has installed by then, not the narrower version 009 defines
+  -- at this migration's own apply time.
   v_actor_id uuid := current_request_user_id();
   v_actor_kind text;
   v_provider_id uuid;
