@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 
 export type ShareResourceKind = 'image' | 'report'
@@ -86,7 +86,7 @@ export function ShareDialogPanel({
       >
         <div className="pip-share-heading">
           <h2 id={titleId}>Share secure link</h2>
-          <button aria-label="Close share dialog" className="pip-button-secondary" onClick={onClose} type="button">
+          <button aria-label="Close share dialog" autoFocus className="pip-button-secondary" onClick={onClose} type="button">
             Close
           </button>
         </div>
@@ -144,6 +144,7 @@ export function ShareDialogPanel({
 }
 
 export function ShareDialog({ resourceKind, resourceId, shareLinkTtlHours, triggerLabel = 'Share' }: ShareDialogProps) {
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [presentation, setPresentation] = useState<Presentation>('dialog')
   const [recipientEmail, setRecipientEmail] = useState('')
@@ -159,12 +160,24 @@ export function ShareDialog({ resourceKind, resourceId, shareLinkTtlHours, trigg
     return () => query.removeEventListener('change', updatePresentation)
   }, [])
 
-  function close(): void {
+  const close = useCallback((): void => {
     setOpen(false)
     setRecipientEmail('')
     setValidationError(null)
     setState({ kind: 'form' })
-  }
+    window.requestAnimationFrame(() => triggerRef.current?.focus())
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      close()
+    }
+    document.addEventListener('keydown', dismiss)
+    return () => document.removeEventListener('keydown', dismiss)
+  }, [close, open])
 
   async function submit(): Promise<void> {
     const trimmedEmail = recipientEmail.trim()
@@ -187,7 +200,7 @@ export function ShareDialog({ resourceKind, resourceId, shareLinkTtlHours, trigg
 
   return (
     <>
-      <button aria-haspopup="dialog" className="pip-button-secondary" data-testid="share-create" onClick={() => setOpen(true)} type="button">
+      <button ref={triggerRef} aria-haspopup="dialog" className="pip-button-secondary" data-testid="share-create" onClick={() => setOpen(true)} type="button">
         {triggerLabel}
       </button>
       {open ? (

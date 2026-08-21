@@ -26,6 +26,12 @@ describe('deployed schema provisioning', () => {
       '008_transition_appointment.sql',
       '009_anonymous_audit_actor.sql',
       '009_hosted_jwt_claims.sql',
+      '010_patient_imaging_access_grant.sql',
+      '010_profile_deletion_requests.sql',
+      '011_report_detail_access.sql',
+      '012_study_access_classification.sql',
+      '013_local_claim_compat.sql',
+      '014_patient_imaging_access_local_compat.sql',
     ])
 
     const program = buildMigrationProgram(files)
@@ -65,6 +71,9 @@ describe('deployed schema provisioning', () => {
     expect(GRANTS).toContain('grant execute on function current_patient_id() to app_user')
     expect(GRANTS).toContain('grant execute on function current_provider_id() to app_user')
     expect(GRANTS).toContain('grant execute on function is_admin() to app_user')
+    expect(
+      readMigrationFiles().find((file) => file.name === '010_profile_deletion_requests.sql')?.sql,
+    ).toContain('grant execute on function request_profile_deletion(boolean) to app_user')
   })
 
   test('shell requires psql and secrets by name without placing their values in arguments', () => {

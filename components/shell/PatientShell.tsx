@@ -10,6 +10,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
+import Wordmark from '../branding/Wordmark'
 
 const DESTINATIONS = [
   { href: '/studies', label: 'Imaging' },
@@ -23,9 +24,11 @@ function isCurrent(pathname: string, href: string): boolean {
 }
 
 export default function PatientShell({
+  practiceName,
   patientName,
   children,
 }: {
+  practiceName: string
   patientName: string
   children: ReactNode
 }) {
@@ -34,6 +37,7 @@ export default function PatientShell({
   return (
     <div className="pip-shell">
       <aside className="pip-shell-sidebar" data-testid="patient-sidebar" aria-label="Patient navigation">
+        <Wordmark name={practiceName} />
         <p className="pip-shell-patient-name">{patientName}</p>
         <nav aria-label="Primary">
           {DESTINATIONS.map((destination) => (

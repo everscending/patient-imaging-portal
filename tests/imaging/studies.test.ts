@@ -63,9 +63,22 @@ vi.mock('../../lib/config', () => ({ config: { signedUrlTtlSeconds: 120 } }))
 
 type Data = Record<string, Array<Record<string, unknown>>>
 
-function client(data: Data): never {
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((release) => {
+    resolve = release
+  })
+  return { promise, resolve }
+}
+
+// One entry per PostgREST round the manifest code issues, so a mutant that
+// restores a dependent visit lookup is visible as an extra read.
+const reads: string[] = []
+
+function client(data: Data, errors: Record<string, unknown> = {}): never {
   return {
     from(table: string) {
+      reads.push(table)
       const filters: Array<[string, unknown]> = []
       const query = {
         select() {
@@ -79,10 +92,13 @@ function client(data: Data): never {
           return query
         },
         async maybeSingle() {
-          return { data: (data[table] ?? []).find((item) => filters.every(([key, value]) => item[key] === value)) ?? null, error: null }
+          return { data: (data[table] ?? []).find((item) => filters.every(([key, value]) => item[key] === value)) ?? null, error: errors[table] ?? null }
         },
-        then(resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown) {
-          return Promise.resolve({ data: (data[table] ?? []).filter((item) => filters.every(([key, value]) => item[key] === value)), error: null }).then(resolve)
+        then(resolve: (value: { data: Record<string, unknown>[]; error: unknown }) => unknown) {
+          return Promise.resolve({
+            data: (data[table] ?? []).filter((item) => filters.every(([key, value]) => item[key] === value)),
+            error: errors[table] ?? null,
+          }).then(resolve)
         },
       }
       return query
@@ -90,29 +106,149 @@ function client(data: Data): never {
   } as never
 }
 
+function controlledClient(data: Data, blockedTables: string[]) {
+  const started = new Set<string>()
+  const controls = new Map(blockedTables.map((table) => [table, deferred<void>()]))
+
+  function waitForRelease(table: string): Promise<void> {
+    started.add(table)
+    return controls.get(table)?.promise ?? Promise.resolve()
+  }
+
+  const controlled = {
+    from(table: string) {
+      const filters: Array<[string, unknown]> = []
+      const matchingRows = () => (data[table] ?? []).filter((item) => filters.every(([key, value]) => item[key] === value))
+      const query = {
+        select() {
+          return query
+        },
+        eq(key: string, value: unknown) {
+          filters.push([key, value])
+          return query
+        },
+        order() {
+          return query
+        },
+        async maybeSingle() {
+          await waitForRelease(table)
+          return { data: matchingRows()[0] ?? null, error: null }
+        },
+        then(
+          resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown,
+          reject: (reason: unknown) => unknown,
+        ) {
+          return waitForRelease(table)
+            .then((): { data: Record<string, unknown>[]; error: null } => ({ data: matchingRows(), error: null }))
+            .then(resolve, reject)
+        },
+      }
+      return query
+    },
+  } as never
+
+  return {
+    client: controlled,
+    started,
+    release(table: string) {
+      const control = controls.get(table)
+      if (!control) throw new Error(`No controlled read for ${table}`)
+      control.resolve()
+    },
+  }
+}
+
 const studyId = '11111111-1111-4111-8111-111111111111'
 const clipId = '22222222-2222-4222-8222-222222222222'
 const authenticated = { status: 'authenticated', session: { accessToken: 'caller-token', userId: 'account-1' } }
 const unauthenticated = { status: 'unauthenticated' }
 
-beforeEach(() => reset())
+const completedVisit = { id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }
+
+beforeEach(() => {
+  reads.length = 0
+  reset()
+})
+
+describe('independent manifest work starts concurrently', () => {
+  test('studyDetailPipelinesInputIndependentReadsBeforeAnyCompletes', async function studyDetailPipelinesInputIndependentReadsBeforeAnyCompletes() {
+    const { studyDetail } = await import('../../lib/imaging/studies')
+    const reads = controlledClient(
+      {
+        studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit }],
+        images: [],
+        cine_clips: [],
+      },
+      ['studies', 'images', 'cine_clips'],
+    )
+
+    const result = studyDetail(reads.client, studyId)
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['studies', 'images', 'cine_clips'])))
+
+    reads.release('studies')
+    reads.release('images')
+    reads.release('cine_clips')
+    await expect(result).resolves.toMatchObject({ id: studyId, images: [], clips: [] })
+  })
+
+  test('studyDetailStartsImageAndPosterSigningBeforeEitherCompletes', async function studyDetailStartsImageAndPosterSigningBeforeEitherCompletes() {
+    const { studyDetail } = await import('../../lib/imaging/studies')
+    const imageSigning = deferred<Array<{ key: string; url: string; available: true }>>()
+    const posterSigning = deferred<Array<{ key: string; url: string; available: true }>>()
+    signingMock.mockImplementation((keys: string[]) => (keys.includes('poster-secret') ? posterSigning.promise : imageSigning.promise))
+
+    const result = studyDetail(
+      client({
+        studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit }],
+        images: [{ id: 'image-1', study_id: studyId, width: 10, height: 20, ordinal: 0, storage_key: 'image-secret', thumb_key: null }],
+        cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: 'poster-secret' }],
+      }),
+      studyId,
+    )
+
+    await vi.waitFor(() => expect(signingMock).toHaveBeenCalledTimes(2))
+    imageSigning.resolve([{ key: 'image-secret', url: 'https://signed.example/image-secret', available: true }])
+    posterSigning.resolve([{ key: 'poster-secret', url: 'https://signed.example/poster-secret', available: true }])
+    await expect(result).resolves.toMatchObject({
+      images: [{ url: 'https://signed.example/image-secret' }],
+      clips: [{ posterUrl: 'https://signed.example/poster-secret' }],
+    })
+  })
+
+  test('clipManifestPipelinesInputIndependentReadsBeforeAnyCompletes', async function clipManifestPipelinesInputIndependentReadsBeforeAnyCompletes() {
+    const { clipManifest } = await import('../../lib/imaging/studies')
+    const reads = controlledClient(
+      {
+        cine_clips: [{
+          id: clipId,
+          study_id: studyId,
+          frame_count: 1,
+          default_fps: 12,
+          poster_key: null,
+          studies: { id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit },
+        }],
+        cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-secret' }],
+      },
+      ['cine_clips', 'cine_frames'],
+    )
+
+    const result = clipManifest(reads.client, studyId, clipId)
+    await vi.waitFor(() => expect(reads.started).toEqual(new Set(['cine_clips', 'cine_frames'])))
+
+    reads.release('cine_clips')
+    reads.release('cine_frames')
+    await expect(result).resolves.toMatchObject({ id: clipId, frames: [{ index: 0, available: true }] })
+  })
+})
 
 describe('mandatory adversarial: guard target, audit count, and ownership are enforced before data reads', () => {
-  test('studyDetailKeepsDualRoleAdminAuthority', async function studyDetailKeepsDualRoleAdminAuthority() {
+  test('studyDetailClassifiesTheCallerInsideItsOneGuardRound', async function studyDetailClassifiesTheCallerInsideItsOneGuardRound() {
+    // Staff and provider rows exist for this account: a mutant that resolves
+    // the role in the route would read them in a round of its own.
     anonMock.mockReturnValue(client({
       staff_admins: [{ id: 'admin-1', user_id: 'account-1' }],
       providers: [{ id: 'provider-1', user_id: 'account-1' }],
     }))
-    guardMock.mockResolvedValue({ ok: false, status: 404 })
-    const { GET } = await import('../../app/api/studies/[studyId]/route')
-
-    await GET(new Request(`http://test/api/studies/${studyId}`), { params: Promise.resolve({ studyId }) })
-
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'admin', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
-  })
-
-  test('studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision', async function studyDetailResolvesProviderRoleBeforeOneForeignOwnershipDecision() {
-    anonMock.mockReturnValue(client({ providers: [{ id: 'provider-1', user_id: 'account-1' }] }))
     guardMock.mockResolvedValue({ ok: false, status: 404 })
     const { GET } = await import('../../app/api/studies/[studyId]/route')
 
@@ -121,7 +257,9 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'not_found', message: 'The requested resource was not found.' })
     expect(guardMock).toHaveBeenCalledTimes(1)
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'provider', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'account', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    expect(anonMock).not.toHaveBeenCalled()
+    expect(reads).toEqual([])
   })
 
   test('studyDetailKeepsPatientUnlinkedAndAnonymousDenials', async function studyDetailKeepsPatientUnlinkedAndAnonymousDenials() {
@@ -138,8 +276,8 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     expect(await unlinked.json()).toEqual({ error: 'identity_verification_required', message: 'Verify your identity to continue.' })
     expect(anonymous.status).toBe(401)
     expect(await anonymous.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
-    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
-    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view', unauthenticated)
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'account', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'account', userId: '' }, { kind: 'study', id: studyId }, 'study.view', unauthenticated)
   })
 
   test('listGuardsOnceWithCollectionTarget', async function listGuardsOnceWithCollectionTarget() {
@@ -159,15 +297,14 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     const { GET } = await import('../../app/api/studies/[studyId]/route')
     const response = await GET(new Request('http://test/api/studies/x'), { params: Promise.resolve({ studyId }) })
     expect(response.status).toBe(404)
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
-    expect(anonMock).toHaveBeenCalledOnce()
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'account', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    expect(anonMock).not.toHaveBeenCalled()
     expect(signingMock).not.toHaveBeenCalled()
   })
 
   test('owningAuthenticatedPatientReadsStudyDetail', async function owningAuthenticatedPatientReadsStudyDetail() {
     anonMock.mockReturnValue(client({
-      studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1' }],
-      visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+      studies: [{ id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit }],
       providers: [{ id: 'provider-1', full_name: 'Own Provider' }],
       images: [],
       cine_clips: [],
@@ -178,7 +315,32 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
 
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ id: studyId, description: 'Owned study', images: [], clips: [] })
-    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'account', userId: 'account-1' }, { kind: 'study', id: studyId }, 'study.view', authenticated)
+    // The detail read carries the visit with it; a dependent visits round is a mutant.
+    expect(reads).toEqual(['studies', 'images', 'cine_clips'])
+  })
+
+  test('clipManifestCarriesItsStudyAndVisitInTheOpeningRound', async function clipManifestCarriesItsStudyAndVisitInTheOpeningRound() {
+    const { clipManifest } = await import('../../lib/imaging/studies')
+
+    const manifest = await clipManifest(
+      client({
+        cine_clips: [{
+          id: clipId,
+          study_id: studyId,
+          frame_count: 1,
+          default_fps: 12,
+          poster_key: null,
+          studies: { id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit },
+        }],
+        cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-a' }],
+      }),
+      studyId,
+      clipId,
+    )
+
+    expect(manifest).toMatchObject({ id: clipId, frameCount: 1 })
+    expect(reads).toEqual(['cine_clips', 'cine_frames'])
   })
 
   test('unauthenticatedDetailAndClipReadsReachTheirAuditedGuards', async function unauthenticatedDetailAndClipReadsReachTheirAuditedGuards() {
@@ -190,18 +352,39 @@ describe('mandatory adversarial: guard target, audit count, and ownership are en
     const clipResponse = await clipGet(new Request(`http://test/api/studies/${studyId}/clips/${clipId}`), { params: Promise.resolve({ studyId, clipId }) })
 
     expect([studyResponse.status, clipResponse.status]).toEqual([401, 401])
-    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'patient', userId: '' }, { kind: 'study', id: studyId }, 'study.view', unauthenticated)
+    expect(guardMock).toHaveBeenNthCalledWith(1, { kind: 'account', userId: '' }, { kind: 'study', id: studyId }, 'study.view', unauthenticated)
     expect(guardMock).toHaveBeenNthCalledWith(2, { kind: 'patient', userId: '' }, { kind: 'clip', id: clipId }, 'clip.view', unauthenticated)
     expect(JSON.stringify([await studyResponse.json(), await clipResponse.json()])).not.toMatch(new RegExp(`${studyId}|${clipId}`))
   })
 })
 
 describe('mandatory adversarial: incomplete visits and malformed ids reveal neither records nor signatures', () => {
+  test('speculativeReadsPreserveMissingAndGenericErrorSemantics', async function speculativeReadsPreserveMissingAndGenericErrorSemantics() {
+    const { studyDetail, clipManifest } = await import('../../lib/imaging/studies')
+    const complete = {
+      studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1', visits: completedVisit }],
+      cine_clips: [{
+        id: clipId,
+        study_id: studyId,
+        frame_count: 1,
+        default_fps: 12,
+        poster_key: null,
+        studies: { id: studyId, description: 'private description', visit_id: 'visit-1', visits: completedVisit },
+      }],
+    }
+
+    await expect(studyDetail(client({}, { images: new Error('private database detail') }), studyId)).resolves.toBeNull()
+    await expect(clipManifest(client({}, { cine_frames: new Error('private database detail') }), studyId, clipId)).resolves.toBeNull()
+    await expect(studyDetail(client(complete, { images: new Error('private database detail') }), studyId)).rejects.toThrow('studies: caller-scoped read failed')
+    await expect(clipManifest(client(complete, { cine_frames: new Error('private database detail') }), studyId, clipId)).rejects.toThrow('studies: caller-scoped read failed')
+  })
+
   test('rfc3339VisitTimestampKeepsItsExplicitOffsetInListAndDetailDtos', async function rfc3339VisitTimestampKeepsItsExplicitOffsetInListAndDetailDtos() {
     const { listStudies, studyDetail } = await import('../../lib/imaging/studies')
+    const visit = { id: 'visit-1', status: 'completed', occurred_at: '2026-08-16T23:58:59.000-04:00', provider_id: 'provider-1' }
     const data = {
-      studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
-      visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-08-16T23:58:59.000-04:00', provider_id: 'provider-1' }],
+      studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1', visits: visit }],
+      visits: [visit],
       providers: [{ id: 'provider-1', full_name: 'Dr Example' }],
       images: [],
       cine_clips: [],
@@ -213,10 +396,12 @@ describe('mandatory adversarial: incomplete visits and malformed ids reveal neit
 
   test('incompleteVisitIsHiddenFromEveryManifest', async function incompleteVisitIsHiddenFromEveryManifest() {
     const { listStudies, studyDetail, clipManifest } = await import('../../lib/imaging/studies')
+    const visit = { id: 'visit-1', status: 'scheduled', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }
+    const study = { id: studyId, description: 'private description', visit_id: 'visit-1', visits: visit }
     const data = {
-      studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
-      visits: [{ id: 'visit-1', status: 'scheduled', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
-      cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: null }],
+      studies: [study],
+      visits: [visit],
+      cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: null, studies: study }],
     }
     expect(await listStudies(client(data))).toEqual({ studies: [] })
     expect(await studyDetail(client(data), studyId)).toBeNull()
@@ -239,9 +424,14 @@ describe('mandatory adversarial: frames preserve their declared indexing and kee
     const { normalizeClipPayload } = await import('../../app/(patient)/studies/[studyId]/clips/[clipId]/clip-payload')
     const manifest = await clipManifest(
       client({
-        cine_clips: [{ id: clipId, study_id: studyId, frame_count: 2, default_fps: 17, poster_key: null }],
-        studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
-        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        cine_clips: [{
+          id: clipId,
+          study_id: studyId,
+          frame_count: 2,
+          default_fps: 17,
+          poster_key: null,
+          studies: { id: studyId, description: 'private description', visit_id: 'visit-1', visits: completedVisit },
+        }],
         cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-a' }],
       }),
       studyId,
@@ -269,9 +459,14 @@ describe('mandatory adversarial: frames preserve their declared indexing and kee
     const { clipManifest } = await import('../../lib/imaging/studies')
     const result = await clipManifest(
       client({
-        cine_clips: [{ id: clipId, study_id: studyId, frame_count: 4, default_fps: 17, poster_key: 'poster-secret' }],
-        studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1' }],
-        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        cine_clips: [{
+          id: clipId,
+          study_id: studyId,
+          frame_count: 4,
+          default_fps: 17,
+          poster_key: 'poster-secret',
+          studies: { id: studyId, description: 'private description', visit_id: 'visit-1', visits: completedVisit },
+        }],
         cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-a' }, { clip_id: clipId, frame_index: 2, storage_key: 'missing-object' }],
       }),
       studyId,
@@ -290,8 +485,7 @@ describe('mandatory adversarial: frames preserve their declared indexing and kee
     const { studyDetail } = await import('../../lib/imaging/studies')
     const result = await studyDetail(
       client({
-        studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1', patient_id: 'leak-me' }],
-        visits: [{ id: 'visit-1', status: 'completed', occurred_at: '2026-01-01T00:00:00Z', provider_id: 'provider-1' }],
+        studies: [{ id: studyId, description: 'private description', visit_id: 'visit-1', patient_id: 'leak-me', visits: completedVisit }],
         images: [{ id: 'image-1', study_id: studyId, width: 10, height: 20, ordinal: 0, storage_key: 'secret-storage-key', thumb_key: 'thumb-storage-key' }],
         cine_clips: [{ id: clipId, study_id: studyId, frame_count: 1, default_fps: 12, poster_key: 'poster-secret' }],
       }),

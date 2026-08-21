@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,6 +29,17 @@ function psql(dbName: string, sql: string): string {
   ).trim()
 }
 
+/** Like `psql`, but never throws — returns the real exit status and stderr so a
+ *  failing run can be asserted on directly instead of just catching a thrown Error. */
+function runProgram(dbName: string, sql: string): { status: number | null; stderr: string } {
+  const result = spawnSync(
+    'docker',
+    ['exec', '-i', CONTAINER, 'psql', '-U', 'postgres', '-d', dbName, '-v', 'ON_ERROR_STOP=1', '-tAq', '-f', '-'],
+    { encoding: 'utf8', input: sql },
+  )
+  return { status: result.status, stderr: result.stderr }
+}
+
 const PLATFORM_STUB = `
 create schema storage;
 create table storage.buckets (id text primary key, name text not null, public boolean not null default false);
@@ -40,6 +51,9 @@ do $$ begin
     create role authenticated nologin noinherit;
   else
     alter role authenticated noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin noinherit;
   end if;
 end $$;
 `
@@ -64,7 +78,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('11')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('17')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')
@@ -81,6 +95,64 @@ describe('deployed provisioning program', () => {
         "select has_function_privilege('anon', 'link_patient_identity(uuid,uuid,text,text,timestamptz)', 'execute');",
       ),
     ).toBe('f')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('authenticated', 'grant_patient_imaging_access(text,uuid)', 'execute');",
+      ),
+    ).toBe('t')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('anon', 'grant_patient_imaging_access(text,uuid)', 'execute');",
+      ),
+    ).toBe('f')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('service_role', 'grant_patient_imaging_access(text,uuid)', 'execute');",
+      ),
+    ).toBe('f')
+    expect(
+      psql(
+        run.dbName,
+        "select has_function_privilege('authenticated', 'grant_study_access(uuid)', 'execute');",
+      ),
+    ).toBe('t')
+    expect(
+      psql(run.dbName, "select has_function_privilege('anon', 'grant_study_access(uuid)', 'execute');"),
+    ).toBe('f')
+    expect(
+      psql(run.dbName, "select has_function_privilege('service_role', 'grant_study_access(uuid)', 'execute');"),
+    ).toBe('f')
+    expect(
+      psql(run.dbName, "select has_function_privilege('authenticated', 'read_report_detail(uuid)', 'execute');"),
+    ).toBe('t')
+    expect(
+      psql(run.dbName, "select has_function_privilege('anon', 'read_report_detail(uuid)', 'execute');"),
+    ).toBe('f')
+  }, 60_000)
+
+  test('a drifted recorded checksum fails the program loudly instead of silently skipping later migrations', () => {
+    const files = readMigrationFiles()
+    const program = buildMigrationProgram(files)
+    const target = files[0]
+
+    psql(
+      run.dbName,
+      `update app_deploy.schema_migrations set checksum = 'deadbeef' where filename = '${target.name}';`,
+    )
+    try {
+      const result = runProgram(run.dbName, program)
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain(`${target.name}: applied migration checksum changed`)
+      expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('17')
+    } finally {
+      psql(
+        run.dbName,
+        `update app_deploy.schema_migrations set checksum = '${target.checksum}' where filename = '${target.name}';`,
+      )
+    }
   }, 60_000)
 
   test('retries a partial seed, stays idempotent, and rejects row-shaping input drift', async () => {
@@ -229,5 +301,5 @@ describe('deployed provisioning program', () => {
     await expect(
       provisionSeed({ ...config, seedSourceSeed: 'changed-source' }, storage, authAdmin, sql),
     ).rejects.toThrow('applied seed does not match this checkout')
-  }, 90_000)
+  }, 150_000)
 })

@@ -3,14 +3,18 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 import type { AuditAction } from '../audit/events'
-import { recordPhiAccessDecision } from '../audit/events'
+import { recordPhiAccessDecision, recordRequiredPhiAccessDecision } from '../audit/events'
 import { anonClient, authClient, serviceClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
 
+// `account` is an authenticated caller whose role is not resolved yet: the
+// grant round classifies it as patient, provider or admin while it decides, so
+// a route never spends a round of its own on the role first.
 export type Actor =
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
+  | { kind: 'account'; userId: string }
   | { kind: 'share_recipient'; shareLinkId: string }
   | { kind: 'anonymous' }
 
@@ -20,6 +24,7 @@ export type PhiTarget =
   | { kind: 'clip'; id: string }
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
+  | { kind: 'patient'; id: string | null }
   | { kind: 'schedule'; id: string } // id = provider id
   | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
@@ -57,6 +62,7 @@ function actorAuditFields(actor: Actor): { actorKind: 'account' | 'share_recipie
     case 'patient':
     case 'provider':
     case 'admin':
+    case 'account':
       // The supplied account id is only a claim until the session is
       // authenticated. Missing/invalid sessions must not attribute an
       // elevated audit write to that unauthenticated value.
@@ -88,6 +94,7 @@ function targetAuditFields(target: PhiTarget): { targetKind: string; targetId: s
     case 'clip':
     case 'report':
     case 'appointment':
+    case 'patient':
     case 'schedule':
     case 'share_link':
       return { targetKind: target.kind, targetId: target.id }
@@ -116,6 +123,7 @@ type ReportWithStudyRow = { id: string; patient_id: string; study_id: string }
 type StudyRow = { id: string; patient_id: string; visit_id: string }
 type VisitRow = { id: string }
 type ShareLinkRow = { id: string; patient_id: string; image_id: string | null; report_id: string | null; expires_at: string; revoked_at: string | null }
+type PatientImagingGrantRow = { patient_id: string | null; status: number }
 
 // study/image/clip/appointment share the same ownership shape for a patient
 // or an admin actor: one row, keyed by id (and by patient_id for a patient).
@@ -199,6 +207,22 @@ async function decidePatientReport(client: Client, reportId: string, patientId: 
   return { ok: true, patientId }
 }
 
+// One caller-scoped round that decides access and appends the single audit row
+// inside the same transaction — so the caller must not write a granted row of
+// its own. `decide` marks these results `auditRecorded`.
+async function decideImagingGrant(client: Client, rpc: string, args: Record<string, string>): Promise<GuardResult> {
+  const { data, error } = await client.rpc(rpc, args)
+  const grant = data as PatientImagingGrantRow | null
+  if (error || !grant) throw new Error('guard: authorization dependency read failed')
+  if (grant.status === 200 && typeof grant.patient_id === 'string') {
+    return { ok: true, patientId: grant.patient_id }
+  }
+  if ((grant.status === 403 || grant.status === 404) && grant.patient_id === null) {
+    return { ok: false, status: grant.status }
+  }
+  throw new Error('guard: authorization dependency returned an invalid grant')
+}
+
 async function decidePatient(client: Client, userId: string, target: PhiTarget): Promise<GuardResult> {
   // §4: the identity link is patients.user_id, read through the caller's own
   // client under the patients_self policy — zero rows for an unlinked or
@@ -208,6 +232,10 @@ async function decidePatient(client: Client, userId: string, target: PhiTarget):
   const patientId = patient.id
 
   switch (target.kind) {
+    case 'patient':
+      return target.id === null || target.id === patientId
+        ? { ok: true, patientId }
+        : { ok: false, status: 404 }
     case 'collection':
       // §5/ADR-0012: no per-item check — there is no named item. Rows
       // themselves stay scoped by RLS; this grant never widens what returns.
@@ -279,6 +307,7 @@ async function decideProvider(client: Client, userId: string, target: PhiTarget)
       return { ok: true, patientId: null }
     case 'audit_log':
     case 'share_link':
+    case 'patient':
       return { ok: false, status: 404 }
     case 'image':
     case 'clip':
@@ -318,6 +347,7 @@ async function decideAdmin(client: Client, userId: string, target: PhiTarget): P
       // audit write happens unconditionally in guardPhiAccess below.
       return { ok: true, patientId: null }
     case 'share_link':
+    case 'patient':
       return { ok: false, status: 404 }
     case 'schedule': {
       const provider = await fetchRow<ProviderRow>(client, 'providers', 'id', [['id', target.id]])
@@ -366,9 +396,15 @@ type AccessDecision = {
   authenticatedUserId?: string
   session?: AuthenticatedSession
   dependencyFailed?: boolean
+  auditRecorded?: boolean
 }
 
-async function decide(actor: Actor, target: PhiTarget, authentication?: SessionAuthentication): Promise<AccessDecision> {
+async function decide(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  authentication?: SessionAuthentication,
+): Promise<AccessDecision> {
   if (actor.kind === 'anonymous') return { result: { ok: false, status: 404 } }
 
   if (actor.kind === 'share_recipient') {
@@ -394,8 +430,36 @@ async function decide(actor: Actor, target: PhiTarget, authentication?: SessionA
 
   try {
     switch (actor.kind) {
-      case 'patient':
+      case 'account': {
+        // The only actor kind that arrives unclassified; the study grant round
+        // resolves the role, the ownership decision, and the audit together.
+        if (target.kind !== 'study' || action !== 'study.view') {
+          throw new Error('guard: an unclassified account actor decides only study.view')
+        }
+        return {
+          result: await decideImagingGrant(client, 'grant_study_access', { p_study_id: target.id }),
+          authenticatedUserId,
+          session: sessionResult.session,
+          auditRecorded: true,
+        }
+      }
+      case 'patient': {
+        if (
+          (target.kind === 'study' && action === 'study.view')
+          || (target.kind === 'clip' && action === 'clip.view')
+        ) {
+          return {
+            result: await decideImagingGrant(client, 'grant_patient_imaging_access', {
+              p_target_kind: target.kind,
+              p_target_id: target.id,
+            }),
+            authenticatedUserId,
+            session: sessionResult.session,
+            auditRecorded: true,
+          }
+        }
         return { result: await decidePatient(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
+      }
       case 'provider':
         return { result: await decideProvider(client, authenticatedUserId, target), authenticatedUserId, session: sessionResult.session }
       case 'admin':
@@ -413,21 +477,30 @@ async function guardWithAuthentication(
   target: PhiTarget,
   action: AuditAction,
   authentication?: SessionAuthentication,
+  options?: { grantedAudit: 'transactional-rpc' },
 ): Promise<GuardResult> {
   const { actorKind, actorRef } = actorAuditFields(actor)
   const { targetKind, targetId } = targetAuditFields(target)
 
-  const accessDecision = await decide(actor, target, authentication)
+  const accessDecision = await decide(actor, target, action, authentication)
   const decision = accessDecision.result
 
-  await recordPhiAccessDecision({
-    actorKind,
-    actorRef: accessDecision.authenticatedUserId ?? actorRef,
-    action: recordedAction(target, action),
-    targetKind,
-    targetId,
-    outcome: decision.ok ? 'granted' : 'denied',
-  }, accessDecision.session)
+  if (!accessDecision.auditRecorded) {
+    const audit = {
+      actorKind,
+      actorRef: accessDecision.authenticatedUserId ?? actorRef,
+      action: recordedAction(target, action),
+      targetKind,
+      targetId,
+      outcome: decision.ok ? 'granted' : 'denied',
+    } as const
+
+    if (options?.grantedAudit === 'transactional-rpc') {
+      if (!decision.ok) await recordRequiredPhiAccessDecision(audit, accessDecision.session)
+    } else {
+      await recordPhiAccessDecision(audit, accessDecision.session)
+    }
+  }
 
   if (accessDecision.dependencyFailed) {
     throw new Error('guardPhiAccess: authorization dependency unavailable')
@@ -438,14 +511,19 @@ async function guardWithAuthentication(
 
 /**
  * Authenticates the session, checks the identity link and ownership, and
- * writes exactly one audit event either way. Never throws for an authorization failure —
- * the caller maps `status` straight to a response.
+ * writes exactly one audit event either way. An ADR-0014 transaction may own
+ * the granted row; its denials remain required here and fail closed.
  *
  * Ownership failure returns 404, never 403: a 403 confirms the resource
  * exists, which is itself a cross-patient leak under FR-6.
  */
-export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {
-  return guardWithAuthentication(actor, target, action)
+export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+): Promise<GuardResult> {
+  return guardWithAuthentication(actor, target, action, undefined, options)
 }
 
 /** Reuses one guard-authenticated request for authorization and its awaited
@@ -455,9 +533,10 @@ export async function guardAuthenticatedPhiAccess(
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
 ): Promise<GuardResult> {
   if (!phiRequestAuthentications.has(authentication)) {
     throw new Error('guardPhiAccess: invalid request authentication')
   }
-  return guardWithAuthentication(actor, target, action, authentication)
+  return guardWithAuthentication(actor, target, action, authentication, options)
 }

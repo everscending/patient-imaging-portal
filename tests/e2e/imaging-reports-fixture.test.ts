@@ -4,6 +4,8 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  E2_FOREIGN_CLIP_ID,
+  E2_FOREIGN_STUDY_ID,
   E2_PROVIDER_ID,
   E2_SEEDED_CLIP_ID,
   E2_SEEDED_IMAGE_ID,
@@ -36,12 +38,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 }
 
 async function linkedPatientToken(patientRef: string): Promise<string> {
-  const signup = await request('/auth/v1/signup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: `jor-289-${randomUUID()}@example.test`, password: 'FixturePassword9' }),
-  })
-  const created = (await signup.json()) as { access_token: string; user: { id: string } }
+  const created = await accountSession()
   const patients = (await (await request(`/rest/v1/patients?patient_ref=eq.${patientRef}`)).json()) as Array<{ id: string }>
   expect(patients).toHaveLength(1)
   const linked = await request('/rest/v1/rpc/link_patient_identity', {
@@ -57,6 +54,17 @@ async function linkedPatientToken(patientRef: string): Promise<string> {
   })
   expect(await linked.json()).toBe('linked_now')
   return created.access_token
+}
+
+async function accountSession(): Promise<{ access_token: string; user: { id: string } }> {
+  const signup = await request('/auth/v1/signup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `jor-289-${randomUUID()}@example.test`, password: 'FixturePassword9' }),
+  })
+  const created = (await signup.json()) as { access_token: string; user: { id: string } }
+  expect(signup.status).toBe(200)
+  return created
 }
 
 async function patientRows(path: string, token: string): Promise<Row[]> {
@@ -75,6 +83,188 @@ async function patientObject(path: string, token: string): Promise<Row | null> {
   expect(response.status).toBe(200)
   return (await response.json()) as Row | null
 }
+
+async function imagingGrant(kind: 'study' | 'clip', id: string, token: string): Promise<Response> {
+  return request('/rest/v1/rpc/grant_patient_imaging_access', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_target_kind: kind, p_target_id: id }),
+  })
+}
+
+describe('JOR-303 patient imaging access-grant fixture', () => {
+  test('linked patient study and clip grants each return ownership and append one correlated audit', async () => {
+    const token = await linkedPatientToken('PT-4471')
+
+    const study = await imagingGrant('study', E2_SEEDED_STUDY_ID, token)
+    const clip = await imagingGrant('clip', E2_SEEDED_CLIP_ID, token)
+
+    expect(study.status).toBe(200)
+    expect(await study.json()).toEqual({ patient_id: '44714471-4471-4471-8471-447144714471', status: 200 })
+    expect(clip.status).toBe(200)
+    expect(await clip.json()).toEqual({ patient_id: '44714471-4471-4471-8471-447144714471', status: 200 })
+
+    const state = (await (await request('/__test__/identity-state')).json()) as {
+      patients: Array<{ patient_ref: string; user_id: string | null }>
+      auditEvents: Row[]
+    }
+    const actorId = state.patients.find((patient) => patient.patient_ref === 'PT-4471')?.user_id
+    expect(actorId).toEqual(expect.any(String))
+    expect(state.auditEvents).toEqual([
+      expect.objectContaining({
+        actor_kind: 'account',
+        actor_ref: actorId,
+        action: 'study.view',
+        target_kind: 'study',
+        target_id: E2_SEEDED_STUDY_ID,
+        outcome: 'granted',
+      }),
+      expect.objectContaining({
+        actor_kind: 'account',
+        actor_ref: actorId,
+        action: 'clip.view',
+        target_kind: 'clip',
+        target_id: E2_SEEDED_CLIP_ID,
+        outcome: 'granted',
+      }),
+    ])
+  })
+
+  test('unlinked, foreign, and missing targets return opaque denials with one audit each', async () => {
+    const unlinked = await accountSession()
+    const unlinkedGrant = await imagingGrant('study', E2_SEEDED_STUDY_ID, unlinked.access_token)
+    expect(unlinkedGrant.status).toBe(200)
+    expect(await unlinkedGrant.json()).toEqual({ patient_id: null, status: 403 })
+
+    const token = await linkedPatientToken('PT-4471')
+    const denials = await Promise.all([
+      imagingGrant('study', E2_FOREIGN_STUDY_ID, token),
+      imagingGrant('study', randomUUID(), token),
+      imagingGrant('clip', E2_FOREIGN_CLIP_ID, token),
+      imagingGrant('clip', randomUUID(), token),
+    ])
+    for (const denial of denials) {
+      expect(denial.status).toBe(200)
+      expect(await denial.json()).toEqual({ patient_id: null, status: 404 })
+    }
+
+    const state = (await (await request('/__test__/identity-state')).json()) as { auditEvents: Row[] }
+    expect(state.auditEvents).toHaveLength(5)
+    expect(state.auditEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        actor_ref: unlinked.user.id,
+        action: 'study.view',
+        target_kind: 'study',
+        target_id: E2_SEEDED_STUDY_ID,
+        outcome: 'denied',
+      }),
+      expect.objectContaining({
+        action: 'study.view',
+        target_kind: 'study',
+        target_id: E2_FOREIGN_STUDY_ID,
+        outcome: 'denied',
+      }),
+      expect.objectContaining({
+        action: 'clip.view',
+        target_kind: 'clip',
+        target_id: E2_FOREIGN_CLIP_ID,
+        outcome: 'denied',
+      }),
+    ]))
+  })
+
+  test('requires an authenticated account and rejects unsupported targets without auditing', async () => {
+    const unauthenticated = await request('/rest/v1/rpc/grant_patient_imaging_access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_target_kind: 'study', p_target_id: E2_SEEDED_STUDY_ID }),
+    })
+    expect(unauthenticated.status).toBe(401)
+
+    const serviceRole = await request('/rest/v1/rpc/grant_patient_imaging_access', {
+      method: 'POST',
+      headers: {
+        apikey: 'fixture-service-role',
+        Authorization: 'Bearer fixture-service-role',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_target_kind: 'study', p_target_id: E2_SEEDED_STUDY_ID }),
+    })
+    expect(serviceRole.status).toBe(401)
+
+    const account = await accountSession()
+    const unsupported = await request('/rest/v1/rpc/grant_patient_imaging_access', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${account.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_target_kind: 'report', p_target_id: E2_SEEDED_STUDY_ID }),
+    })
+    expect(unsupported.status).toBe(400)
+    expect(await unsupported.json()).toEqual({ message: 'unsupported imaging target' })
+
+    const state = (await (await request('/__test__/identity-state')).json()) as { auditEvents: Row[] }
+    expect(state.auditEvents).toEqual([])
+  })
+})
+
+describe('JOR-315 classify-with-grant study access fixture', () => {
+  async function studyAccess(id: string, token: string): Promise<Response> {
+    return request('/rest/v1/rpc/grant_study_access', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_study_id: id }),
+    })
+  }
+
+  test('one round returns the caller classification with the access decision it audited', async () => {
+    const patientToken = await linkedPatientToken('PT-4471')
+    const owned = await studyAccess(E2_SEEDED_STUDY_ID, patientToken)
+    const foreign = await studyAccess(E2_FOREIGN_STUDY_ID, patientToken)
+
+    expect(await owned.json()).toEqual({
+      actor_kind: 'patient',
+      patient_id: '44714471-4471-4471-8471-447144714471',
+      status: 200,
+    })
+    expect(await foreign.json()).toEqual({ actor_kind: 'patient', patient_id: null, status: 404 })
+
+    const unlinked = await accountSession()
+    expect(await (await studyAccess(E2_SEEDED_STUDY_ID, unlinked.access_token)).json())
+      .toEqual({ actor_kind: 'patient', patient_id: null, status: 403 })
+
+    // Staff read any patient's study; the same round says so and grants it.
+    const adminEmail = `jor-315-admin-${randomUUID()}@example.test`
+    await request('/__test__/seed-admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: adminEmail, password: 'FixturePassword9' }),
+    })
+    const adminSession = await request('/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: adminEmail, password: 'FixturePassword9' }),
+    })
+    const admin = (await adminSession.json()) as { access_token: string }
+    expect(await (await studyAccess(E2_FOREIGN_STUDY_ID, admin.access_token)).json())
+      .toEqual({ actor_kind: 'admin', patient_id: expect.any(String), status: 200 })
+
+    const state = (await (await request('/__test__/identity-state')).json()) as { auditEvents: Row[] }
+    expect(state.auditEvents.map((event) => `${String(event.action)}|${String(event.outcome)}`)).toEqual([
+      'study.view|granted', 'study.view|denied', 'study.view|denied', 'study.view|granted',
+    ])
+  })
+
+  test('an unauthenticated study grant is refused before it decides or audits', async () => {
+    const unauthenticated = await request('/rest/v1/rpc/grant_study_access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_study_id: E2_SEEDED_STUDY_ID }),
+    })
+
+    expect(unauthenticated.status).toBe(401)
+    const state = (await (await request('/__test__/identity-state')).json()) as { auditEvents: Row[] }
+    expect(state.auditEvents).toEqual([])
+  })
+})
 
 describe('JOR-289 live E3/E4 imaging fixture', () => {
   test('patientReadsReferencedProviderButCannotMutateOrReadForeignImaging', async () => {

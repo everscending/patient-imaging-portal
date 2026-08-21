@@ -55,6 +55,28 @@ const {
   const anon = vi.fn((accessToken: string) => {
     void accessToken
     return {
+    rpc(name: string, input: { p_report_id: string }) {
+      if (name !== 'read_report_detail') throw new Error(`unexpected RPC ${name}`)
+      return {
+        async maybeSingle() {
+          const row = rows.find(({ id, visible }) => id === input.p_report_id && visible !== false)
+          if (!row) return { data: null, error: null }
+          return {
+            data: {
+              id: row.id,
+              study_id: row.study_id,
+              study_description: (row.studies as { description: string }).description,
+              patient_ref: (row.patients as { patient_ref: string }).patient_ref,
+              findings: row.findings,
+              impression: row.impression,
+              signed_by_name: (row.providers as { full_name: string } | null)?.full_name ?? null,
+              signed_at: row.signed_at,
+            },
+            error: null,
+          }
+        },
+      }
+    },
     from(table: string) {
       if (!['reports', 'providers', 'staff_admins'].includes(table)) throw new Error(`unexpected table ${table}`)
       queriedTables.push(table)

@@ -55,7 +55,13 @@ vi.mock('../../lib/config', () => ({
 import { GET as resolveGet } from '../../app/api/s/[token]/route'
 import { DELETE as revokeDelete } from '../../app/api/shares/[id]/route'
 import { GET as listGet, POST as mintPost } from '../../app/api/shares/route'
-import { mintShareLink, revokeShareLink } from '../../lib/share/links'
+import {
+  listShareLinks,
+  mintShareLink,
+  resolveShareToken,
+  revokeShareLink,
+  sharedPayload,
+} from '../../lib/share/links'
 
 const LINK_ID = '11111111-1111-4111-8111-111111111111'
 const PATIENT_ID = '22222222-2222-4222-8222-222222222222'
@@ -660,5 +666,195 @@ describe('share-token resolution', () => {
       { kind: 'image', id: IMAGE_ID },
       'share.use',
     )
+  })
+})
+
+describe('share-link dependency failures stay fail-closed', () => {
+  test('mintShareLink_requiresASessionAndADurableLinkRow', async () => {
+    cookieMock.mockResolvedValueOnce({ get: () => undefined })
+    await expect(mintShareLink({
+      patientId: PATIENT_ID,
+      actorUserId: USER_ID,
+      resourceKind: 'image',
+      resourceId: IMAGE_ID,
+      recipientEmail: 'recipient@example.com',
+    })).rejects.toThrow('share: session is unavailable')
+
+    anonMock.mockReturnValue(clientFor({
+      share_links: [
+        query({ data: null, error: new Error('insert refused') }),
+        query({ data: null, error: null }),
+      ],
+    }))
+    await expect(mintShareLink({
+      patientId: PATIENT_ID,
+      actorUserId: USER_ID,
+      resourceKind: 'image',
+      resourceId: IMAGE_ID,
+      recipientEmail: 'recipient@example.com',
+    })).rejects.toThrow('share: link could not be created')
+    await expect(mintShareLink({
+      patientId: PATIENT_ID,
+      actorUserId: USER_ID,
+      resourceKind: 'report',
+      resourceId: REPORT_ID,
+      recipientEmail: 'recipient@example.com',
+    })).rejects.toThrow('share: link could not be created')
+  })
+
+  test('resolveShareToken_rejectsMalformedAndExpiredReportRowsWithOpaqueAudits', async () => {
+    serviceMock.mockReturnValue(clientFor({
+      share_links: [
+        query({ data: link({ image_id: null, report_id: null }), error: null }),
+        query({ data: link({ image_id: null, report_id: REPORT_ID, expires_at: '2026-08-16T11:59:59.000Z' }), error: null }),
+      ],
+    }))
+
+    await expect(resolveShareToken('malformed')).resolves.toEqual({ ok: false })
+    await expect(resolveShareToken('expired-report')).resolves.toEqual({ ok: false })
+    expect(guardMock).toHaveBeenNthCalledWith(1,
+      { kind: 'share_recipient', shareLinkId: LINK_ID },
+      { kind: 'share_link', id: null },
+      'share.use',
+    )
+    expect(guardMock).toHaveBeenNthCalledWith(2,
+      { kind: 'share_recipient', shareLinkId: LINK_ID },
+      { kind: 'report', id: REPORT_ID },
+      'share.use',
+    )
+  })
+
+  test('revokeShareLink_returnsFalseWithoutSessionAccessOrAnOwnedRow', async () => {
+    cookieMock.mockResolvedValueOnce({ get: () => undefined })
+    await expect(revokeShareLink({ id: LINK_ID, actorUserId: USER_ID })).resolves.toEqual({ ok: false })
+
+    guardMock.mockResolvedValueOnce({ ok: false, status: 404 })
+    await expect(revokeShareLink({ id: LINK_ID, actorUserId: USER_ID })).resolves.toEqual({ ok: false })
+
+    anonMock.mockReturnValue(clientFor({
+      share_links: [
+        query({ data: null, error: new Error('read refused') }),
+        query({ data: null, error: null }),
+        query({ data: link({ patient_id: OTHER_PATIENT_ID }), error: null }),
+      ],
+    }))
+    for (const id of ['read-error', 'missing', 'foreign']) {
+      await expect(revokeShareLink({ id, actorUserId: USER_ID })).resolves.toEqual({ ok: false })
+    }
+  })
+
+  test('listShareLinks_preservesGuardDenialAndTreatsNullDataAsAnEmptyList', async () => {
+    guardMock.mockResolvedValueOnce({ ok: false, status: 403 })
+    await expect(listShareLinks({ actorUserId: USER_ID, accessToken: 'caller-token' }))
+      .resolves.toEqual({ ok: false, status: 403 })
+
+    anonMock.mockReturnValue(clientFor({
+      share_links: [
+        query({ data: null, error: null }),
+        query({ data: null, error: new Error('read refused') }),
+      ],
+    }))
+    await expect(listShareLinks({ actorUserId: USER_ID, accessToken: 'caller-token' }))
+      .resolves.toEqual({ ok: true, shares: [] })
+    await expect(listShareLinks({ actorUserId: USER_ID, accessToken: 'caller-token' }))
+      .rejects.toThrow('share: links could not be read')
+  })
+
+  test('sharedPayload_returnsNullWhenAccessOrBackingRowsAreUnavailable', async () => {
+    guardMock.mockResolvedValueOnce({ ok: false, status: 404 })
+    await expect(sharedPayload({
+      ok: true,
+      shareLinkId: LINK_ID,
+      patientId: PATIENT_ID,
+      resourceKind: 'image',
+      resourceId: IMAGE_ID,
+      expiresAt: ACTIVE_UNTIL,
+    })).resolves.toBeNull()
+
+    serviceMock
+      .mockReturnValueOnce(clientFor({ images: [query({ data: null, error: null })] }))
+      .mockReturnValueOnce(clientFor({ reports: [query({
+        data: {
+          id: REPORT_ID,
+          study_id: '77777777-7777-4777-8777-777777777777',
+          findings: 'must not escape',
+          impression: 'must not escape',
+          signed_at: NOW.toISOString(),
+          studies: null,
+          patients: { patient_ref: 'PT-0001' },
+          providers: null,
+        },
+        error: null,
+      })] }))
+    await expect(sharedPayload({
+      ok: true,
+      shareLinkId: LINK_ID,
+      patientId: PATIENT_ID,
+      resourceKind: 'image',
+      resourceId: IMAGE_ID,
+      expiresAt: ACTIVE_UNTIL,
+    })).resolves.toBeNull()
+    await expect(sharedPayload({
+      ok: true,
+      shareLinkId: LINK_ID,
+      patientId: PATIENT_ID,
+      resourceKind: 'report',
+      resourceId: REPORT_ID,
+      expiresAt: ACTIVE_UNTIL,
+    })).resolves.toBeNull()
+  })
+
+  test('sharedPayload_representsUnavailableStorageObjectsAsExplicitGaps', async () => {
+    const active = link()
+    serviceMock.mockReturnValue(clientFor({
+      images: [query({
+        data: { id: IMAGE_ID, width: 640, height: 480, ordinal: 1, storage_key: 'missing-image', thumb_key: 'missing-thumb' },
+        error: null,
+      })],
+      share_links: [query({ data: active, error: null })],
+    }))
+    signMock.mockResolvedValue([])
+
+    await expect(sharedPayload({
+      ok: true,
+      shareLinkId: LINK_ID,
+      patientId: PATIENT_ID,
+      resourceKind: 'image',
+      resourceId: IMAGE_ID,
+      expiresAt: ACTIVE_UNTIL,
+    })).resolves.toMatchObject({ url: null, thumbUrl: null })
+  })
+
+  test('sharedPayload_acceptsPostgrestRelationArraysAndAnAbsentSigningProvider', async () => {
+    const activeReport = link({ image_id: null, report_id: REPORT_ID })
+    serviceMock.mockReturnValue(clientFor({
+      reports: [query({
+        data: {
+          id: REPORT_ID,
+          study_id: '77777777-7777-4777-8777-777777777777',
+          findings: 'findings',
+          impression: 'impression',
+          signed_at: NOW.toISOString(),
+          studies: [{ description: 'description' }],
+          patients: [{ patient_ref: 'PT-0001' }],
+          providers: [],
+        },
+        error: null,
+      })],
+      share_links: [query({ data: activeReport, error: null })],
+    }))
+
+    await expect(sharedPayload({
+      ok: true,
+      shareLinkId: LINK_ID,
+      patientId: PATIENT_ID,
+      resourceKind: 'report',
+      resourceId: REPORT_ID,
+      expiresAt: ACTIVE_UNTIL,
+    })).resolves.toMatchObject({
+      studyDescription: 'description',
+      patientRef: 'PT-0001',
+      signedByName: null,
+    })
   })
 })

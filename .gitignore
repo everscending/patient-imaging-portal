@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .next/
 .DS_Store
 .env
@@ -9,3 +9,5 @@ coverage/
 test-results/
 playwright-report/
 .local/
+/.worktrees/
+tests/artifacts/demo-run.log

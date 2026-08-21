@@ -127,7 +127,7 @@ type FakeBookingAppointment = { id: string; slot_id: string; patient_id: string;
 type FakeAppointment = {
   id: string
   patient_id: string
-  status: 'confirmed'
+  status: 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   out_of_hours: boolean
   created_at: string
   slots: { starts_at: string; ends_at: string }
@@ -159,6 +159,14 @@ type FakeIdentityAttempt = {
   user_id: string
   succeeded: boolean
   attempted_at: string
+}
+
+type FakeDeletionRequest = {
+  id: string
+  patient_id: string
+  requested_by: string
+  requested_at: string
+  status: 'received' | 'in_review' | 'completed' | 'declined'
 }
 
 type FakeShareLink = {
@@ -206,6 +214,16 @@ const OTHER_PATIENT: FakePatient = {
   phone: null,
 }
 
+const EMPTY_PATIENT: FakePatient = {
+  id: '66006600-6600-4600-8600-660066006600',
+  user_id: null,
+  patient_ref: 'PT-6600',
+  date_of_birth: '1990-01-02',
+  full_name: 'Empty Fixture Patient',
+  email: 'empty.fixture@example.test',
+  phone: null,
+}
+
 export const E2_PROVIDER_ID = '66336633-6633-4633-8633-663366336633'
 export const E2_OTHER_PROVIDER_ID = '66446644-6644-4644-8644-664466446644'
 export const E2_PROVIDER_EMAIL = 'avery.chen@example.test'
@@ -223,6 +241,7 @@ export const E2_SEEDED_IMAGE_ID = '10000000-0000-4000-8000-000000000001'
 export const E2_FOREIGN_STUDY_ID = 'aa77aa77-aa77-4a77-8a77-aa77aa77aa77'
 export const E2_FOREIGN_REPORT_ID = 'cc99cc99-cc99-4c99-8c99-cc99cc99cc99'
 export const E2_FOREIGN_CLIP_ID = 'ff22ff22-ff22-4f22-8f22-ff22ff22ff22'
+export const E2_FOREIGN_SHARE_ID = 'dd00dd00-dd00-4d00-8d00-dd00dd00dd00'
 export const E2_BOOK_SERVICE_ID = '77667766-7766-4766-8766-776677667766'
 export const E3_SCHEDULED_VISIT_ID = '77557755-7755-4755-8755-775577557755'
 export const E3_SCHEDULED_STUDY_ID = '99779977-9977-4977-8977-997799779977'
@@ -350,6 +369,19 @@ const IMAGES = [
     storage_key: 'full-2.png',
     thumb_key: null,
   },
+  ...Array.from({ length: 6 }, (_, index) => {
+    const ordinal = index + 3
+    return {
+      id: `10000000-0000-4000-8000-${String(ordinal).padStart(12, '0')}`,
+      patient_id: SEEDED_PATIENT.id,
+      study_id: E2_SEEDED_STUDY_ID,
+      width: 800,
+      height: 600,
+      ordinal,
+      storage_key: `full-${ordinal}.png`,
+      thumb_key: null,
+    }
+  }),
 ]
 const CINE_CLIPS = [
   {
@@ -422,6 +454,19 @@ const REPORTS: FakeReport[] = [
   },
 ]
 
+const FOREIGN_SHARE_LINK: FakeShareLink = {
+  id: E2_FOREIGN_SHARE_ID,
+  token_hash: 'f'.repeat(64),
+  patient_id: OTHER_PATIENT.id,
+  created_by: '55995599-5599-4599-8599-559955995599',
+  recipient_email: 'foreign-recipient@example.test',
+  expires_at: '2099-01-01T00:00:00.000Z',
+  revoked_at: null,
+  image_id: null,
+  report_id: E2_FOREIGN_REPORT_ID,
+  created_at: '2026-08-19T00:00:00.000Z',
+}
+
 const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
   ['/rest/v1/appointments', APPOINTMENTS],
   ['/rest/v1/visits', VISITS],
@@ -436,6 +481,9 @@ const SEEDED_PATIENT_TABLES = new Map<string, unknown[]>([
 // name it directly.
 const LINK_PATIENT_RPC_PATH = ['/rest/v1/rpc/link', 'patient', 'identity'].join('_')
 const APPLY_AVAILABILITY_RPC_PATH = ['/rest/v1/rpc/apply', 'provider', 'availability'].join('_')
+const PATIENT_IMAGING_GRANT_RPC_PATH = '/rest/v1/rpc/grant_patient_imaging_access'
+const STUDY_ACCESS_RPC_PATH = '/rest/v1/rpc/grant_study_access'
+const PROFILE_DELETION_RPC_PATH = '/rest/v1/rpc/request_profile_deletion'
 
 export type FakeAuthServer = {
   url: string
@@ -513,9 +561,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   ])
   const sessionsByToken = new Map<string, FakeSession>()
   const staffAdminUserIds = new Set<string>()
-  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
+  let patients: FakePatient[] = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
   let identityAttempts: FakeIdentityAttempt[] = []
-  let shareLinks: FakeShareLink[] = []
+  let deletionRequests: FakeDeletionRequest[] = []
+  let shareLinks: FakeShareLink[] = [{ ...FOREIGN_SHARE_LINK }]
   let emailOutbox: FakeEmailOutbox[] = []
   let providers = PROVIDERS.map((provider) => ({ ...provider }))
   let workingHours: FakeWorkingHour[] = [
@@ -525,6 +574,13 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let availabilityBlocks: FakeAvailabilityBlock[] = []
   let scheduleSlots: FakeScheduleSlot[] = []
   let scheduleAppointments: FakeScheduleAppointment[] = []
+  let patientAppointments = APPOINTMENTS.map((appointment) => ({
+    ...appointment,
+    slots: { ...appointment.slots },
+    providers: { ...appointment.providers },
+    services: { ...appointment.services },
+  }))
+  let patientAppointmentSlotIds = new Map<string, string>()
   let generatedSlotRangesByProvider = new Map<string, string[]>()
   const bookingServices = [
     { id: E2_BOOK_SERVICE_ID, slug: 'ultrasound', name: 'Ultrasound' },
@@ -538,7 +594,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   let nextAuditEventId = 1
   const calls: Record<string, number> = { signup: 0, token: 0, user: 0, updateUser: 0 }
   const callsByEmail = new Map<string, Record<string, number>>()
-  // JOR-247: health-probe reachability, toggled by e2e/degraded.spec.ts only.
+  // JOR-247/JOR-305: dependency reachability, toggled only by the committed
+  // degraded-state checks. Database outage applies to every PostgREST route,
+  // so an affected product flow cannot stay green behind a health-only fake.
   const healthState: { database: DependencyState; storage: DependencyState } = {
     database: 'ok',
     storage: 'ok',
@@ -590,13 +648,32 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   function resetBookingState(): void {
+    const createdAppointmentIds = new Set(bookingAppointments.map(({ id }) => id))
+    patientAppointments = patientAppointments.filter(({ id }) => !createdAppointmentIds.has(id))
+    for (const id of createdAppointmentIds) patientAppointmentSlotIds.delete(id)
     bookingGeneration += 1
     const start = new Date(Date.now() + 72 * 60 * 60 * 1_000)
     start.setUTCMinutes(0, 0, 0)
-    bookingSlots = [0, 1, 2].map((offset) => {
+    bookingSlots = [0, 1, 2, 3, 4].map((offset) => {
       const startsAt = new Date(start.getTime() + offset * 30 * 60 * 1_000)
       const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1_000)
       return { id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + offset + 1).padStart(12, '0')}`, provider_id: E2_OTHER_PROVIDER_ID, starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), status: 'open' }
+    })
+    const sameProviderStart = new Date(start.getTime() + 5 * 30 * 60 * 1_000)
+    bookingSlots.push({
+      id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + 6).padStart(12, '0')}`,
+      provider_id: E2_PROVIDER_ID,
+      starts_at: sameProviderStart.toISOString(),
+      ends_at: new Date(sameProviderStart.getTime() + 30 * 60 * 1_000).toISOString(),
+      status: 'open',
+    })
+    const pastSameProviderStart = new Date(Date.now() - 60 * 60 * 1_000)
+    bookingSlots.push({
+      id: `99009900-9900-4900-8900-${String(bookingGeneration * 10 + 7).padStart(12, '0')}`,
+      provider_id: E2_PROVIDER_ID,
+      starts_at: pastSameProviderStart.toISOString(),
+      ends_at: new Date(pastSameProviderStart.getTime() + 30 * 60 * 1_000).toISOString(),
+      status: 'open',
     })
     bookingAppointments = []
   }
@@ -753,6 +830,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     return limit !== null && Number.isInteger(limit) && limit >= 0 ? rows.slice(0, limit) : rows
   }
 
+  function withVisit(study: FakeStudy): FakeStudy & { visits: FakeVisit | null } {
+    return { ...study, visits: VISITS.find((visit) => visit.id === study.visit_id) ?? null }
+  }
+
   function sendPostgrestRows(req: IncomingMessage, res: ServerResponse, rows: unknown[]): void {
     const acceptsObject = String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json')
     sendJson(res, 200, acceptsObject ? (rows[0] ?? null) : rows)
@@ -818,7 +899,138 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     slot.status = 'booked'
     const appointment = { id: randomUUID(), slot_id: slot.id, patient_id: patient.id, service_id: serviceId, idempotency_key: key }
     bookingAppointments.push(appointment)
+    const provider = providers.find((candidate) => candidate.id === slot.provider_id)!
+    const service = bookingServices.find((candidate) => candidate.id === serviceId)!
+    patientAppointments.push({
+      id: appointment.id,
+      patient_id: patient.id,
+      status: 'requested',
+      out_of_hours: false,
+      created_at: new Date().toISOString(),
+      slots: { starts_at: slot.starts_at, ends_at: slot.ends_at },
+      providers: { full_name: provider.full_name, time_zone: provider.time_zone },
+      services: { name: service.name },
+    })
+    patientAppointmentSlotIds.set(appointment.id, slot.id)
     sendJson(res, 200, [bookingRpcRow(slot, serviceId, appointment, null, false)])
+  }
+
+  async function handleRescheduleAppointment(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const appointment = patientAppointments.find((candidate) =>
+      candidate.id === body.p_appointment_id && candidate.patient_id === patient?.id,
+    )
+    const slot = bookingSlots.find((candidate) => candidate.id === body.p_slot_id)
+    const provider = providers.find((candidate) => candidate.full_name === appointment?.providers.full_name)
+    if (!appointment || (appointment.status !== 'requested' && appointment.status !== 'confirmed')) {
+      sendJson(res, 200, [{ result_error: 'not_reschedulable' }])
+      return
+    }
+    if (new Date(appointment.slots.starts_at).getTime() - Date.now() <= 24 * 60 * 60 * 1_000) {
+      sendJson(res, 200, [{ result_error: 'minimum_notice' }])
+      return
+    }
+    if (
+      !slot ||
+      !provider ||
+      slot.provider_id !== provider.id ||
+      slot.status !== 'open' ||
+      !(Date.parse(slot.starts_at) > Date.now())
+    ) {
+      sendJson(res, 200, [{ result_error: 'slot_unavailable' }])
+      return
+    }
+
+    const previousSlotId = patientAppointmentSlotIds.get(appointment.id)
+    const previousSlot = previousSlotId
+      ? bookingSlots.find((candidate) => candidate.id === previousSlotId)
+      : undefined
+    if (previousSlot) {
+      previousSlot.status = 'open'
+    } else {
+      const previousProvider = providers.find((candidate) => candidate.full_name === appointment.providers.full_name)!
+      bookingSlots.push({
+        id: randomUUID(),
+        provider_id: previousProvider.id,
+        starts_at: appointment.slots.starts_at,
+        ends_at: appointment.slots.ends_at,
+        status: 'open',
+      })
+    }
+    slot.status = 'booked'
+    patientAppointmentSlotIds.set(appointment.id, slot.id)
+    appointment.slots = { starts_at: slot.starts_at, ends_at: slot.ends_at }
+    appointment.out_of_hours = false
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: new Date().toISOString(),
+      actor_kind: 'account',
+      actor_ref: caller!.id,
+      action: 'booking.reschedule',
+      target_kind: 'appointment',
+      target_id: appointment.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{
+      result_error: null,
+      appointment_id: appointment.id,
+      appointment_slot_id: slot.id,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      appointment_status: appointment.status,
+      provider_name: provider.full_name,
+      provider_time_zone: provider.time_zone,
+      service_name: appointment.services.name,
+      out_of_hours: appointment.out_of_hours,
+    }])
+  }
+
+  async function handlePatientCancelAppointment(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readJsonBody(req)
+    const caller = authenticatedUser(req)
+    const patient = caller ? patients.find((candidate) => candidate.user_id === caller.id) : undefined
+    const appointment = patientAppointments.find((candidate) =>
+      candidate.id === body.p_appointment_id && candidate.patient_id === patient?.id,
+    )
+    if (!appointment || (appointment.status !== 'requested' && appointment.status !== 'confirmed')) {
+      sendJson(res, 200, [{ result_error: 'not_reschedulable' }])
+      return
+    }
+    if (new Date(appointment.slots.starts_at).getTime() - Date.now() <= 24 * 60 * 60 * 1_000) {
+      sendJson(res, 200, [{ result_error: 'minimum_notice' }])
+      return
+    }
+
+    const provider = providers.find((candidate) => candidate.full_name === appointment.providers.full_name)!
+    const slot = bookingSlots.find((candidate) => candidate.id === patientAppointmentSlotIds.get(appointment.id))
+    if (slot) slot.status = 'open'
+    appointment.status = 'cancelled'
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: new Date().toISOString(),
+      actor_kind: 'account',
+      actor_ref: caller!.id,
+      action: 'booking.cancel',
+      target_kind: 'appointment',
+      target_id: appointment.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{
+      result_error: null,
+      appointment_id: appointment.id,
+      appointment_slot_id: slot?.id ?? null,
+      starts_at: appointment.slots.starts_at,
+      ends_at: appointment.slots.ends_at,
+      appointment_status: appointment.status,
+      provider_name: provider.full_name,
+      provider_time_zone: provider.time_zone,
+      service_name: appointment.services.name,
+      out_of_hours: appointment.out_of_hours,
+    }])
   }
 
   function handleBookingRead(req: IncomingMessage, res: ServerResponse, url: URL): void {
@@ -845,7 +1057,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/slots') {
       const providerId = queryValue(url, 'provider_id')
-      const rows = bookingSlots.filter((slot) => slot.provider_id === providerId && slot.status === 'open')
+      const rows = bookingSlots.filter((slot) =>
+        slot.provider_id === providerId && slot.status === 'open' && Date.parse(slot.starts_at) > Date.now(),
+      )
       sendPostgrestRows(req, res, rows)
       return
     }
@@ -940,6 +1154,73 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
 
     sendJson(res, 405, { message: 'method not allowed' })
+  }
+
+  async function handleDeletionRequests(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    sendJson(res, req.method === 'POST' ? 403 : 405, {
+      code: req.method === 'POST' ? '42501' : undefined,
+      message: req.method === 'POST' ? 'permission denied for deletion_requests' : 'method not allowed',
+    })
+  }
+
+  async function handleProfileDeletionRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 403, { code: '42501', message: 'deletion request caller is unavailable' })
+      return
+    }
+    const patient = patients.find((candidate) => candidate.user_id === caller.id)
+    const body = await readJsonBody(req)
+    const denied = (result_error: string) => {
+      auditEvents.push({
+        id: nextAuditEventId++,
+        occurred_at: new Date().toISOString(),
+        actor_kind: 'account',
+        actor_ref: caller.id,
+        action: 'profile.deletion_request',
+        target_kind: 'patient',
+        target_id: patient?.id ?? null,
+        outcome: 'denied',
+        detail: null,
+      })
+      sendJson(res, 200, [{ result_error, request_status: null, requested_at: null }])
+    }
+    if (body.p_request_valid !== true) {
+      denied('validation_failed')
+      return
+    }
+    if (!patient) {
+      denied('identity_verification_required')
+      return
+    }
+    if (deletionRequests.some((request) => request.patient_id === patient.id && (request.status === 'received' || request.status === 'in_review'))) {
+      denied('request_already_open')
+      return
+    }
+    const requestedAt = new Date().toISOString()
+    deletionRequests.push({
+      id: randomUUID(),
+      patient_id: patient.id,
+      requested_by: caller.id,
+      requested_at: requestedAt,
+      status: 'received',
+    })
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: requestedAt,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: 'profile.deletion_request',
+      target_kind: 'patient',
+      target_id: patient.id,
+      outcome: 'granted',
+      detail: null,
+    })
+    sendJson(res, 200, [{ result_error: null, request_status: 'received', requested_at: requestedAt }])
   }
 
   function filteredOutbox(url: URL): FakeEmailOutbox[] {
@@ -1072,7 +1353,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
 
     if (url.pathname === '/rest/v1/appointments') {
       if (!callerProvider) {
-        sendPostgrestRows(req, res, patientScopedRows(req, url, APPOINTMENTS))
+        sendPostgrestRows(req, res, patientScopedRows(req, url, patientAppointments))
         return
       }
       const rows = applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => {
@@ -1097,6 +1378,21 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
         ? CINE_FRAMES.filter((frame) => CINE_CLIPS.some((clip) => clip.id === frame.clip_id && clip.patient_id === patientId))
         : []
       sendPostgrestRows(req, res, applyEqualityFilters(rows, url))
+      return
+    }
+
+    // The manifest reads embed the study's visit (and, from a clip, the study
+    // that carries it) so one request answers what three used to.
+    if (url.pathname === '/rest/v1/studies') {
+      sendPostgrestRows(req, res, patientScopedRows(req, url, STUDIES).map(withVisit))
+      return
+    }
+
+    if (url.pathname === '/rest/v1/cine_clips') {
+      sendPostgrestRows(req, res, patientScopedRows(req, url, CINE_CLIPS).map((clip) => {
+        const study = STUDIES.find((row) => row.id === clip.study_id)
+        return { ...clip, studies: study ? withVisit(study) : null }
+      }))
       return
     }
 
@@ -1234,6 +1530,143 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     sendJson(res, 200, 'linked_now')
   }
 
+  async function handlePatientImagingGrant(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const body = await readJsonBody(req)
+    const targetKind = body.p_target_kind
+    const targetId = body.p_target_id
+    if ((targetKind !== 'study' && targetKind !== 'clip') || typeof targetId !== 'string') {
+      sendJson(res, 400, { message: 'unsupported imaging target' })
+      return
+    }
+
+    const patient = patients.find((candidate) => candidate.user_id === caller.id)
+    const targets = targetKind === 'study' ? STUDIES : CINE_CLIPS
+    const owned = patient !== undefined && targets.some(
+      (target) => target.id === targetId && target.patient_id === patient.id,
+    )
+    auditEvents.push({
+      id: nextAuditEventId++,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: targetKind === 'study' ? 'study.view' : 'clip.view',
+      target_kind: targetKind,
+      target_id: targetId,
+      outcome: owned ? 'granted' : 'denied',
+      detail: null,
+      occurred_at: new Date().toISOString(),
+    })
+    sendJson(res, 200, {
+      patient_id: owned ? patient.id : null,
+      status: patient ? (owned ? 200 : 404) : 403,
+    })
+  }
+
+  // db/migrations/012_study_access_classification.sql classifies the caller
+  // and decides study access in the round that also appends the audit row, so
+  // the study-detail route no longer resolves the role itself. Admin outranks
+  // provider; a provider needs the study's visit; a patient needs the study's
+  // patient_id; an account with no identity link is 403 either way.
+  async function handleStudyAccessGrant(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const studyId = (await readJsonBody(req)).p_study_id
+    if (typeof studyId !== 'string') {
+      sendJson(res, 400, { message: 'unsupported imaging target' })
+      return
+    }
+
+    const study = STUDIES.find((row) => row.id === studyId)
+    const visit = VISITS.find((row) => row.id === study?.visit_id)
+    const callerProvider = providers.find((row) => row.user_id === caller.id)
+    const callerPatient = patients.find((row) => row.user_id === caller.id)
+    const isAdmin = staffAdminUserIds.has(caller.id)
+    const actorKind = isAdmin ? 'admin' : callerProvider ? 'provider' : 'patient'
+    const granted = study !== undefined && (
+      isAdmin
+        ? true
+        : callerProvider
+          ? visit?.provider_id === callerProvider.id
+          : callerPatient !== undefined && study.patient_id === callerPatient.id
+    )
+    auditEvents.push({
+      id: nextAuditEventId++,
+      actor_kind: 'account',
+      actor_ref: caller.id,
+      action: 'study.view',
+      target_kind: 'study',
+      target_id: studyId,
+      outcome: granted ? 'granted' : 'denied',
+      detail: null,
+      occurred_at: new Date().toISOString(),
+    })
+    sendJson(res, 200, {
+      actor_kind: actorKind,
+      patient_id: granted ? study.patient_id : null,
+      status: granted ? 200 : (actorKind === 'patient' && !callerPatient ? 403 : 404),
+    })
+  }
+
+  // db/migrations/011_report_detail_access.sql reads the report detail through
+  // a SECURITY DEFINER function that re-checks the caller's own relationship,
+  // because the visit's provider has to reach the report without gaining
+  // SELECT on the patient row the detail joins. The patient still sees only
+  // their own signed report; anyone else gets no row rather than an error.
+  async function handleReadReportDetail(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { message: 'method not allowed' })
+      return
+    }
+    const caller = authenticatedUser(req)
+    if (!caller) {
+      sendJson(res, 401, { msg: 'invalid or expired token', error_code: 'session_not_found' })
+      return
+    }
+    const reportId = (await readJsonBody(req)).p_report_id
+    const report = REPORTS.find((row) => row.id === reportId)
+    const study = STUDIES.find((row) => row.id === report?.study_id)
+    const visit = VISITS.find((row) => row.id === study?.visit_id)
+    const callerPatient = patients.find((row) => row.user_id === caller.id)
+    const callerProvider = providers.find((row) => row.user_id === caller.id)
+    if (report === undefined || study === undefined) {
+      sendPostgrestRows(req, res, [])
+      return
+    }
+    const visible =
+      (callerPatient !== undefined && report.patient_id === callerPatient.id && report.status === 'signed') ||
+      (callerProvider !== undefined && visit?.provider_id === callerProvider.id) ||
+      staffAdminUserIds.has(caller.id)
+    if (!visible) {
+      sendPostgrestRows(req, res, [])
+      return
+    }
+    sendPostgrestRows(req, res, [{
+      id: report.id,
+      study_id: report.study_id,
+      study_description: study.description,
+      patient_ref: patients.find((row) => row.id === report.patient_id)?.patient_ref ?? null,
+      findings: report.findings,
+      impression: report.impression,
+      signed_by_name: providers.find((row) => row.id === report.signed_by)?.full_name ?? null,
+      signed_at: report.signed_at,
+    }])
+  }
+
   function appointmentFallsOutsideWorkingHours(providerId: string, hours: FakeWorkingHour[]): boolean {
     const appointmentWeekday = 1
     const appointmentTime = '16:00:00'
@@ -1347,6 +1780,17 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     appointment.status = nextStatus as FakeScheduleAppointment['status']
     if (nextStatus === 'cancelled') slot.status = 'open'
+    auditEvents.push({
+      id: nextAuditEventId++,
+      occurred_at: new Date().toISOString(),
+      actor_kind: 'account',
+      actor_ref: caller!.id,
+      action: rpc === 'cancel' ? 'booking.cancel' : 'appointment.transition',
+      target_kind: 'appointment',
+      target_id: appointment.id,
+      outcome: 'granted',
+      detail: null,
+    })
     sendJson(res, 200, [{
       result_error: null,
       appointment_id: appointment.id,
@@ -1361,9 +1805,17 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   function resetIdentityState(res: ServerResponse): void {
-    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }]
+    patients = [{ ...SEEDED_PATIENT }, { ...OTHER_PATIENT }, { ...EMPTY_PATIENT }]
+    patientAppointments = APPOINTMENTS.map((appointment) => ({
+      ...appointment,
+      slots: { ...appointment.slots },
+      providers: { ...appointment.providers },
+      services: { ...appointment.services },
+    }))
+    patientAppointmentSlotIds = new Map()
     identityAttempts = []
-    shareLinks = []
+    deletionRequests = []
+    shareLinks = [{ ...FOREIGN_SHARE_LINK }]
     emailOutbox = []
     auditEvents.length = 0
     sendJson(res, 200, { patientRef: SEEDED_PATIENT.patient_ref })
@@ -1447,7 +1899,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'GET' && url.pathname === '/__test__/identity-state') {
-      sendJson(res, 200, { patients, identityAttempts, auditEvents })
+      sendJson(res, 200, { patients, identityAttempts, deletionRequests, auditEvents })
       return
     }
     if (req.method === 'POST' && url.pathname === '/__test__/clock') {
@@ -1474,6 +1926,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleHealthState(req, res)
       return
     }
+    if (url.pathname.startsWith('/rest/v1/') && healthState.database !== 'ok') {
+      answerAsDependency(req, res, healthState.database)
+      return
+    }
     if (
       req.method === 'GET' &&
       url.pathname === '/rest/v1/patients' &&
@@ -1489,6 +1945,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     }
     if (url.pathname === '/rest/v1/share_links') {
       void handleShareLinks(req, res, url)
+      return
+    }
+    if (url.pathname === '/rest/v1/deletion_requests') {
+      void handleDeletionRequests(req, res)
       return
     }
     if (url.pathname === '/rest/v1/email_outbox') {
@@ -1533,12 +1993,32 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       void handleLinkPatient(req, res)
       return
     }
+    if (url.pathname === PATIENT_IMAGING_GRANT_RPC_PATH) {
+      void handlePatientImagingGrant(req, res)
+      return
+    }
+    if (url.pathname === STUDY_ACCESS_RPC_PATH) {
+      void handleStudyAccessGrant(req, res)
+      return
+    }
     if (url.pathname === APPLY_AVAILABILITY_RPC_PATH) {
       void handleApplyAvailability(req, res)
       return
     }
+    if (url.pathname === PROFILE_DELETION_RPC_PATH) {
+      void handleProfileDeletionRequest(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/read_report_detail') {
+      void handleReadReportDetail(req, res)
+      return
+    }
     if (url.pathname === '/rest/v1/rpc/book_appointment') {
       void handleBookAppointment(req, res)
+      return
+    }
+    if (url.pathname === '/rest/v1/rpc/reschedule_appointment') {
+      void handleRescheduleAppointment(req, res)
       return
     }
     if (url.pathname === '/rest/v1/rpc/transition_appointment') {
@@ -1546,7 +2026,12 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (url.pathname === '/rest/v1/rpc/cancel_appointment') {
-      void handleScheduleMutation(req, res, 'cancel')
+      const caller = authenticatedUser(req)
+      if (caller && providers.some((provider) => provider.user_id === caller.id)) {
+        void handleScheduleMutation(req, res, 'cancel')
+      } else {
+        void handlePatientCancelAppointment(req, res)
+      }
       return
     }
     if (req.method === 'GET' && url.pathname === '/storage/v1/bucket/phi') {
@@ -1554,6 +2039,10 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
     if (req.method === 'POST' && url.pathname === '/storage/v1/object/sign/phi') {
+      if (healthState.storage !== 'ok') {
+        answerAsDependency(req, res, healthState.storage)
+        return
+      }
       void readJsonBody(req).then((body) => {
         const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : []
         sendJson(res, 200, paths.map((path) => ({

@@ -4,13 +4,15 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useRouter } from 'next/navigation'
 import { Filmstrip } from './Filmstrip'
 import { ShareDialog } from '../share/ShareDialog'
+import DependencyError from '../system/DependencyError'
 
 export type ImageViewerProps = {
   images: Array<{
     id: string; width: number; height: number; ordinal: number
-    url: string; thumbUrl: string | null; expiresAt: string
+    url: string | null; thumbUrl: string | null; expiresAt: string
   }>
   initialImageId?: string
+  signingFailed?: boolean
   shareLinkTtlHours?: number
   /** 'shared' hides the filmstrip and every action except zoom and pan. */
   variant: 'portal' | 'shared'
@@ -28,7 +30,7 @@ function boundedZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(value * 100) / 100))
 }
 
-export function ImageViewer({ images, initialImageId, shareLinkTtlHours, variant }: ImageViewerProps): JSX.Element {
+export function ImageViewer({ images, initialImageId, signingFailed, shareLinkTtlHours, variant }: ImageViewerProps): JSX.Element {
   const router = useRouter()
   const [hydrated, setHydrated] = useState(false)
   const firstImageId = useMemo(
@@ -64,6 +66,10 @@ export function ImageViewer({ images, initialImageId, shareLinkTtlHours, variant
     const refreshTimer = window.setTimeout(router.refresh, Math.max(0, millisecondsUntilRefresh))
     return () => window.clearTimeout(refreshTimer)
   }, [router, selected?.expiresAt])
+
+  if (variant === 'portal' && signingFailed) {
+    return <DependencyError onRetry={router.refresh} />
+  }
 
   const changeSelection = (imageId: string) => {
     setSelectedImageId(imageId)

@@ -35,12 +35,12 @@ type ListRow = {
 type DetailRow = {
   id: string
   study_id: string
+  study_description: string
+  patient_ref: string
   findings: string
   impression: string
+  signed_by_name: string | null
   signed_at: string | null
-  studies: { description: string } | { description: string }[] | null
-  patients: { patient_ref: string } | { patient_ref: string }[] | null
-  providers: { full_name: string } | { full_name: string }[] | null
 }
 
 function relatedOne<T>(value: T | T[] | null): T | null {
@@ -94,29 +94,22 @@ export async function getReport(actor: Actor, accessToken: string, reportId: str
   if (!decision.ok) return denied(decision)
 
   const { data, error } = await anonClient(accessToken)
-    .from('reports')
-    .select(
-      'id, study_id, findings, impression, signed_at, studies!inner(description), patients!inner(patient_ref), providers!reports_signed_by_fkey(full_name)',
-    )
-    .eq('id', reportId)
+    .rpc('read_report_detail', { p_report_id: reportId })
     .maybeSingle()
 
   const row = data as unknown as DetailRow | null
-  const study = row ? relatedOne(row.studies) : null
-  const patient = row ? relatedOne(row.patients) : null
-  const provider = row ? relatedOne(row.providers) : null
-  if (error || !row || !study || !patient) return { ok: false, status: 404 }
+  if (error || !row) return { ok: false, status: 404 }
 
   return {
     ok: true,
     value: {
       id: row.id,
       studyId: row.study_id,
-      studyDescription: study.description,
-      patientRef: patient.patient_ref,
+      studyDescription: row.study_description,
+      patientRef: row.patient_ref,
       findings: row.findings,
       impression: row.impression,
-      signedByName: provider?.full_name ?? null,
+      signedByName: row.signed_by_name,
       signedAt: row.signed_at,
     },
   }

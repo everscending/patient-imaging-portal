@@ -104,6 +104,7 @@ const {
   anonClientMock,
   serviceClientMock,
   authClientMock,
+  recordRequiredPhiAccessDecisionMock,
   selectedColumns,
   resetFake,
   setReadFailureTable,
@@ -134,6 +135,9 @@ const {
   let readFailureTable: string | null = null
   let authFailureMode: 'none' | 'throw' | 'dependency-error' = 'none'
   const selections: Array<{ table: string; columns: string }> = []
+  const requiredAuditMock = vi.fn(async (input: FakeRow) => {
+    audits.push(input)
+  })
 
   function matches(row: FakeRow, filters: Array<[string, unknown]>): boolean {
     return filters.every(([column, value]) => row[column] === value)
@@ -141,6 +145,37 @@ const {
 
   function makeClient() {
     return {
+      async rpc(name: string, input: FakeRow) {
+        if (name !== 'grant_patient_imaging_access') {
+          throw new Error(`fake client: unexpected rpc "${name}"`)
+        }
+        const targetKind = input.p_target_kind
+        const targetId = input.p_target_id
+        if ((targetKind !== 'study' && targetKind !== 'clip') || typeof targetId !== 'string') {
+          return { data: null, error: { message: 'invalid imaging grant input' } }
+        }
+        const table = targetKind === 'study' ? 'studies' : 'cine_clips'
+        if (readFailureTable === 'patients' || readFailureTable === table) {
+          return { data: null, error: { message: 'SECRET_DATABASE_ERROR_MUST_NOT_ESCAPE' } }
+        }
+        const patient = tables.patients!.find((row) => row.user_id === sessionUserId)
+        const owned = patient
+          ? tables[table]!.some((row) => row.id === targetId && row.patient_id === patient.id)
+          : false
+        const status = patient ? (owned ? 200 : 404) : 403
+        audits.push({
+          actorKind: 'account',
+          actorRef: sessionUserId,
+          action: targetKind === 'study' ? 'study.view' : 'clip.view',
+          targetKind,
+          targetId,
+          outcome: owned ? 'granted' : 'denied',
+        })
+        return {
+          data: { patient_id: owned ? patient!.id : null, status },
+          error: null,
+        }
+      },
       from(table: string) {
         if (!(table in tables)) throw new Error(`fake client: unexpected table "${table}"`)
         const filters: Array<[string, unknown]> = []
@@ -185,6 +220,7 @@ const {
         },
       },
     })),
+    recordRequiredPhiAccessDecisionMock: requiredAuditMock,
     selectedColumns: selections,
     resetFake: () => {
       for (const key of Object.keys(tables)) tables[key]!.length = 0
@@ -244,10 +280,15 @@ vi.mock('../../lib/audit/events', () => ({
   recordPhiAccessDecision: vi.fn(async (input: FakeRow) => {
     auditCalls.push(input)
   }),
+  recordRequiredPhiAccessDecision: recordRequiredPhiAccessDecisionMock,
 }))
 
 import type { Actor, GuardResult, PhiTarget } from '../../lib/access/guard'
-import { guardPhiAccess as guardPhiAccessRaw } from '../../lib/access/guard'
+import {
+  authenticatePhiRequest,
+  guardAuthenticatedPhiAccess,
+  guardPhiAccess as guardPhiAccessRaw,
+} from '../../lib/access/guard'
 import type { AuditAction } from '../../lib/audit/events'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
@@ -345,6 +386,7 @@ beforeEach(() => {
   anonClientMock.mockClear()
   serviceClientMock.mockClear()
   authClientMock.mockClear()
+  recordRequiredPhiAccessDecisionMock.mockClear()
 })
 
 afterEach(() => {
@@ -602,8 +644,9 @@ describe('SEC-5: ownership checks select only the columns they need', () => {
     const provider = seedProvider({ id: 'minimum-provider', user_id: 'minimum-provider-user' })
     const visit = seedVisit({ patient_id: patient.id, provider_id: provider.id })
     const study = seedStudy({ visit_id: visit.id, patient_id: patient.id })
+    const image = seedImage({ study_id: study.id, patient_id: patient.id })
 
-    await guardPhiAccess({ kind: 'patient', userId: 'minimum-user' }, { kind: 'study', id: study.id }, 'study.view')
+    await guardPhiAccess({ kind: 'patient', userId: 'minimum-user' }, { kind: 'image', id: image.id }, 'image.view')
 
     expect(selectedColumns.length).toBeGreaterThan(0)
     expect(selectedColumns.map(({ columns }) => columns)).not.toContain('*')
@@ -688,6 +731,7 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   | { kind: 'patient'; userId: string }
   | { kind: 'provider'; userId: string }
   | { kind: 'admin'; userId: string }
+  | { kind: 'account'; userId: string }
   | { kind: 'share_recipient'; shareLinkId: string }
   | { kind: 'anonymous' }`,
     )
@@ -698,6 +742,7 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
   | { kind: 'clip'; id: string }
   | { kind: 'report'; id: string }
   | { kind: 'appointment'; id: string }
+  | { kind: 'patient'; id: string | null }
   | { kind: 'schedule'; id: string } // id = provider id
   | { kind: 'share_link'; id: string | null } // null = unresolved share token
   | { kind: 'collection'; of: 'study' | 'report' | 'appointment' | 'share' }
@@ -706,16 +751,57 @@ describe("AC: guard.ts's exported signature and types match ARCHITECTURE.md §5"
     expect(source).toContain(
       'export type GuardResult = { ok: true; patientId: string | null } | { ok: false; status: 401 | 403 | 404 }',
     )
-    expect(source).toContain(
-      'export async function guardPhiAccess(actor: Actor, target: PhiTarget, action: AuditAction): Promise<GuardResult> {',
-    )
+    expect(source).toContain(`export async function guardPhiAccess(
+  actor: Actor,
+  target: PhiTarget,
+  action: AuditAction,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
+): Promise<GuardResult> {`)
     expect(source).toContain('export async function authenticatePhiRequest(): Promise<PhiRequestAuthentication> {')
     expect(source).toContain(`export async function guardAuthenticatedPhiAccess(
   actor: Actor,
   target: PhiTarget,
   action: AuditAction,
   authentication: PhiRequestAuthentication,
+  options: { grantedAudit: 'transactional-rpc' } | undefined = undefined,
 ): Promise<GuardResult> {`)
+  })
+})
+
+describe('transactional PHI audit handoff', () => {
+  test('ownedPatientTargetDefersGrantButForeignTargetRequiresOneDeniedAudit', async () => {
+    seedPatient({ id: 'profile-patient-a', user_id: 'profile-user-a' })
+    seedPatient({ id: 'profile-patient-b', user_id: 'profile-user-b' })
+    setSessionUserId('profile-user-a')
+    const authentication = await authenticatePhiRequest()
+
+    const own = await guardAuthenticatedPhiAccess(
+      { kind: 'patient', userId: 'profile-user-a' },
+      { kind: 'patient', id: null },
+      'profile.deletion_request',
+      authentication,
+      { grantedAudit: 'transactional-rpc' },
+    )
+    expect(own).toEqual({ ok: true, patientId: 'profile-patient-a' })
+    expect(auditCalls).toHaveLength(0)
+
+    const foreign = await guardPhiAccessRaw(
+      { kind: 'patient', userId: 'profile-user-a' },
+      { kind: 'patient', id: 'profile-patient-b' },
+      'profile.deletion_request',
+      { grantedAudit: 'transactional-rpc' },
+    )
+    expect(foreign).toEqual({ ok: false, status: 404 })
+    expect(auditCalls).toEqual([
+      expect.objectContaining({
+        actorRef: 'profile-user-a',
+        action: 'profile.deletion_request',
+        targetKind: 'patient',
+        targetId: 'profile-patient-b',
+        outcome: 'denied',
+      }),
+    ])
+    expect(recordRequiredPhiAccessDecisionMock).toHaveBeenCalledTimes(1)
   })
 })
 

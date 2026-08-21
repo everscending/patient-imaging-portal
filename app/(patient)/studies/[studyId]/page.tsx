@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { cookies } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import { ImageViewer, type ImageViewerProps } from '../../../../components/imaging/ImageViewer'
@@ -8,7 +9,14 @@ import { config } from '../../../../lib/config'
 import { studyDetail } from '../../../../lib/imaging/studies'
 import { SESSION_COOKIE_NAME } from '../../../../lib/session-cookie'
 
-type StudyManifest = { description: string; images: ImageViewerProps['images'] }
+type StudyClip = { id: string; frameCount: number }
+
+type StudyManifest = {
+  description: string
+  imageSigningFailed: boolean
+  images: ImageViewerProps['images']
+  clips: StudyClip[]
+}
 
 async function getStudy(studyId: string): Promise<StudyManifest> {
   const callerId = await resolveCallerId()
@@ -36,7 +44,18 @@ export default async function StudyPage({ params }: { params: Promise<{ studyId:
   return (
     <main>
       <h1>{study.description}</h1>
-      <ImageViewer images={study.images} shareLinkTtlHours={config.shareLinkTtlHours} variant="portal" />
+      <ImageViewer images={study.images} signingFailed={study.imageSigningFailed} shareLinkTtlHours={config.shareLinkTtlHours} variant="portal" />
+      {study.clips.length > 0 ? (
+        <ul className="pip-study-clips" data-testid="study-clip-list">
+          {study.clips.map((clip) => (
+            <li key={clip.id}>
+              <Link className="pip-study-clip-link" data-testid="study-clip-link" href={`/studies/${studyId}/clips/${clip.id}`}>
+                Cine clip — {clip.frameCount} frames
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </main>
   )
 }

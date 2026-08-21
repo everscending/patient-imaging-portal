@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import { cookies } from 'next/headers'
 import PatientShell from '../../components/shell/PatientShell'
 import { authClient } from '../../lib/db/client'
+import { config } from '../../lib/config'
 import { SESSION_COOKIE_NAME } from '../../lib/session-cookie'
 
 export default async function PatientLayout({ children }: { children: ReactNode }) {
@@ -13,5 +14,9 @@ export default async function PatientLayout({ children }: { children: ReactNode 
   const { data } = token ? await authClient().auth.getUser(token) : { data: { user: null } }
   const patientName = data.user?.email ?? 'Patient'
 
-  return <PatientShell patientName={patientName}>{children}</PatientShell>
+  return (
+    <PatientShell practiceName={config.practiceName} patientName={patientName}>
+      {children}
+    </PatientShell>
+  )
 }

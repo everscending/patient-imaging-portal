@@ -65,25 +65,30 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
-    expect(ui).toContain('npx playwright test --project=e2-wiring')
+    expect(ui).toContain('npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring')
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
     )
-    expect(ui).toContain('npx playwright test e2e/e8-wiring.spec.ts --project=e8-wiring')
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     )
-    expect(ui).toContain('npx playwright test --project=e3-wiring')
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts',
+    )
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
     )
-    expect(ui).toContain('npx playwright test --project=e4-wiring')
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts',
     )
-    expect(ui).toContain('npx playwright test e2e/e5-wiring.spec.ts --project=e5-wiring')
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts',
+    )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts',
+    )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts',
     )
   })
 })
@@ -94,10 +99,12 @@ describe('timings — every executed command reports its duration', () => {
       GATE_FAKE_EXIT_TSC: '0',
       GATE_FAKE_EXIT_ESLINT: '0',
       GATE_FAKE_EXIT_VITEST_UNIT: '0',
+      GATE_FAKE_EXIT_VITEST_COVERAGE_CONTRACT: '0',
+      GATE_FAKE_EXIT_VITEST_COVERAGE: '0',
       GATE_FAKE_EXIT_VITEST_PERFORMANCE: '0',
     })
     expect(result.status).toBe(0)
-    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT', 'VITEST_PERFORMANCE']) {
+    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT', 'VITEST_COVERAGE_CONTRACT', 'VITEST_COVERAGE', 'VITEST_PERFORMANCE']) {
       expect(result.stderr).toMatch(new RegExp(`\\[gate:logic\\] timing ${name}=\\d+s`))
     }
   })
@@ -140,6 +147,10 @@ function parseLoomGates(yaml: string): Record<string, string[]> {
 describe('drift — acceptance + adversarial: .loom.yml and gate.sh resolve the same commands', () => {
   const loomYml = readFileSync(path.join(REPO_ROOT, '.loom.yml'), 'utf8')
   const declared = parseLoomGates(loomYml)
+
+  test('JOR-306: repository scheduling pins mutable WIP to two lanes', () => {
+    expect(loomYml).toMatch(/^max_lanes:\s*2$/m)
+  })
 
   test('declares exactly three tiers, not a fourth', () => {
     expect(Object.keys(declared).sort()).toEqual(['api', 'logic', 'ui'])
@@ -190,12 +201,18 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts',
     )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts',
+    )
+    expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts',
+    )
     expect(source).toMatch(/\['json',\s*\{\s*outputFile:\s*'test-results\/playwright\.json'/)
   })
 
   test('mutable fake-server projects run serially and E2/E3 run after product', () => {
     expect(source).toMatch(/defineConfig\(\{\s*workers:\s*1,/)
-    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[012345\]-wiring\\\.spec\\\.ts\//)
+    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[0123458\]-wiring\\\.spec\\\.ts\//)
     expect(source).toMatch(
       /name:\s*'e2-wiring'[\s\S]*testMatch:\s*\/e2-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
     )
@@ -269,7 +286,7 @@ describe('Next worktree root — regression: a lane watches only its own checkou
 
   test('adversarial_removingPollingFallback_recreatesNativeWatcherRisk', () => {
     const mutant = runnerSource.replace(
-      /\nif \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n}/,
+      /\n\s*if \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n\s*}/,
       '',
     )
 
@@ -298,7 +315,7 @@ describe('Next worktree root — regression: a lane watches only its own checkou
     // Process teardown lives in the fixture. A root is config-local state, so
     // stopping one fixture cannot alter another worktree's root selection.
     const fixture = readFileSync(path.join(REPO_ROOT, 'e2e/fixtures/start-test-server.mjs'), 'utf8')
-    expect(fixture).toMatch(/child\.kill\(\)/)
+    expect(fixture).toMatch(/child\.kill\('SIGTERM'\)/)
     expect(fixture).toMatch(/fakeAuthServer\.close\(\)/)
     expect(source).toContain('root: worktreeRoot')
   })

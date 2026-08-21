@@ -96,8 +96,8 @@ export function buildMigrationProgram(files: MigrationFile[]): string {
         \\gset ${prefix}`,
       `\\if :${prefix}valid`,
       `\\else`,
-      `\\echo '${file.name}: applied migration checksum changed'`,
-      '\\quit 3',
+      `\\warn '${file.name}: applied migration checksum changed'`,
+      `do $$ begin raise exception 'migration checksum drift: %', ${sqlLiteral(file.name)}; end $$;`,
       '\\endif',
       `\\if :${prefix}apply`,
       'begin;',
@@ -361,10 +361,12 @@ export async function main(): Promise<void> {
 }
 
 if (process.env.PROVISION_DEPLOYED_STACK === '1') {
-  main().catch(() => {
+  try {
+    await main()
+  } catch {
     // Provider/database errors can echo request details. The preceding stage
     // lines identify the failed boundary without forwarding those details.
     console.error('provision-deployed-stack: failed')
     process.exitCode = 1
-  })
+  }
 }
