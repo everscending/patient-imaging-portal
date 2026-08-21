@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createContext, useContext } from 'react'
 import type { ReactNode } from 'react'
+import Wordmark from '../branding/Wordmark'
 
 export type StaffRole = 'provider' | 'admin'
 
@@ -38,9 +39,11 @@ export function useProviderShell(): ProviderShellIdentity {
 }
 
 export default function ProviderShell({
+  practiceName,
   identity,
   children,
 }: {
+  practiceName: string
   identity: ProviderShellIdentity
   children: ReactNode
 }) {
@@ -55,6 +58,7 @@ export default function ProviderShell({
           data-testid={`${identity.role}-sidebar`}
           aria-label={`${identity.role === 'provider' ? 'Provider' : 'Admin'} navigation`}
         >
+          <Wordmark name={practiceName} />
           <p className="pip-staff-name">{identity.actorName}</p>
           <nav aria-label="Primary">
             {destinations.map((destination) => (

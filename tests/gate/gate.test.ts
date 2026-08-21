@@ -73,6 +73,9 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts',
     )
     expect(ui).toContain(
+      'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts',
+    )
+    expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts',
     )
     expect(ui).toContain(
@@ -96,9 +99,11 @@ describe('timings — every executed command reports its duration', () => {
       GATE_FAKE_EXIT_TSC: '0',
       GATE_FAKE_EXIT_ESLINT: '0',
       GATE_FAKE_EXIT_VITEST_UNIT: '0',
+      GATE_FAKE_EXIT_VITEST_COVERAGE_CONTRACT: '0',
+      GATE_FAKE_EXIT_VITEST_COVERAGE: '0',
     })
     expect(result.status).toBe(0)
-    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT']) {
+    for (const name of ['TSC', 'ESLINT', 'VITEST_UNIT', 'VITEST_COVERAGE_CONTRACT', 'VITEST_COVERAGE']) {
       expect(result.stderr).toMatch(new RegExp(`\\[gate:logic\\] timing ${name}=\\d+s`))
     }
   })
@@ -280,7 +285,7 @@ describe('Next worktree root — regression: a lane watches only its own checkou
 
   test('adversarial_removingPollingFallback_recreatesNativeWatcherRisk', () => {
     const mutant = runnerSource.replace(
-      /\nif \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n}/,
+      /\n\s*if \(mode === 'dev' && nextEnv\.WATCHPACK_POLLING === undefined\) \{[\s\S]*?\n\s*}/,
       '',
     )
 

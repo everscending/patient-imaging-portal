@@ -19,6 +19,13 @@ import {
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
   releaseIdentityFixtureLock,
 } from './fixtures/identity-fixture-lock'
+import {
+  expectNamedControls as sharedExpectNamedControls,
+  expectRenderedTextContrast as sharedExpectRenderedTextContrast,
+  expectVisibleKeyboardFocus,
+  resetFixtures,
+  tabTo as sharedTabTo,
+} from './fixtures/a11y-helpers'
 
 const PASSWORD = 'AccessiblePatientPassword9'
 const CHANGEABLE_APPOINTMENT_ID = '22662266-2266-4266-8266-226622662266'
@@ -78,16 +85,6 @@ const PINNED_PROP_CONTRACTS: {
   reportView: true,
 }
 
-async function fixtureUrl(): Promise<string> {
-  const raw = await readFile(path.join(process.cwd(), '.local', 'fake-auth-server.json'), 'utf8')
-  return (JSON.parse(raw) as { url: string }).url
-}
-
-async function resetFixtures(request: APIRequestContext): Promise<void> {
-  expect((await request.post(`${await fixtureUrl()}/__test__/reset-identity`)).ok()).toBe(true)
-  expect((await request.post(`${await fixtureUrl()}/__test__/reset-booking`)).ok()).toBe(true)
-}
-
 async function registerAndSignIn(request: APIRequestContext): Promise<void> {
   const email = `accessibility-${randomUUID()}@example.test`
   expect((await request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
@@ -113,56 +110,17 @@ async function expectHeadingOrder(page: Page): Promise<void> {
   }
 }
 
+// Adds contenteditable/application-role coverage on top of the shared base
+// selector list — a11y-focused checks not exercised by the wiring proof.
 async function expectNamedControls(page: Page): Promise<void> {
-  const controls = page.locator([
-    'a[href]',
-    'button',
-    'input:not([type="hidden"])',
-    'select',
-    'textarea',
-    '[contenteditable="true"]',
-    '[role="application"]',
-    '[role="button"]',
-  ].join(','))
-  for (let index = 0; index < await controls.count(); index += 1) {
-    const control = controls.nth(index)
-    if (!await control.isVisible()) continue
-    const html = await control.evaluate((element) => element.outerHTML.slice(0, 180))
-    await expect(control, `Unnamed interactive control: ${html}`).toHaveAccessibleName(/\S/)
-  }
+  await sharedExpectNamedControls(page, ['[contenteditable="true"]', '[role="application"]'])
 }
 
-async function expectVisibleKeyboardFocus(control: Locator): Promise<void> {
-  await expect(control).toBeFocused()
-  expect(await control.evaluate((element) => {
-    const style = getComputedStyle(element)
-    return (style.outlineStyle !== 'none' && Number.parseFloat(style.outlineWidth) > 0) || style.boxShadow !== 'none'
-  })).toBe(true)
-}
-
+// Also asserts every intermediate stop during the Tab traversal (not just the
+// final target) has a non-empty accessible name — stricter than the shared
+// default, which only checks the target.
 async function tabTo(page: Page, target: Locator, options: { backwards?: boolean, limit?: number } = {}): Promise<void> {
-  const key = options.backwards ? 'Shift+Tab' : 'Tab'
-  for (let press = 0; press < (options.limit ?? 40); press += 1) {
-    await page.keyboard.press(key)
-    const hasDocumentFocus = await page.evaluate(() => {
-      for (const previous of document.querySelectorAll('[data-keyboard-focus-check]')) previous.removeAttribute('data-keyboard-focus-check')
-      const active = document.activeElement
-      if (!(active instanceof HTMLElement) || active === document.body || active.matches('nextjs-portal')) return false
-      active.setAttribute('data-keyboard-focus-check', '')
-      return true
-    })
-    // Native date inputs expose an internal picker stop that briefly moves
-    // focus outside the document before Tab returns to the next app control.
-    if (!hasDocumentFocus) continue
-    const focused = page.locator('[data-keyboard-focus-check]')
-    await expect(focused).toHaveCount(1)
-    await expect(focused).toHaveAccessibleName(/\S/)
-    if (await target.evaluate((element) => element === document.activeElement)) {
-      await expectVisibleKeyboardFocus(target)
-      return
-    }
-  }
-  throw new Error(`Could not reach ${await target.evaluate((element) => element.outerHTML.slice(0, 180))} with ${key}`)
+  await sharedTabTo(page, target, { ...options, assertNamedAtEachStep: true })
 }
 
 async function productionComponentFiles(): Promise<string[]> {
@@ -186,85 +144,35 @@ async function openSharedImage(browser: Browser, request: APIRequestContext): Pr
   return page
 }
 
-async function expectRenderedTextContrast(page: Page): Promise<void> {
-  const offenders = await page.evaluate(() => {
-    type Colour = [number, number, number, number]
-    const parse = (value: string): Colour | null => {
-      const channels = value.match(/[\d.]+/g)?.map(Number)
-      if (!channels || channels.length < 3) return null
-      return [channels[0]!, channels[1]!, channels[2]!, channels[3] ?? 1]
-    }
-    const composite = (foreground: Colour, background: Colour): Colour => {
-      const alpha = foreground[3] + background[3] * (1 - foreground[3])
-      if (alpha === 0) return [0, 0, 0, 0]
-      return [
-        (foreground[0] * foreground[3] + background[0] * background[3] * (1 - foreground[3])) / alpha,
-        (foreground[1] * foreground[3] + background[1] * background[3] * (1 - foreground[3])) / alpha,
-        (foreground[2] * foreground[3] + background[2] * background[3] * (1 - foreground[3])) / alpha,
-        alpha,
-      ]
-    }
-    const luminance = ([red, green, blue]: Colour) => {
-      const channel = (value: number) => {
-        const normalized = value / 255
-        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
-      }
-      return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
-    }
-    const background = (element: Element): Colour => {
-      const layers: Colour[] = []
-      for (let current: Element | null = element; current; current = current.parentElement) {
-        const colour = parse(getComputedStyle(current).backgroundColor)
-        if (colour && colour[3] > 0) layers.push(colour)
-      }
-      return layers.reverse().reduce((result, layer) => composite(layer, result), [255, 255, 255, 1] as Colour)
-    }
+// Narrower "renders its own value" selector (only text-like inputs, not
+// checkbox/radio/color/file/range) and an added forbidden-exact-colour check
+// — both stricter than the shared default used by the wiring proof.
+const RENDERS_OWN_VALUE_SELECTOR = [
+  'input:not([type])',
+  'input[type="text"]',
+  'input[type="search"]',
+  'input[type="email"]',
+  'input[type="tel"]',
+  'input[type="url"]',
+  'input[type="password"]',
+  'input[type="number"]',
+  'input[type="date"]',
+  'input[type="time"]',
+  'input[type="datetime-local"]',
+  'input[type="month"]',
+  'input[type="week"]',
+  'input[type="submit"]',
+  'input[type="reset"]',
+  'input[type="button"]',
+  'textarea',
+  'select',
+].join(', ')
 
-    return [...document.body.querySelectorAll<HTMLElement>('*')].flatMap((element) => {
-      const style = getComputedStyle(element)
-      const hasOwnText = [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
-      const rendersOwnValue = element.matches([
-        'input:not([type])',
-        'input[type="text"]',
-        'input[type="search"]',
-        'input[type="email"]',
-        'input[type="tel"]',
-        'input[type="url"]',
-        'input[type="password"]',
-        'input[type="number"]',
-        'input[type="date"]',
-        'input[type="time"]',
-        'input[type="datetime-local"]',
-        'input[type="month"]',
-        'input[type="week"]',
-        'input[type="submit"]',
-        'input[type="reset"]',
-        'input[type="button"]',
-        'textarea',
-        'select',
-      ].join(', '))
-      const rect = element.getBoundingClientRect()
-      if ((!hasOwnText && !rendersOwnValue) || rect.width < 2 || rect.height < 2 || style.visibility === 'hidden' || style.display === 'none' || element.matches(':disabled, .pip-visually-hidden')) return []
-      const foreground = parse(style.color)
-      if (!foreground) return []
-      if ((foreground[0] === 135 && foreground[1] === 63 && foreground[2] === 224) ||
-          (foreground[0] === 0 && foreground[1] === 192 && foreground[2] === 221)) {
-        return [{ html: element.outerHTML.slice(0, 180), violation: `forbidden text colour ${style.color}` }]
-      }
-      const backdrop = background(element)
-      const renderedForeground = composite(foreground, backdrop)
-      const light = luminance(renderedForeground)
-      const dark = luminance(backdrop)
-      const ratio = (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05)
-      const size = Number.parseFloat(style.fontSize)
-      const weight = Number.parseInt(style.fontWeight, 10) || 400
-      const minimum = size >= 24 || (size >= 18.66 && weight >= 700) ? 3 : 4.5
-      return ratio + 0.01 < minimum
-        ? [{ html: element.outerHTML.slice(0, 180), violation: `${ratio.toFixed(2)}:1; requires ${minimum}:1` }]
-        : []
-    })
+async function expectRenderedTextContrast(page: Page): Promise<void> {
+  await sharedExpectRenderedTextContrast(page, {
+    rendersOwnValueSelector: RENDERS_OWN_VALUE_SELECTOR,
+    forbiddenColours: [[135, 63, 224], [0, 192, 221]],
   })
-  expect(offenders).toEqual([])
 }
 
 async function rangeControlContrastOffenders(page: Page): Promise<Array<{ html: string, violation: string }>> {

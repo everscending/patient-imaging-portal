@@ -1499,6 +1499,7 @@ letting a missing value surface as a runtime null. All of these appear in
 | `NEXT_PUBLIC_SUPABASE_URL` | — | `lib/db/client.ts` | required |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | `lib/db/client.ts` | required |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | `lib/db/client.ts` | required · **server only, never `NEXT_PUBLIC_`** |
+| `NEXT_PUBLIC_PRACTICE_NAME` | `Patient Imaging Portal` | `components/branding/Wordmark.tsx` (landing, patient/provider shells) | JOR-310 · one wordmark string, no multi-tenancy |
 | `APP_BASE_URL` | `http://localhost:4310` | `lib/share/links.ts`, `lib/notify/email.ts` | share links are absolute |
 | `RESEND_API_KEY` | — | `lib/notify/email.ts` | absent ⇒ transport falls back to `log` (GAP-3) |
 | `RESEND_FROM` | — | `lib/notify/email.ts` | verified sender |
@@ -2033,13 +2034,15 @@ same runner, so they cannot drift.
 
 | Tier | Runs |
 |------|------|
-| `logic` | `tsc --noEmit`, eslint, `vitest run` |
+| `logic` | `tsc --noEmit`, eslint, unit tests, and CQ-1 coverage across the unit + database-backed integration Vitest projects |
 | `api` | `logic` + integration tests against a migrated test database |
 | `ui` | `api` + the exact Playwright/JSON-validator inventory below |
 
-The `ui` additions use one serial Playwright invocation for `product`, E2, E3,
-E4, E5, and E8. Playwright runs `product` once before its E2/E3 dependents. The
-single JSON report is then validated for each mandatory specification:
+The `ui` additions use one serial Playwright invocation for `product` (which
+also carries E9's spec inside the `product` project rather than a dedicated
+one — see e2e/e9-wiring.spec.ts), E2, E3, E4, E5, and E8. Playwright runs
+`product` once before its E2/E3 dependents. The single JSON report is then
+validated for each mandatory specification:
 
 1. `e2e/e8-wiring.spec.ts`
 2. `e2e/e5-wiring.spec.ts`
@@ -2048,9 +2051,10 @@ single JSON report is then validated for each mandatory specification:
 5. `e2e/empty-states.spec.ts`
 6. `e2e/responsive.spec.ts`
 7. `e2e/accessibility.spec.ts`
-8. `e2e/e2-wiring.spec.ts`
-9. `e2e/e3-wiring.spec.ts`
-10. `e2e/e4-wiring.spec.ts`
+8. `e2e/e9-wiring.spec.ts`
+9. `e2e/e2-wiring.spec.ts`
+10. `e2e/e3-wiring.spec.ts`
+11. `e2e/e4-wiring.spec.ts`
 
 The Playwright suite has seven projects. `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative

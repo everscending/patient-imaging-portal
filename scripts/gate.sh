@@ -67,6 +67,8 @@ run_logic() {
   step TSC npx tsc --noEmit
   step ESLINT npx eslint .
   step VITEST_UNIT npx vitest run --project unit
+  step VITEST_COVERAGE_CONTRACT npx vitest run --project unit tests/coverage-config.test.ts
+  step VITEST_COVERAGE npx vitest run --coverage --project unit --project integration
 }
 
 run_api() {
@@ -84,8 +86,10 @@ run_ui() {
   step PLAYWRIGHT npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring
   step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
   step PLAYWRIGHT_E10_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e10-wiring.spec.ts
+  step PLAYWRIGHT_E9_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts
   step PLAYWRIGHT_E5_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts
   step PLAYWRIGHT_E7_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts
+  step PLAYWRIGHT_E12_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e12-wiring.spec.ts
   step PLAYWRIGHT_BOOK_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts
   step PLAYWRIGHT_PROVIDER_SCHEDULE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts
   step PLAYWRIGHT_EMPTY_STATES_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/empty-states.spec.ts
