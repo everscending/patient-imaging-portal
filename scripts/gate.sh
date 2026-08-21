@@ -88,6 +88,7 @@ run_ui() {
   step PLAYWRIGHT_E10_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e10-wiring.spec.ts
   step PLAYWRIGHT_E5_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts
   step PLAYWRIGHT_E7_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts
+  step PLAYWRIGHT_E12_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e12-wiring.spec.ts
   step PLAYWRIGHT_BOOK_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts
   step PLAYWRIGHT_PROVIDER_SCHEDULE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts
   step PLAYWRIGHT_EMPTY_STATES_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/empty-states.spec.ts
