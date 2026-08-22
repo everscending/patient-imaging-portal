@@ -11,3 +11,7 @@ playwright-report/
 .local/
 /.worktrees/
 tests/artifacts/demo-run.log
+tests/artifacts/uptime-check.log
+tests/artifacts/uptime-check.pid
+tests/artifacts/uptime-check.stderr.log
+tests/artifacts/uptime-check.window-start
