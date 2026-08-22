@@ -132,7 +132,13 @@ describe('AC: generating the pool twice from the same seed is byte-identical', (
   // to ~63 s of contiguous synchronous work on the hosted runner, tripping
   // both the 60 s test timeout and birpc's worker-RPC deadline — one fresh
   // computation proves the same property at half the block.
-  test('reproducesByteIdenticalPoolAcrossRuns', function reproducesByteIdenticalPoolAcrossRuns() {
+  test('reproducesByteIdenticalPoolAcrossRuns', async function reproducesByteIdenticalPoolAcrossRuns() {
+    // One genuine timer yield between beforeAll's ~30 s computation and this
+    // one: without it the two stack into a single >60 s contiguous block on
+    // the hosted runner and starve the vitest worker's RPC channel (birpc's
+    // fixed deadline) even though every test passes. Microtask boundaries
+    // between tests do not reach the timer phase; this does.
+    await new Promise((resolve) => setTimeout(resolve, 0))
     const again = computeAssetPool(DEFAULT_SEED)
     expect(again).not.toBe(pool)
     expect(fullManifestOf(again)).toEqual(fullManifestOf(pool))
