@@ -32,8 +32,20 @@ const LEGACY_SEED_CHECKSUM_UPGRADES = new Map([
 // so they changed the seed identity. Named exactly, never recomputed: a
 // target that meant "whatever this checkout hashes to" would wave through
 // every future seed change as well.
-// tests/deploy/provisioning.test.ts pins it to the current checkout.
 export const EL1_DERIVATIVE_SEED_CHECKSUM = '3419c54b02d3d00d805b45ffe2414a2d78064bf894bce14f7e05e86f32517be3'
+
+// Realistic procedural ultrasound pixels replaced the tiled-noise assets.
+// Keys and rows are unchanged — only object bytes differ — so the upgrade is
+// a marker advance; the uploadPool call after the chain re-uploads every
+// object whose content hash changed.
+// tests/deploy/provisioning.test.ts pins it to the current checkout.
+export const ULTRASOUND_PIXELS_SEED_CHECKSUM = '650767c6e628ebe0ffd4f7cea5d6ee4d394208596921840d10b13f74c70f38a2'
+// JOR-320 memoized generateAssetPool's result per seed — assets.ts's bytes
+// changed, but the pool it produces did not (pinned by
+// tests/seed/assets.test.ts's byte-identical-across-runs tests), so no data
+// migrates here, only the checksum.
+// tests/deploy/provisioning.test.ts pins it to the current checkout.
+export const JOR320_MEMOIZED_POOL_SEED_CHECKSUM = '57e60395f0ea3375b707dc7678287acee408b6014b316f790eefd77a005d5872'
 
 // One entry per intentional seed change, each moving the marker a single
 // step. A stack several changes behind walks the chain in one run; a stack
@@ -49,6 +61,14 @@ const SEED_DATA_CHECKSUM_UPGRADES = new Map<string, SeedDataUpgrade>([
   [
     'f6cf03ef229486e9cdfeeda0d82b08efb091bda2b619e0a5d34420e73ba31693',
     { to: EL1_DERIVATIVE_SEED_CHECKSUM, apply: upgradeDerivativeKeys },
+  ],
+  [
+    EL1_DERIVATIVE_SEED_CHECKSUM,
+    { to: ULTRASOUND_PIXELS_SEED_CHECKSUM, apply: advanceMarkerForPixelOnlyChange },
+  ],
+  [
+    ULTRASOUND_PIXELS_SEED_CHECKSUM,
+    { to: JOR320_MEMOIZED_POOL_SEED_CHECKSUM, apply: advanceMarkerForPixelOnlyChange },
   ],
 ])
 const MIGRATION_LOCK = 7_402_021
@@ -318,6 +338,27 @@ ${previousFrames}
 ${addedFrames};
   update app_deploy.seed_runs set checksum = ${sqlLiteral(checksum)}
    where singleton and checksum = ${sqlLiteral(markerChecksum)};
+end $$;`)
+}
+
+/** For a seed change that touches asset bytes only (no keys, no rows): the
+ *  database has nothing to migrate, so the marker just advances under the
+ *  same guard every other upgrade uses. */
+function advanceMarkerForPixelOnlyChange(
+  sql: typeof runPsql,
+  marker: NonNullable<SeedMarker>,
+  markerChecksum: string,
+  checksum: string,
+): void {
+  sql(`do $$
+begin
+  update app_deploy.seed_runs set checksum = ${sqlLiteral(checksum)}
+   where singleton
+     and source_seed = ${sqlLiteral(marker.sourceSeed)}
+     and checksum = ${sqlLiteral(markerChecksum)};
+  if not found then
+    raise exception 'seed marker changed while seed data was upgraded';
+  end if;
 end $$;`)
 }
 

@@ -45,33 +45,50 @@ function embeddedCompletedVisit(study: StudyWithVisitRow | null): VisitRow | nul
   return study?.visits?.status === 'completed' ? study.visits : null
 }
 
-export async function listStudies(client: Client): Promise<{ studies: Array<Record<string, string | number>> }> {
+export async function listStudies(client: Client): Promise<{ studies: Array<Record<string, string | number | null>> }> {
   const studies = await rows<StudyRow>(client.from('studies').select('id, description, visit_id'))
   const visible = await Promise.all(
     studies.map(async (study) => ({ study, visit: await completedVisit(client, study.visit_id) })),
   )
   const completed = visible.filter((entry): entry is { study: StudyRow; visit: VisitRow } => entry.visit !== null)
 
+  const entries = await Promise.all(
+    completed.map(async ({ study, visit }) => {
+      const [provider, images, clips] = await Promise.all([
+        row<ProviderRow>(client.from('providers').select('id, full_name').eq('id', visit.provider_id).maybeSingle()),
+        rows<{ id: string; ordinal: number; thumb_key: string | null }>(
+          client.from('images').select('id, ordinal, thumb_key').eq('study_id', study.id).order('ordinal'),
+        ),
+        rows<{ id: string }>(client.from('cine_clips').select('id').eq('study_id', study.id)),
+      ])
+      // providers are globally readable by policy; a missing row means the
+      // relational record is inconsistent, not an excuse to expose a name.
+      return {
+        study,
+        visit,
+        provider,
+        imageCount: images.length,
+        clipCount: clips.length,
+        // card preview: first image (by ordinal) that has a thumbnail
+        thumbKey: images.find((image) => image.thumb_key)?.thumb_key ?? null,
+      }
+    }),
+  )
+
+  const thumbKeys = entries.flatMap((entry) => (entry.thumbKey ? [entry.thumbKey] : []))
+  const signed = thumbKeys.length > 0 ? await signStorageKeys(thumbKeys) : []
+  const signedByKey = new Map(signed.map((entry) => [entry.key, entry]))
+
   return {
-    studies: await Promise.all(
-      completed.map(async ({ study, visit }) => {
-        const [provider, images, clips] = await Promise.all([
-          row<ProviderRow>(client.from('providers').select('id, full_name').eq('id', visit.provider_id).maybeSingle()),
-          rows<{ id: string }>(client.from('images').select('id').eq('study_id', study.id)),
-          rows<{ id: string }>(client.from('cine_clips').select('id').eq('study_id', study.id)),
-        ])
-        // providers are globally readable by policy; a missing row means the
-        // relational record is inconsistent, not an excuse to expose a name.
-        return {
-          id: study.id,
-          description: study.description,
-          occurredAt: visit.occurred_at,
-          providerName: provider?.full_name ?? '',
-          imageCount: images.length,
-          clipCount: clips.length,
-        }
-      }),
-    ),
+    studies: entries.map(({ study, visit, provider, imageCount, clipCount, thumbKey }) => ({
+      id: study.id,
+      description: study.description,
+      occurredAt: visit.occurred_at,
+      providerName: provider?.full_name ?? '',
+      imageCount,
+      clipCount,
+      thumbUrl: thumbKey ? (signedByKey.get(thumbKey)?.url ?? null) : null,
+    })),
   }
 }
 

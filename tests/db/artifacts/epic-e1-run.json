@@ -22,11 +22,11 @@
   },
   "imageAssetManifest": {
     "count": 40,
-    "sha256Digest": "51f6ca410e0d4067d59012eff8b72b0f191a9f9579eae56b6d96398a85c955c8"
+    "sha256Digest": "7b005194e33d54deabef32dcd23569ab25b7e30c5f9fdfd97500209db84d72d5"
   },
   "frameAssetManifest": {
     "count": 800,
-    "sha256Digest": "8ce149e4a05ab772b5556ce8d8c2ec439edd8f1cdb4327f1d059148c76fccefc"
+    "sha256Digest": "3eb8a92a9fd529fd7f2b46c4813bfd46cac3f66c2256459b477af8a449f3f51f"
   },
   "demoAccounts": {
     "patient": "patient@demo.pip.test",

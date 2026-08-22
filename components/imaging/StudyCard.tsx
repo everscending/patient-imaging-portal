@@ -7,6 +7,7 @@ export type StudySummary = {
   providerName: string
   imageCount: number
   clipCount: number
+  thumbUrl?: string | null
 }
 
 function countLabel(count: number, singular: string, plural: string): string {
@@ -20,7 +21,14 @@ export function StudyCard({ study }: { study: StudySummary }) {
 
   return (
     <Link className="pip-study-card" data-testid="study-card" href={`/studies/${study.id}`} aria-label={accessibleName}>
-      <span className="pip-study-card-thumbnail" aria-hidden="true" />
+      <span className="pip-study-card-thumbnail" aria-hidden="true">
+        {study.thumbUrl ? (
+          // Signed, short-lived Storage URL; plain <img> on purpose — next/image
+          // would proxy and cache a PHI URL through the optimizer.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img alt="" className="pip-study-card-thumbnail-image" src={study.thumbUrl} />
+        ) : null}
+      </span>
       <span className="pip-study-card-details">
         <span className="pip-study-card-description">{study.description}</span>
         <time className="pip-study-card-date" dateTime={study.occurredAt}>
