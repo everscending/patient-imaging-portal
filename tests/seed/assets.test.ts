@@ -122,7 +122,8 @@ let pool: AssetPool
 
 beforeAll(() => {
   pool = generateAssetPool(DEFAULT_SEED)
-}, GENERATE_TIMEOUT_MS)
+  // Same hosted-coverage headroom rationale as the tests below.
+}, GENERATE_TIMEOUT_MS * 8)
 
 describe('AC: generating the pool twice from the same seed is byte-identical', () => {
   // Two genuine computations: beforeAll's generateAssetPool call performed
@@ -144,7 +145,10 @@ describe('AC: generating the pool twice from the same seed is byte-identical', (
     expect(fullManifestOf(again)).toEqual(fullManifestOf(pool))
     expect(again.totalBytes).toBe(pool.totalBytes)
     expect(again.missingKey).toBe(pool.missingKey)
-  }, GENERATE_TIMEOUT_MS * 3)
+    // ×8: under the coverage run's instrumentation on the hosted runner a
+    // single pool computation alone ran past 90 s (measured 116 s for this
+    // test on 2026-08-22); the timeout is a hang guard, not a budget.
+  }, GENERATE_TIMEOUT_MS * 8)
 
   // Mandatory adversarial: "a second generation run producing different
   // bytes" — proves the manifest comparison above actually discriminates,
@@ -166,7 +170,7 @@ describe('AC: changing SEED_SOURCE_SEED produces a different pool', () => {
     const alternate = generateAssetPool(`${DEFAULT_SEED}-alternate`)
     expect(fullManifestOf(alternate)).not.toEqual(fullManifestOf(pool))
     expect(alternate.missingKey).not.toBe(pool.missingKey)
-  }, GENERATE_TIMEOUT_MS * 3)
+  }, GENERATE_TIMEOUT_MS * 8)
 })
 
 describe('JOR-320: generateAssetPool is memoized per source seed', () => {
