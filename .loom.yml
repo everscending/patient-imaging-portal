@@ -47,6 +47,7 @@ gates:
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e5-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e7-wiring.spec.ts"
+    - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e11-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e12-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e13-wiring.spec.ts"
     - "node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts"

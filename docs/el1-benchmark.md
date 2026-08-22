@@ -82,9 +82,11 @@ PF-1 and PF-3 as recorded rather than re-chasing them. A row that lands on both
 sides of its line across two runs is a real result about this workload on this
 shared stack, not a defect to be re-run until it reads better.
 
-This file is not the last word on PF-3. **JOR-235's benchmark run is the final
-PF-3 authority**; if it disagrees with the numbers here, JOR-235's measurement
-wins and this section is what it supersedes.
+**JOR-235's benchmark run has since happened**, and it reproduced this exact
+straddle: 5030 ms and 4740.15 ms, under these same conditions. Its record in
+`docs/performance-baseline.md` carries the human acceptance that closes PF-3
+as a final result, 2026-08-22. The deferral this section recorded ends there;
+nothing in it defers PF-3 onward any longer.
 
 What the acceptance rests on is that the patient-facing wait is already covered
 by rows that do meet expectations: the bounded read-ahead window — the frames the

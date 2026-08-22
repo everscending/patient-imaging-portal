@@ -88,3 +88,102 @@ Supabase dataset: 50 appointments and 50 shares, created under
 `performance-2040a3e2-*@example.test`. A repeat run with the same `RUN_ID`
 reuses the existing bookings and skips duplicate shares (see `k6/README.md`),
 so this residue does not grow on rerun with an unchanged `RUN_ID`.
+
+## Confirming run — JOR-235
+
+This is an appended confirming run of the whole benchmark, not a replacement
+for the record above. Everything above this heading is JOR-221's and JOR-302's
+fixed evidence and stays byte-untouched — T67's comparison reads that block,
+never this one. What follows is a second execution of the same six PF rows
+under the same stated load, recorded so all six exist as one dated run rather
+than as six separately dated fragments.
+
+### Conditions
+
+| Condition | Value |
+| --- | --- |
+| Run date | 2026-08-22T02:30:19Z (PF-1/2/3 run 1), 2026-08-22T02:32:17Z (PF-1/2/3 run 2), 2026-08-22T02:34:17Z (PF-5), 2026-08-22T02:36:05Z (PF-4/PF-6), 2026-08-22T02:38:03Z (playback) |
+| Run commit | 75a8d7f351330f211c1259bfe3d9304b10db20bc |
+| Deployed commit | 40c3b4c75eed61ecf09dee6f48d35dca69c78e5c |
+| Run host | https://patient-imaging-portal.vercel.app (Vercel pdx1 → Supabase us-west-2) for PF-1, PF-2, PF-3, PF-5; a local production build (`npm run build && npm run start`, `PORT=4610`) on the same live Supabase us-west-2 project for PF-4 and PF-6 |
+| Run dataset | ADR-0009 deployed seed: 50 patients, 10 providers, 150 studies, 250 cine clips, 700 images, and approximately 16,000 slots |
+| Run VU ramp | 10 s to 20 VUs, 40 s to 50 VUs, 10 s down to 0 |
+| Run duration | 60 s per k6 script |
+| Run count | One run per script. `k6/imaging.js` was run a second time because PF-3 crossed its threshold on the first run — a stability check, not a retry for a better number, and both runs are recorded. PF-4 and PF-6 take one bounded write pair per admitted VU (50 server-timing samples each); PF-5 repeats for the full run (1,371 samples). |
+| Run identifier | `k6/booking.js` ran under `RUN_ID=365d2971` |
+
+`75a8d7f` is the commit this run's k6 scripts, local production build and
+playback check were taken from. The deployed host still serves `40c3b4c`, the
+last deployment this repository records (docs/el1-benchmark.md). Every commit
+between the two touches only `.loom.yml`, `scripts/gate.sh`, `k6/imaging.js`,
+tests and documentation — no `app/`, `lib/` or `components/` path — so the
+application code behind PF-1, PF-2, PF-3 and PF-5 is the same code either SHA
+names. The one file that does differ, `k6/imaging.js`, is the load script this
+run executed locally at `75a8d7f`; the deployed host never runs it.
+
+### Results
+
+| Requirement | Target | This run (p95) | Verdict | Measurement source |
+| --- | --- | --- | --- | --- |
+| PF-1 single image | p95 < 1.0 s | 913.09 ms (run 1), 870.55 ms (run 2) | met | `pf1_single_image_ms`, `k6/imaging.js` |
+| PF-2 cine first frame | p95 < 1.0 s | 710.20 ms (run 1), 649.25 ms (run 2) | met | `pf2_cine_first_frame_ms`, `k6/imaging.js` |
+| PF-3 cine fully loaded | p95 < 5.0 s | 5030 ms (run 1), 4740.15 ms (run 2) | unstable | `pf3_cine_fully_loaded_ms`, `k6/imaging.js` |
+| PF-4 share creation | p95 < 1.0 s | 708.88 ms; samples 50 | met | `share.create` server timing lines, `k6/booking.js` |
+| PF-5 open-slot query | p95 < 1.0 s | 351.38 ms; samples 1,371 | met | `pf5_slot_query_ms`, `k6/slots.js` |
+| PF-6 booking action | p95 < 1.0 s | 576.90 ms; samples 50 | met | `booking.create` server timing lines, `k6/booking.js` |
+
+A verdict of `met` means every recorded run of that row was under target,
+`missed` means every one was over, and `unstable` means the runs fall on both
+sides of the line — the same rule docs/el1-benchmark.md applies.
+
+Checks and HTTP failures across the four k6 runs: imaging 350 of 350 checks
+with 0 of 5,755 requests failed, on each of its two runs; slots 1,371 of 1,371
+checks with 0 of 1,374 failed; booking 100 of 100 checks with 0 of 106 failed.
+
+PF-4 and PF-6 are read only from the PHI-free `{ op, ms, outcome, requestId }`
+lines the application process emitted while `k6/booking.js` drove its stated
+load — 50 `share.create` lines and 50 `booking.create` lines, every one
+`outcome: "ok"` and every one carrying a distinct `requestId`. Neither row is
+computed from k6 request duration.
+
+### Disposition: PF-3 accepted as final (JOR-235)
+
+PF-3 measures 4.7–5.1 s p95 at the target boundary across four runs (JOR-249:
+5105/4657 ms; JOR-235: 5030/4740 ms) under identical conditions;
+human-accepted as the final result 2026-08-22. The patient-visible wait is the
+poster (~650 ms) and the bounded read-ahead window (~1.2–1.5 s); whole-clip
+completion sits at the target line. No threshold was changed.
+
+This acceptance is a new one and it is terminal. It replaces the deferral
+JOR-249 recorded, which had held PF-3 open for this run. Nothing defers PF-3
+onward from here.
+
+The run that passed is not presented as the result: both runs are recorded
+above. Run 1's p95 is recorded at k6's default second precision (5.03 s)
+because the millisecond-precision summary export was only added for the
+confirm run; the crossing itself is not in doubt, as k6 failed its own
+`p(95)<5000` threshold on run 1 and passed it on run 2.
+
+PF-1, the other row JOR-302 tagged as an accepted exceedance at 1130.00 ms,
+is under target on both runs here — 913.09 ms and 870.55 ms — confirming what
+JOR-249 measured. PF-2, PF-4, PF-5 and PF-6 met their targets as before.
+
+### Client playback
+
+`e2e/playback-frames.spec.ts` re-run against the same local production build
+with its existing-server switch (`PLAYBACK_LIVE=1`), 2026-08-22T02:38:03Z:
+passed. All 100 frames rendered in index order at the manifest's own
+`defaultFps` with no dropped frames, and peak preload concurrency was 9 — the
+viewer's stated `CINE_FRAME_WINDOW` of 8 plus the on-screen frame's own
+`<img>` element, never the whole clip at once.
+
+### PF-4/PF-6 write residue for this run
+
+`k6/booking.js` ran under a fresh `RUN_ID=365d2971`. Reusing `2040a3e2` would
+have reused its bookings and skipped every share, leaving PF-4 with no samples
+at all, so a fresh identifier was required and it adds exactly one more
+bounded residue batch to the live seeded dataset: 50 appointments and 50
+shares, with recipient emails matching `performance-365d2971-*@example.test`.
+That is the same bound the block above records for `2040a3e2`, and a repeat
+run under `365d2971` reuses those bookings and skips duplicate shares rather
+than growing the batch.
