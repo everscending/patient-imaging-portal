@@ -74,10 +74,16 @@ describe('JOR-249 EL-1 benchmark contract', () => {
     // The rule: every condition the two columns share must be stated once and
     // must equal what the baseline recorded for the before run. An after run
     // at a different ramp, dataset or host is not a comparison.
+    // Host and Duration are checked against the baseline's own rows too. The
+    // baseline states them for more scripts than this file covers (it also
+    // carries PF-4/PF-6's local host), so the benchmark's value must be a
+    // narrowing of the baseline's — never a different host, region or window.
     const sharedConditions = (document: string): boolean =>
       ['VU ramp', 'Dataset'].every((name) => condition(document, name) === condition(baseline, name))
-        && (condition(document, 'Host') ?? '').includes('Vercel pdx1')
-        && (condition(document, 'Duration') ?? '').startsWith('60 s')
+        && ['Host', 'Duration'].every((name) => {
+          const stated = condition(document, name)
+          return Boolean(stated) && (condition(baseline, name) ?? '').includes(stated!)
+        })
         && resultRows(document).length === 3
 
     expect(sharedConditions(benchmark), 'the committed benchmark states the baseline conditions').toBe(true)
@@ -86,6 +92,8 @@ describe('JOR-249 EL-1 benchmark contract', () => {
       benchmark.replace(/^\| VU ramp \| .+$/m, '| VU ramp | 10 s to 20 VUs, 40 s to 200 VUs, 10 s down to 0 |'),
       benchmark.replace(/^\| Duration \| .+$/m, '| Duration | 15 s |'),
       benchmark.replace(/^\| Host \| .+$/m, '| Host | a local production build on a laptop |'),
+      benchmark.replace('Supabase us-west-2', 'Supabase us-east-1'),
+      benchmark.replace(/^\| Duration \| .+$/m, '| Duration | 60 minutes |'),
       benchmark.replace(/^\| Dataset \| .+$/m, '| Dataset | one study, one clip, ten frames |'),
     ]) {
       expect(sharedConditions(tampered), 'an after run at other conditions must be rejected').toBe(false)
@@ -127,10 +135,16 @@ describe('JOR-249 EL-1 benchmark contract', () => {
       techniqueRows(document).flatMap((cell) => [...cell.matchAll(/`([^`]+)`/g)].map(([, module]) => module!))
     const implementedWindow = Number(/export const CINE_FRAME_WINDOW = (\d+)/.exec(source('viewer'))![1])
 
+    // The window size is checked on the technique row that names the constant,
+    // not anywhere in the document — a matching number in unrelated prose must
+    // not satisfy the claim this row is making.
+    const windowRow = (document: string): string | undefined =>
+      /^\|[^\n]*CINE_FRAME_WINDOW[^\n]*\|$/m.exec(document)?.[0]
+
     const techniquesAreImplemented = (document: string): boolean =>
       namedModules(document).length >= 4
         && namedModules(document).every((module) => existsSync(path.join(REPO_ROOT, module)))
-        && new RegExp(`\\(${implementedWindow}\\)`).test(document)
+        && new RegExp(`\\(${implementedWindow}\\)`).test(windowRow(document) ?? '')
 
     expect(techniquesAreImplemented(benchmark), 'every named module exists and the stated window matches the code').toBe(true)
     // Each technique's mechanism is actually present in the module it names.
@@ -147,6 +161,8 @@ describe('JOR-249 EL-1 benchmark contract', () => {
     for (const tampered of [
       `${benchmark}\n| Predictive frame decoding | \`components/imaging/FramePredictor.tsx\` | Decodes frames before they are requested. |\n`,
       benchmark.replace(`(${implementedWindow})`, `(${implementedWindow * 2})`),
+      // The right number, but stated in prose instead of on the row that claims it.
+      `${benchmark.replace(`(${implementedWindow})`, `(${implementedWindow * 2})`)}\nThe window is (${implementedWindow}).\n`,
     ]) {
       expect(techniquesAreImplemented(tampered), 'a technique the build does not implement must be rejected').toBe(false)
     }
@@ -260,11 +276,25 @@ describe('JOR-249 EL-1 benchmark contract', () => {
       resultRows(document).every((row) => row.verdict === verdictFor(row))
 
     expect(verdictsAreHonest(benchmark), 'every verdict follows from the numbers beside it').toBe(true)
-    // And the straddle is on the record rather than rounded away.
-    const pf3 = resultRows(benchmark).find((row) => row.requirement === 'PF-3')!
-    expect(pf3.verdict).toBe('unstable')
-    expect(Math.min(...pf3.after)).toBeLessThan(pf3.targetMs)
-    expect(Math.max(...pf3.after)).toBeGreaterThanOrEqual(pf3.targetMs)
+
+    // Mirrors the baseline's accepted-exceedance mechanism: a row that did not
+    // meet its target must be named in a disposition section, so a future miss
+    // cannot pass by omission. Nothing here pins a particular row to a
+    // particular verdict — a future run that lands every row under target
+    // needs no disposition and still satisfies this rule.
+    const disposed = (document: string): boolean => {
+      const unmet = resultRows(document).filter((row) => row.verdict !== 'met')
+      if (unmet.length === 0) return true
+      const disposition = /^## Disposition[\s\S]*?(?=\n## |$(?!\n))/m.exec(document)?.[0]
+      return Boolean(disposition)
+        && unmet.every((row) => disposition!.includes(row.requirement))
+        && /human-accepted/i.test(disposition!)
+        && /JOR-235/.test(disposition!)
+    }
+
+    expect(disposed(benchmark), 'each unmet row is named in an accepted disposition').toBe(true)
+    // The rule only bites when a row is actually unmet.
+    expect(disposed(benchmark.replace(/^## Disposition[\s\S]*?(?=\n## )/m, '')), 'an unmet row without a disposition must be rejected').toBe(false)
 
     for (const tampered of [
       benchmark.replace('| 5105.30 ms p95 | 4657.00 ms p95 | unstable |', '| 5105.30 ms p95 | 4657.00 ms p95 | met |'),

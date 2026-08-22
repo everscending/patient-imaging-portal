@@ -18,6 +18,7 @@ import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { config } from '../lib/config'
+import { expectNoPageOverflow, expectTapTarget } from './fixtures/a11y-helpers'
 import {
   E2_FOREIGN_CLIP_ID,
   E2_FOREIGN_REPORT_ID,
@@ -301,11 +302,9 @@ test.describe.serial('JOR-249 EL-1 Priority-1 regression', () => {
     await expect(page.getByTestId('cine-viewer')).toBeVisible()
 
     for (const control of ['cine-play', 'cine-next', 'cine-prev']) {
-      const box = await page.getByTestId(control).boundingBox()
-      expect(box?.width, control).toBeGreaterThanOrEqual(44)
-      expect(box?.height, control).toBeGreaterThanOrEqual(44)
+      await expectTapTarget(page.getByTestId(control))
     }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await expectNoPageOverflow(page)
 
     await page.getByTestId('cine-next').click()
     await page.getByTestId('cine-play').click()

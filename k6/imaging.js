@@ -146,6 +146,10 @@ function measureEl1Path(data, study) {
   thumbnailFirst.add(Date.now() - thumbnailStarted)
   check(thumbnailResponse, { 'EL-1 signed thumbnail bytes load': (response) => response.status === 200 })
 
+  // Deliberately re-fetched rather than reusing the PF-2/PF-3 manifest above:
+  // this models a fresh navigation to the clip, which is how a patient reaches
+  // it, and keeps the poster and window timings a real sequence from the
+  // manifest request rather than a total reconstructed from an earlier one.
   const posterStarted = Date.now()
   const manifestResponse = http.get(`${BASE_URL}/api/studies/${data.clip.studyId}/clips/${data.clip.id}`, {
     headers: data.headers,

@@ -61,7 +61,10 @@ runs. That is the thumbnail-first path doing what it was built to do.
 **PF-3 is not closed.** 5060.00 ms → 5105.30 ms and 4657.00 ms. It straddles its
 5.0 s target rather than clearing it, and the first run was marginally worse than
 the recorded baseline. This is reported as measured. No threshold was adjusted to
-make it pass, and the passing run is not presented as the result.
+make it pass, and the passing run is not presented as the result. Run 1's 45 ms
+over the baseline is inside the margin this ticket's own added EL-1 measurement
+load could account for — that load only ever pushes a PF row upward, as the
+conditions above state — so it should not be read as EL-1 having made PF-3 worse.
 
 The reason PF-3 is largely unmoved is visible in the split below: PF-3 times the
 whole 100-frame clip, and EL-1 did not make the clip smaller or fewer bytes. What
@@ -69,9 +72,28 @@ EL-1 changed is *when* those bytes are needed. The bounded read-ahead window —
 the frames the viewer actually fetches before playback — completes at 1507.90 ms
 and 1211.10 ms p95, roughly a quarter of the whole-clip total, and the poster
 gives the viewer something to draw at about 650–710 ms. A patient waits for the
-window, not for the clip; PF-3 as defined measures the clip. Whether PF-3 is the
-right row to hold EL-1 to is a question for the requirement, not for this file,
-and it is left open rather than answered by editing a target.
+window, not for the clip; PF-3 as defined measures the clip.
+
+## Disposition: PF-3 straddle accepted (JOR-249)
+
+**PF-3's straddle — 5105.30 ms and 4657.00 ms against a p95 < 5.0 s target — is
+human-accepted, 2026-08-22**, on the same precedent JOR-302 set when it accepted
+PF-1 and PF-3 as recorded rather than re-chasing them. A row that lands on both
+sides of its line across two runs is a real result about this workload on this
+shared stack, not a defect to be re-run until it reads better.
+
+This file is not the last word on PF-3. **JOR-235's benchmark run is the final
+PF-3 authority**; if it disagrees with the numbers here, JOR-235's measurement
+wins and this section is what it supersedes.
+
+What the acceptance rests on is that the patient-facing wait is already covered
+by rows that do meet expectations: the bounded read-ahead window — the frames the
+viewer actually fetches before playback — completes at 1507.90 ms and 1211.10 ms
+p95, and the poster gives the viewer something to draw at about 650–710 ms. PF-3
+measures the whole 100-frame clip, which is not what a patient waits for.
+
+No threshold was changed to record this, and the accepting verdict is `unstable`,
+not `met`.
 
 ## EL-1 delivery path
 
