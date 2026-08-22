@@ -65,7 +65,7 @@ describe('cumulative tiers — acceptance: api runs logic first, ui runs api fir
     const ui = run(['ui', '--list']).stdout.trim().split('\n')
     expect(ui.slice(0, api.length)).toEqual(api)
     expect(ui.length).toBeGreaterThan(api.length)
-    expect(ui).toContain('npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring')
+    expect(ui).toContain('npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring --project=demo-walkthrough')
     expect(ui).toContain(
       'node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts',
     )
@@ -212,7 +212,12 @@ describe('playwright config — acceptance + adversarial: baseURL is derived, ne
 
   test('mutable fake-server projects run serially and E2/E3 run after product', () => {
     expect(source).toMatch(/defineConfig\(\{\s*workers:\s*1,/)
-    expect(source).toMatch(/name:\s*'product'[\s\S]*testIgnore:\s*\/e\[0123458\]-wiring\\\.spec\\\.ts\//)
+    // product ignores the wiring specs that own a project, and the recorded
+    // demo, which runs only under its own recording project (JOR-261).
+    expect(source).toMatch(
+      /name:\s*'product'[\s\S]*testIgnore:\s*\[\/e\[0123458\]-wiring\\\.spec\\\.ts\/,\s*\/demo-walkthrough\\\.spec\\\.ts\/\]/,
+    )
+    expect(source).toMatch(/name:\s*'demo-walkthrough'[\s\S]*testMatch:\s*\/demo-walkthrough\\\.spec\\\.ts\/[\s\S]*video/)
     expect(source).toMatch(
       /name:\s*'e2-wiring'[\s\S]*testMatch:\s*\/e2-wiring\\\.spec\\\.ts\/[\s\S]*dependencies:\s*\['product'\]/,
     )
