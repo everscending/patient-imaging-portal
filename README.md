@@ -203,10 +203,17 @@ own committed, runnable checks have covered so far.
 JOR-207). 10 due reminders, 10 sent, 0 duplicates, 0 failed — every due
 reminder delivered exactly once across that window.
 
-**PF-9 — deployed-demo uptime.** Not yet measured: no uptime check has run
-against the deployed demo. The uptime window will be measured starting at
-build promotion (JOR-252) and recorded here with its start and end once that
-happens. **[pending — JOR-252]**
+**PF-9 — deployed-demo uptime.** One measurement, one place. The window is
+polled by `scripts/uptime-check.sh` and recorded in
+[`docs/deploy.md`](docs/deploy.md) (JOR-252); the row below is that record
+restated here verbatim, never re-derived. Window opened at build promotion:
+start 2026-08-22T14:58:21Z, base URL <https://patient-imaging-portal.vercel.app>,
+60-second interval. A reachable-but-degraded response counts as up; only
+`unreachable` counts against availability.
+
+| Window end (UTC) | Total checks | Reachable and healthy | Reachable but degraded | Unreachable | Availability |
+| --- | --- | --- | --- | --- | --- |
+| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
 
 ## Performance
 
@@ -261,7 +268,10 @@ a video; a **visit** (the clinical event) is not the same thing as a
 
 ## Deployed URL
 
-**[pending — see [`docs/deploy.md`](docs/deploy.md) for the current record]**
+https://patient-imaging-portal.vercel.app
+
+The deployed commit, the live check behind it, and the promotion run that put
+it there are recorded in [`docs/deploy.md`](docs/deploy.md).
 
 ## Documentation
 
@@ -272,3 +282,90 @@ a video; a **visit** (the clinical event) is not the same thing as a
   [`CONTEXT.md`](CONTEXT.md), [`PRD.md`](PRD.md).
 - [`AI_USAGE.md`](AI_USAGE.md) — which AI tools built this repository, and
   for what.
+
+## E14 confirming run record (JOR-265)
+
+A reviewer's first hour, executed rather than described. Appended once per
+confirming run and never edited after the fact: the deployed demo reached over
+HTTPS, the quick start above run from a clean clone and timed step by step, the
+suites it names actually run, and the demo recording regenerated from its
+committed spec. `e2e/e14-wiring.spec.ts` re-asserts every claim below against
+the live build, so a claim here that stopped being true fails the gate.
+
+### Deployed demo
+
+| Check | Result |
+| --- | --- |
+| `GET /` over HTTPS | 200 |
+| `GET /api/health` | 200 — `app` ok, `database` ok, `storage` ok |
+| Deployed URL named above | the same URL that answered |
+
+### Quick start, executed from a clean clone
+
+Run on 2026-08-22 against a fresh `git clone` of this repository, following
+**Grader quick start** above in order. Elapsed is wall clock on one developer
+laptop with a warm npm cache; a slower host or a cold cache reads higher. Two
+host settings were supplied, both documented variables rather than extra
+steps: `PORT` was set away from its 4310 default because that port was already
+taken on this machine, and the clone used its own Supabase project id because a
+second checkout on the same host was already running one.
+
+| # | Step | Elapsed | Result |
+| --- | --- | --- | --- |
+| 1 | `git clone` | 1s | ok |
+| 2 | `npm ci` | 4s | ok — 424 packages |
+| 3 | `cp .env.example .env` | 0s | ok — but see Gap 2 below |
+| 4 | `bash scripts/local-del4-runtime.sh start` | 41s | ok — migrations applied, demo dataset seeded |
+| 5 | `bash scripts/local-del4-runtime.sh run node scripts/run-next.mjs dev` | 13s | ok — HTTP 200 on the configured port |
+| 6 | `bash scripts/local-del4-runtime.sh run npm run gate:logic` | 15s, then 608s | **failed as written (Gap 1)**; ok after the one-line fix |
+| 7 | `bash scripts/local-del4-runtime.sh run npm run gate:api` | 735s | ok |
+| 8 | `npx playwright install --with-deps chromium` | 1s | ok — browsers already cached |
+| 9 | `bash scripts/local-del4-runtime.sh run npm run gate:ui` | 959s | **failed (Gaps 2 and 3)** — 265 of 289 passed, 3 failed |
+
+Total elapsed, including the failed attempt at step 6: 2377s (39m 37s).
+
+Suite results. `gate:logic` passes once Gap 1 is fixed: 1107 tests across 79
+files, coverage thresholds met. `gate:api` passes, and it is the tier that
+carries both proofs the quick start names — the FR-12 no-double-booking
+concurrency test (`tests/scheduling/booking-concurrency.test.ts`, 12 tests
+including twenty simultaneous bookings on one open slot) and the FR-6/FR-9
+cross-patient leakage test (`tests/adversarial/cross-patient.test.ts`, 20
+tests). `gate:ui` fails on Gap 2 below.
+
+**Gap 1 — `npm run gate:logic` fails immediately after the documented runtime
+start.** Step 4 makes the Supabase CLI write a minified vendored file at
+`supabase/.temp/start-secrets/.../main/index.ts`. `eslint.config.mjs`'s ignore
+list does not cover `supabase/.temp/**`, so the next step's `npx eslint .`
+reports 182 errors against that generated file and every gate tier fails with
+it. Adding `'supabase/.temp/**'` to that ignore list clears it: the same
+checkout then lints with 0 errors. The file is already outside Git, so this is
+an ignore-list omission only, not a hygiene problem.
+
+**Gap 2 — `cp .env.example .env` makes the committed UI suite fail.**
+`.env.example` carries `NEXT_PUBLIC_PRACTICE_NAME=Your Practice Name`. Next
+loads `.env` for the running app, but the Playwright process does not, so the
+app renders `Your Practice Name` while `e2e/landing.spec.ts` asserts against
+`config.practiceName`, which resolves to the documented default
+`Patient Imaging Portal`. Two landing tests fail on that disagreement, and
+`gate:ui` fails with them. Moving `.env` aside makes all three landing tests
+pass, which isolates the cause to that one value.
+
+**Gap 3 — one spec depends on the identity fixture state another spec left
+behind.** `e2e/e11-wiring.spec.ts` fails at `POST /api/identity/verify` with
+400, taking the rest of its serial block with it (19 tests do not run). It
+reproduces in full-suite order and passes when the spec is run on its own, so
+it is ordering, not chance. `app/api/identity/verify` answers 400 for every
+refusal — a mismatch, a lockout, and a record already claimed by another
+account are deliberately indistinguishable — and this spec takes the identity
+fixture lock without resetting the fixture first. Of the 28 specs that take
+that lock, 21 reset it; this is the only one of the remaining seven that
+verifies an identity, so it inherits whatever the previous holder left.
+
+### Demo regeneration
+
+| Artifact | Result |
+| --- | --- |
+| `test-results/demo-walkthrough/demo-walkthrough.webm` | regenerated in a clean clone from `e2e/demo-walkthrough.spec.ts` — 565,872 bytes, alongside its `demo-timeline.json` |
+
+The walkthrough is confirmed by regenerating it from its committed spec in a
+fresh clone, never by reading a file an earlier run left behind.

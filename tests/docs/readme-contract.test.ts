@@ -10,7 +10,20 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 
-import { DEMO_ACCOUNT_EMAILS, DEMO_ACCOUNT_PASSWORD, DEMO_MAIL_DOMAIN } from '../../db/seed/rows'
+import { DEMO_ACCOUNT_PASSWORD, DEMO_MAIL_DOMAIN } from '../../db/seed/rows'
+// The parsers below live in ./readme-contract so e2e/e14-wiring.spec.ts can
+// re-assert this same contract against the live build without a second copy
+// (JOR-265). Re-exported here so this file's published surface is unchanged.
+import {
+  configDefault,
+  quickStartCoversConcurrencyAndLeakage,
+  readmeStatedValue,
+  section,
+  STATED_PARAMETER_ENV_KEYS,
+  unseededDemoCredentials,
+} from './readme-contract'
+
+export { configDefault, quickStartCoversConcurrencyAndLeakage, readmeStatedValue, unseededDemoCredentials }
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const README_PATH = path.join(REPO_ROOT, 'README.md')
@@ -19,20 +32,6 @@ const CONFIG_SOURCE = readFileSync(path.join(REPO_ROOT, 'lib', 'config.ts'), 'ut
 const CONTEXT = readFileSync(path.join(REPO_ROOT, 'CONTEXT.md'), 'utf8')
 const PERFORMANCE_BASELINE = readFileSync(path.join(REPO_ROOT, 'docs', 'performance-baseline.md'), 'utf8')
 const EL1_BENCHMARK = readFileSync(path.join(REPO_ROOT, 'docs', 'el1-benchmark.md'), 'utf8')
-
-function section(markdown: string, heading: string): string {
-  const lines = markdown.split('\n')
-  const start = lines.findIndex((l) => l.trim() === heading)
-  if (start === -1) throw new Error(`readme-contract fixture: heading not found: ${heading}`)
-  let end = lines.length
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) {
-      end = i
-      break
-    }
-  }
-  return lines.slice(start, end).join('\n')
-}
 
 // ── 1. secret or real credential ───────────────────────────────────────────
 const REAL_SUPABASE_PROJECT_REF = 'dyvbopxzwkavhggawedt' // docs/deploy.md's real project ref
@@ -63,27 +62,6 @@ describe('mandatory adversarial: secret or real credential in the README', () =>
 })
 
 // ── 2. a stated parameter disagreeing with lib/config.ts ───────────────────
-const STATED_PARAMETER_ENV_KEYS = [
-  'SHARE_LINK_TTL_HOURS',
-  'MIN_CHANGE_NOTICE_HOURS',
-  'REMINDER_LEAD_HOURS',
-  'IDENTITY_MAX_ATTEMPTS',
-  'IDENTITY_LOCKOUT_MINUTES',
-  'SIGNED_URL_TTL_SECONDS',
-] as const
-
-export function configDefault(configSource: string, envKey: string): number {
-  const match = configSource.match(new RegExp(`intWithDefault\\('${envKey}',\\s*(\\d+)\\)`))
-  if (!match) throw new Error(`readme-contract: lib/config.ts has no intWithDefault default for ${envKey}`)
-  return Number(match[1])
-}
-
-export function readmeStatedValue(readmeContent: string, envKey: string): number {
-  const match = readmeContent.match(new RegExp('`' + envKey + '` \\| (\\d+) \\|'))
-  if (!match) throw new Error(`readme-contract: README has no stated-parameters row for ${envKey}`)
-  return Number(match[1])
-}
-
 describe('mandatory adversarial: a stated parameter disagreeing with lib/config.ts', () => {
   test.each(STATED_PARAMETER_ENV_KEYS)('%s: README value matches lib/config.ts default', (envKey) => {
     expect(readmeStatedValue(README, envKey)).toBe(configDefault(CONFIG_SOURCE, envKey))
@@ -188,13 +166,6 @@ describe('mandatory adversarial: a missing residue', () => {
 })
 
 // ── 7. a demo credential not in the seeded data ─────────────────────────────
-export function unseededDemoCredentials(content: string): { emails: string[]; badPassword: boolean } {
-  const mentionedEmails = [...content.matchAll(new RegExp(`[a-z0-9._%+-]+@${DEMO_MAIL_DOMAIN}`, 'gi'))].map((m) => m[0])
-  const emails = mentionedEmails.filter((email) => !(DEMO_ACCOUNT_EMAILS as readonly string[]).includes(email))
-  const badPassword = !content.includes(DEMO_ACCOUNT_PASSWORD)
-  return { emails, badPassword }
-}
-
 describe('mandatory adversarial: a demo credential not in the seeded data', () => {
   test('every demo address and the demo password in the README are seeded', () => {
     const result = unseededDemoCredentials(README)
@@ -209,14 +180,6 @@ describe('mandatory adversarial: a demo credential not in the seeded data', () =
 })
 
 // ── 8. quick start omitting the concurrency or leakage test ────────────────
-export function quickStartCoversConcurrencyAndLeakage(content: string): { concurrency: boolean; leakage: boolean } {
-  const quickStart = section(content, '## Grader quick start')
-  return {
-    concurrency: quickStart.includes('tests/scheduling/booking-concurrency.test.ts'),
-    leakage: quickStart.includes('tests/adversarial/cross-patient.test.ts'),
-  }
-}
-
 describe('mandatory adversarial: quick start omitting the concurrency or leakage test', () => {
   test('the real quick start names both suites', () => {
     const result = quickStartCoversConcurrencyAndLeakage(README)
