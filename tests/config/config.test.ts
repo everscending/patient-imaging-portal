@@ -343,12 +343,16 @@ describe('repo-wide guards', () => {
     // JOR-221's playback check reads one switch of its own, PLAYBACK_LIVE,
     // choosing between the local stack and the deployed one; it is a test
     // harness in the same sense as the entries around it.
+    // JOR-319's shim-regression test forwards the environment to a child
+    // demo-run process with the version-manager shim restored to PATH — a
+    // process-launch boundary like start-test-server.mjs above.
     expect(hits.sort()).toEqual([
       'e2e/fixtures/start-test-server.mjs',
       'e2e/playback-frames.spec.ts',
       'lib/config.ts',
       'scripts/provision-deployed-stack.ts',
       'scripts/run-next.mjs',
+      'tests/adversarial/log-scan.test.ts',
       'tests/config/config.test.ts',
       'tests/gate/gate.test.ts',
       'tests/integration/postgres-harness.test.ts',
