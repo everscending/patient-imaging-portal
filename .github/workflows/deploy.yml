@@ -26,18 +26,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PORT: "4310"
-      # Every §8 variable the deployed app actually reads in production
-      # (docs/deploy.md's Vercel project section), from repository secrets —
-      # never a literal value in this file (SEC-7).
+      # The gate runs with EXACTLY ci.yml's environment — the same four §8
+      # required variables and nothing more. Production-only values (the real
+      # email transport and its key, most of all) must not reach the gate's
+      # unit suites, whose expectations are written against the test
+      # environment: the maiden run of this workflow failed precisely because
+      # a real RESEND key flipped the email adapter inside unit tests. The
+      # remaining §8 production variables are supplied to the deploy-context
+      # step below, never to the gate (SEC-7: all via secrets, no literals).
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SOURCE_REF_SALT: ${{ secrets.SOURCE_REF_SALT }}
-      APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
-      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      RESEND_FROM: ${{ secrets.RESEND_FROM }}
-      EMAIL_TRANSPORT: ${{ secrets.EMAIL_TRANSPORT }}
-      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,6 +81,14 @@ jobs:
       - name: Confirm production reflects this gated commit
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # The deployed app's remaining §8 contract, referenced here as the
+          # deploy-context step (names mirror docs/deploy.md's secrets list);
+          # the gate above never sees these production values.
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+          EMAIL_TRANSPORT: ${{ secrets.EMAIL_TRANSPORT }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
           expected="${{ github.sha }}"

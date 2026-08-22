@@ -215,6 +215,11 @@ const eslintConfig = [
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',
+      // supabase start (the README's DEL-4 quick-start path) vendors a
+      // minified edge-runtime file under supabase/.temp; it is CLI-generated,
+      // already gitignored, and not this repo's code (JOR-265's timed run
+      // found it failing gate:logic with 182 errors on a clean checkout).
+      'supabase/.temp/**',
       'next-env.d.ts',
       // Planted violations for tests/lint/forbidden-imports.test.ts — linted
       // in-process against a scoped fixture root, never against this tree.
