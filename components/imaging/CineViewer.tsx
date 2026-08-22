@@ -23,6 +23,21 @@ export type CineViewerProps = {
 // connections to work with.
 export const CINE_FRAME_WINDOW = 8
 
+// The frame cache holds at most one entry per frame of the clip on screen,
+// and a clip is at most 100 frames (DEL-4, ADR-0009) — so it is bounded by
+// the dataset rather than by a limit of its own. At the pool's 640x480 that
+// is on the order of a hundred megabytes decoded, the same as the DOM held
+// before EL-1, and every one of those frames is pinned deliberately: the
+// no-dropped-frames criterion (PF-2/PF-3, e2e/playback-frames.spec.ts) needs
+// each frame decoded and ready before the playhead reaches it.
+//
+// ponytail: evicting the frames farthest from the playhead was measured and
+// rejected — a ceiling of 24 dropped 39 of 100 frames in that check, because
+// each frame renders through an element keyed to its own index and an
+// evicted frame cannot re-decode inside one tick at 12 fps. Bounding memory
+// means first making the viewer draw from the cached element instead of a
+// fresh one per frame; that is a larger change than a cache limit.
+
 function withFrame(current: Set<number>, index: number): Set<number> {
   if (current.has(index)) return current
   const next = new Set(current)
@@ -41,6 +56,16 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
   const frameCache = useRef(new Map<number, HTMLImageElement>())
   const requestedFrames = useRef(new Set<number>())
   const framesInFlight = useRef(0)
+  // Fetches outlive the viewer that started them. Their handlers check this
+  // before touching state, so a clip closed mid-window settles quietly.
+  // Set on mount, not only cleared on unmount: development remounts the
+  // component to check its cleanup, and a flag that were only ever cleared
+  // would leave the viewer permanently convinced it was gone.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const [posterFailed, setPosterFailed] = useState(false)
   const framesByIndex = useMemo(() => new Map(clip.frames.map((frame) => [frame.index, frame])), [clip.frames])
   const availableFrames = useMemo(() => clip.frames.filter((frame) => frame.available && frame.url), [clip.frames])
@@ -90,12 +115,14 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
       const image = new Image()
       image.fetchPriority = priority
       image.onload = () => {
+        if (!mounted.current) return
         frameCache.current.set(index, image)
         framesInFlight.current -= 1
         setLoadedFrames((loaded) => withFrame(loaded, index))
         setSettledFrames((settled) => withFrame(settled, index))
       }
       image.onerror = () => {
+        if (!mounted.current) return
         framesInFlight.current -= 1
         setSettledFrames((settled) => withFrame(settled, index))
       }
@@ -104,9 +131,11 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
 
     // The frame on screen goes first and alone: until it has settled nothing
     // else competes with it for bandwidth, which is what makes the first
-    // frame of a clip arrive as early as it can. It also starts regardless of
-    // how many fetches are already in flight, so a scrub deep into the clip
-    // is never queued behind the window that was filled for the old position.
+    // frame of a clip arrive as early as it can. A scrub deep into the clip
+    // starts its fetch immediately rather than waiting for the open window to
+    // drain — though a frame the old window had already asked for keeps the
+    // low priority it was given, and every in-flight fetch still holds its
+    // connection until it finishes.
     const current = framesByIndex.get(currentFrame)
     const currentIsFetchable = Boolean(current?.available && current.url)
     if (currentIsFetchable && !requestedFrames.current.has(currentFrame)) {
