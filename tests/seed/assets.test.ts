@@ -32,6 +32,7 @@ import {
   THUMB_WIDTH,
   type AssetPool,
 } from '../../db/seed/assets'
+import { buildRowSet } from '../../db/seed/rows'
 import { PHI_BUCKET, uploadPool, type PhiStorageClient, type StorageObjectInfo } from '../../db/seed/storage'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
@@ -146,6 +147,55 @@ describe('AC: changing SEED_SOURCE_SEED produces a different pool', () => {
     const alternate = generateAssetPool(`${DEFAULT_SEED}-alternate`)
     expect(fullManifestOf(alternate)).not.toEqual(fullManifestOf(pool))
     expect(alternate.missingKey).not.toBe(pool.missingKey)
+  }, GENERATE_TIMEOUT_MS)
+})
+
+describe('JOR-320: generateAssetPool is memoized per source seed', () => {
+  test('sameSeedReturnsTheSameCachedPoolObject', function sameSeedReturnsTheSameCachedPoolObject() {
+    const again = generateAssetPool(DEFAULT_SEED)
+    // Reference identity, not just equal content — this is what proves the
+    // second call was a cache hit rather than a second computation.
+    expect(again).toBe(pool)
+  })
+
+  test('differentSeedReturnsADistinctPoolObject', function differentSeedReturnsADistinctPoolObject() {
+    const alternate = generateAssetPool(`${DEFAULT_SEED}-jor-320-distinct`)
+    expect(alternate).not.toBe(pool)
+  }, GENERATE_TIMEOUT_MS)
+
+  // Mutation canary: every caller sharing the same seed now gets the exact
+  // same pool object back, so a future caller that writes to it would
+  // poison every other caller of that seed, not just itself. Deep-freezing
+  // the pool before handing it to the two real consumers pins today's
+  // "read-only" behavior — a regression here throws in this test instead of
+  // silently corrupting a later run's data.
+  test('adversarial: neither buildRowSet nor uploadPool writes to the pool they are given', async function adversarialNeitherConsumerWritesToTheSharedPool() {
+    const seed = `${DEFAULT_SEED}-jor-320-freeze-canary`
+    const frozen = generateAssetPool(seed)
+    // Object.freeze on the asset objects (and the array/pool holding them)
+    // catches any attempt to reassign a field like `key` or `upload`. A
+    // Buffer can't itself be frozen (Node refuses to freeze a typed array
+    // with elements), so the byte-content snapshot below stands in for
+    // catching an in-place write to `asset.bytes`.
+    for (const asset of frozen.assets) Object.freeze(asset)
+    Object.freeze(frozen.assets)
+    Object.freeze(frozen)
+    const bytesBefore = frozen.assets.map((asset) => Buffer.from(asset.bytes))
+
+    const rowSet = buildRowSet({
+      pool: frozen,
+      sourceSeed: seed,
+      now: new Date('2026-01-01T00:00:00.000Z'),
+      minChangeNoticeHours: 24,
+    })
+    expect(rowSet.patients.length).toBeGreaterThan(0)
+
+    const { client } = createFakeStorageClient()
+    await expect(uploadPool(client, frozen)).resolves.toBeDefined()
+
+    frozen.assets.forEach((asset, index) => {
+      expect(Buffer.compare(asset.bytes, bytesBefore[index])).toBe(0)
+    })
   }, GENERATE_TIMEOUT_MS)
 })
 
