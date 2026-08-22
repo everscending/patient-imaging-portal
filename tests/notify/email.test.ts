@@ -16,6 +16,9 @@ const { sendMock, ResendMock, mkdirMock, writeFileMock } = vi.hoisted(() => {
   return { sendMock, ResendMock, mkdirMock: vi.fn(), writeFileMock: vi.fn() }
 })
 vi.mock('resend', () => ({ Resend: ResendMock }))
+// email.ts now imports the db client as a value (service-role enqueue, 016),
+// which pulls in 'server-only'; stub it so the module loads under vitest.
+vi.mock('server-only', () => ({}))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   mkdirMock.mockImplementation(actual.mkdir)

@@ -49,6 +49,14 @@ create policy reminder_sends_no_app_access on reminder_sends
 revoke select, insert, update on reminder_sends from app_user;
 revoke all on reminder_sends from anon, authenticated;
 
+-- Caller-id resolver for the policies below: current_request_user_id() (009/013),
+-- a SECURITY DEFINER that resolves request.jwt.claims (hosted) OR
+-- request.jwt.claim.sub (local) and fails closed on a malformed claim. Using it
+-- (rather than auth.uid(), which app_user cannot call and which reads only the
+-- hosted claim shape) keeps these policies working under both PostgREST runtimes.
+-- booking_executor already holds execute (009); app_user needs it granted here.
+grant execute on function current_request_user_id() to app_user;
+
 -- ── #4 staff_admins: a caller may see only their own row ─────────────────────
 -- Blanket SELECT let any session enumerate every administrator. is_admin()
 -- reads this table as a SECURITY DEFINER owned by the table owner, so it keeps
@@ -56,7 +64,7 @@ revoke all on reminder_sends from anon, authenticated;
 -- the provider layout) are all self-scoped and satisfied by the self clause.
 alter table staff_admins enable row level security;
 create policy staff_admins_self_or_admin on staff_admins
-  for select using (user_id = auth.uid() or is_admin());
+  for select using (user_id = current_request_user_id() or is_admin());
 revoke all on staff_admins from anon, authenticated;
 
 -- ── #4 appointment_transitions: scoped to the appointment's participants ─────
@@ -108,7 +116,7 @@ revoke all on provider_services from anon, authenticated;
 -- actor_ref to the caller's own subject, so self-attribution is the exact bound.
 drop policy audit_insert_any on audit_events;
 create policy audit_insert_self on audit_events
-  for insert with check (actor_ref = auth.uid()::text);
+  for insert with check (actor_ref = current_request_user_id()::text);
 
 -- ── #2 login throttle store ──────────────────────────────────────────────────
 -- Brute-force protection for the password login (app/api/auth/login). Counted

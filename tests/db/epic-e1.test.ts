@@ -362,17 +362,18 @@ describe('AC 3: RLS refuses a cross-patient read at the database layer, no appli
 describe('AC 4: an update or delete against audit_events is rejected — append-only structurally, not by convention', () => {
   test('auditEventsRejectUpdateAndDeleteAsAppUserInsertAndAdminSelectSucceed', function auditEventsRejectUpdateAndDeleteAsAppUserInsertAndAdminSelectSucceed() {
     const marker = `e1-probe-${randomUUID()}`
-    // No RETURNING here: `audit_select_admin` (is_admin()) is the table's
-    // only SELECT policy, and RETURNING on an INSERT requires that same
-    // SELECT policy to pass for the row being returned — app_user with no
-    // admin claim can never satisfy it. The INSERT itself is unconditional
-    // (`audit_insert_any` — with check (true)), so it still succeeds; the
-    // admin-scoped SELECT below is how this test reads the row back.
+    // Self-attributed account insert: db/migrations/016 replaced the old
+    // `audit_insert_any` (with check (true)) with `audit_insert_self`, so an
+    // app_user row must carry actor_ref = the caller's own subject. No RETURNING
+    // here: `audit_select_admin` (is_admin()) is the table's only SELECT policy,
+    // and RETURNING would require it to pass for the returned row. The
+    // admin-scoped SELECT below reads the row back instead.
+    const account = rowSet.fixtures.demoAdminAuthId
     psql(
       run.dbName,
       appUserScript(
-        null,
-        `insert into audit_events (actor_kind, action, target_kind, outcome, detail) values ('system', 'audit.view', 'audit_events', 'granted', '{"marker":"${marker}"}');`,
+        account,
+        `insert into audit_events (actor_kind, actor_ref, action, target_kind, outcome, detail) values ('account', '${account}', 'audit.view', 'audit_events', 'granted', '{"marker":"${marker}"}');`,
       ),
     )
 

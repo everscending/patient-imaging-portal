@@ -306,9 +306,10 @@ describe('AC: email_outbox is locked to the service role (db/migrations/016)', (
     )
     expect(ownerInsert).toMatch(/^[0-9a-f-]{36}$/)
 
-    // A patient session sees zero rows — no harvesting share links from the queue.
-    const appRead = psql(mainRun.dbName, appUserScript(null, `select count(*) from email_outbox;`))
-    expect(appRead).toBe('0')
+    // A patient session cannot even read the queue: the SELECT grant is revoked
+    // (and the deny policy would return nothing regardless) — no harvesting share
+    // links from the outbox.
+    expectRawFailure(mainRun.dbName, appUserScript(null, `select count(*) from email_outbox;`), '42501')
   })
 })
 
@@ -775,8 +776,11 @@ describe('AC: staff_admins is not enumerable by other sessions (016)', () => {
 
 describe('AC: audit_events rejects a forged actor_ref, accepts self (016)', () => {
   test('auditInsertMustBeSelfAttributed', function auditInsertMustBeSelfAttributed() {
+    // userA is an admin only so the RETURNING clause below can read the row back
+    // through audit_select_admin (production audit writes use no RETURNING). The
+    // WITH CHECK is self-attribution and is independent of admin status.
     const userA = insertAuthUser(mainRun.dbName)
-    insertPatient(mainRun.dbName, userA)
+    insertStaffAdmin(mainRun.dbName, userA)
 
     const ok = psql(
       mainRun.dbName,

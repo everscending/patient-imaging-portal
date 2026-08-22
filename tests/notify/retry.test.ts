@@ -12,6 +12,9 @@ const { sendMock, ResendMock } = vi.hoisted(() => {
 })
 
 vi.mock('resend', () => ({ Resend: ResendMock }))
+// email.ts now imports the db client as a value (service-role enqueue, 016),
+// which pulls in 'server-only'; stub it so the module loads under vitest.
+vi.mock('server-only', () => ({}))
 
 const REQUIRED_ENV = {
   NEXT_PUBLIC_SUPABASE_URL: 'https://test-project.supabase.co',

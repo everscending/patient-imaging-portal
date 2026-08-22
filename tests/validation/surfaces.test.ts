@@ -28,8 +28,18 @@ vi.mock('../../lib/access/guard', () => ({
   resolveScheduleActor: resolveScheduleActorMock,
 }))
 vi.mock('../../lib/access/identity', () => ({ resolveCallerId: resolveCallerIdMock }))
+// The login route now runs a throttle (AUDIT.md #2) before validation clears;
+// stub it so these validation-surface tests neither hit the DB nor load
+// 'server-only'. Not locked, so a valid body still reaches signInWithPassword.
+vi.mock('../../lib/access/login-throttle', () => ({
+  computeSourceRef: () => 'test-source-ref',
+  emailHash: () => 'test-email-hash',
+  isLoginLocked: async () => false,
+  recordLoginAttempt: async () => {},
+}))
 vi.mock('../../lib/db/client', () => ({
   authClient: () => ({ auth: { signInWithPassword: signInMock, signUp: signUpMock } }),
+  serviceClient: () => ({}),
 }))
 vi.mock('../../lib/scheduling/availability', () => ({
   applyAvailability: applyAvailabilityMock,
