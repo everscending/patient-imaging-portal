@@ -125,17 +125,20 @@ beforeAll(() => {
 }, GENERATE_TIMEOUT_MS)
 
 describe('AC: generating the pool twice from the same seed is byte-identical', () => {
-  // Two genuine computations, not generateAssetPool called twice (JOR-320
-  // memoizes that, so a second call would just hand back the first call's
-  // cached object and this test would compare a pool to itself).
+  // Two genuine computations: beforeAll's generateAssetPool call performed
+  // the first real computation (and cached it — JOR-320); this test performs
+  // ONE more via the uncached computeAssetPool and compares. Running two
+  // computeAssetPool calls back to back inside this test doubled the block
+  // to ~63 s of contiguous synchronous work on the hosted runner, tripping
+  // both the 60 s test timeout and birpc's worker-RPC deadline — one fresh
+  // computation proves the same property at half the block.
   test('reproducesByteIdenticalPoolAcrossRuns', function reproducesByteIdenticalPoolAcrossRuns() {
-    const first = computeAssetPool(DEFAULT_SEED)
     const again = computeAssetPool(DEFAULT_SEED)
-    expect(again).not.toBe(first)
-    expect(fullManifestOf(again)).toEqual(fullManifestOf(first))
-    expect(again.totalBytes).toBe(first.totalBytes)
-    expect(again.missingKey).toBe(first.missingKey)
-  }, GENERATE_TIMEOUT_MS * 2)
+    expect(again).not.toBe(pool)
+    expect(fullManifestOf(again)).toEqual(fullManifestOf(pool))
+    expect(again.totalBytes).toBe(pool.totalBytes)
+    expect(again.missingKey).toBe(pool.missingKey)
+  }, GENERATE_TIMEOUT_MS * 3)
 
   // Mandatory adversarial: "a second generation run producing different
   // bytes" — proves the manifest comparison above actually discriminates,
