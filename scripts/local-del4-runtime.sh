@@ -3,13 +3,49 @@
 set -euo pipefail
 
 SUPABASE_CLI='supabase@2.115.0'
+DEFAULT_PROJECT_ID='patient-imaging-308'
+WORKDIR='supabase/.temp/checkout-workdir'
+
+# Each checkout (the main clone, a worktree, a scratch clone) gets its own
+# Supabase project id, derived from its absolute path, so the CLI's
+# docker containers/volumes never collide across concurrently running
+# checkouts (JOR-321). Override with DEL4_PROJECT_ID when a fixed id is
+# needed. The tracked supabase/config.toml keeps the default id so the
+# documented single-checkout quick start (running the CLI directly) is
+# unchanged; everything invoked through this script instead runs against a
+# derived copy of that config in $WORKDIR (gitignored, regenerated on every
+# run — the tracked file is never touched).
+project_id() {
+  if [[ -n "${DEL4_PROJECT_ID:-}" ]]; then
+    printf '%s' "$DEL4_PROJECT_ID"
+    return
+  fi
+  local hash
+  if command -v shasum >/dev/null 2>&1; then
+    hash="$(printf '%s' "$PWD" | shasum -a 256 | cut -c1-8)"
+  else
+    hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-8)"
+  fi
+  printf 'patient-imaging-%s' "$hash"
+}
+
+materialize_workdir() {
+  mkdir -p "$WORKDIR/supabase"
+  sed "s/^project_id = \"$DEFAULT_PROJECT_ID\"\$/project_id = \"$(project_id)\"/" \
+    supabase/config.toml > "$WORKDIR/supabase/config.toml"
+}
+
+supabase_cli() {
+  materialize_workdir
+  npx --yes "$SUPABASE_CLI" --workdir "$WORKDIR" "$@"
+}
 
 runtime_env() {
   if [[ -x /opt/homebrew/opt/libpq/bin/psql ]]; then
     export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
   fi
   # CLI output stays in this process; it is never written to a file.
-  eval "$(npx --yes "$SUPABASE_CLI" status --output env)"
+  eval "$(supabase_cli status --output env)"
   export NEXT_PUBLIC_SUPABASE_URL="$API_URL"
   export NEXT_PUBLIC_SUPABASE_ANON_KEY="$ANON_KEY"
   export SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
@@ -43,25 +79,27 @@ provision() {
 }
 
 start() {
-  npx --yes "$SUPABASE_CLI" start >/dev/null || true
+  supabase_cli start >/dev/null || true
   for ((attempt = 0; attempt < 60; attempt++)); do
-    if npx --yes "$SUPABASE_CLI" status >/dev/null 2>&1; then
+    if supabase_cli status >/dev/null 2>&1; then
       break
     fi
     sleep 1
   done
-  npx --yes "$SUPABASE_CLI" status >/dev/null
+  supabase_cli status >/dev/null
   runtime_env
   grant_local_service_role
   provision
 }
 
 reset() {
-  npx --yes "$SUPABASE_CLI" stop --no-backup >/dev/null
+  supabase_cli stop --no-backup >/dev/null
+  local id
+  id="$(project_id)"
   for volume in \
-    supabase_db_patient-imaging-308 \
-    supabase_edge_runtime_patient-imaging-308 \
-    supabase_storage_patient-imaging-308; do
+    "supabase_db_${id}" \
+    "supabase_edge_runtime_${id}" \
+    "supabase_storage_${id}"; do
     if docker volume inspect "$volume" >/dev/null 2>&1; then
       docker volume rm "$volume" >/dev/null
     fi
@@ -79,15 +117,19 @@ case "${1:-}" in
     echo "local DEL-4 runtime reset on http://127.0.0.1:55481"
     ;;
   stop)
-    npx --yes "$SUPABASE_CLI" stop --no-backup >/dev/null
+    supabase_cli stop --no-backup >/dev/null
     ;;
   run)
     shift
     start
     exec "$@"
     ;;
+  project-id)
+    project_id
+    echo
+    ;;
   *)
-    echo "usage: $0 {start|reset|stop|run command...}" >&2
+    echo "usage: $0 {start|reset|stop|run command...|project-id}" >&2
     exit 64
     ;;
 esac
