@@ -37,7 +37,8 @@ function isStudy(value: unknown): value is StudySummary {
     typeof study.providerName === 'string' &&
     study.providerName.trim().length > 0 &&
     isCount(study.imageCount) &&
-    isCount(study.clipCount)
+    isCount(study.clipCount) &&
+    (study.thumbUrl === undefined || study.thumbUrl === null || typeof study.thumbUrl === 'string')
   )
 }
 
@@ -102,7 +103,8 @@ export default function StudiesPage() {
         .pip-study-list { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
         .pip-study-card { display: flex; min-width: 0; min-height: var(--pip-tap-target); padding: 0.75rem; gap: 0.75rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.75rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); text-decoration: none; }
         .pip-study-card:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
-        .pip-study-card-thumbnail { display: none; flex: 0 0 7rem; aspect-ratio: 4 / 3; border-radius: 0.5rem; background: var(--pip-color-base-300); }
+        .pip-study-card-thumbnail { display: none; flex: 0 0 7rem; aspect-ratio: 4 / 3; border-radius: 0.5rem; background: var(--pip-color-base-300); overflow: hidden; }
+        .pip-study-card-thumbnail-image { width: 100%; height: 100%; object-fit: cover; }
         .pip-study-card-details { display: grid; min-width: 0; gap: 0.25rem; }
         .pip-study-card-description { font-weight: 700; }
         .pip-study-card-date, .pip-study-card-provider, .pip-study-card-counts { overflow-wrap: anywhere; }
