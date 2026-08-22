@@ -24,6 +24,42 @@ reports. Findings are ranked by how directly they expose that data.
 
 ---
 
+## Remediation status
+
+Branch `security-audit-fixes`. The seven Critical/High/Medium findings are fixed;
+the three Low findings are deferred (see below).
+
+| # | Severity | Status | Fix |
+|---|----------|--------|-----|
+| 1 | Critical | Fixed | `db/migrations/016` enables RLS on `email_outbox` (deny-all policy) and revokes app-role grants; `lib/notify/email.ts` now enqueues as the service role. |
+| 2 | High | Fixed | New `login_attempts` table + `lib/access/login-throttle.ts`; the login route locks per-email and per-source before calling Supabase. |
+| 3 | High | Fixed | `016` revokes `execute` on `regenerate_provider_slots` from `app_user`/`anon`/`authenticated`; only `apply_provider_availability` (owner) calls it. |
+| 4 | High | Fixed | `016` enables RLS on `reminder_sends` (deny-all), `staff_admins` (self/admin), `appointment_transitions` (participant-scoped + executor insert), and the reference/schedule tables (explicit read). |
+| 5 | Medium | Fixed | Backslash rejected in `sanitizeNextPath` (middleware) and `safeNextPath` (verify page). |
+| 6 | Medium | Fixed | Logout revokes the token at GoTrue `/auth/v1/logout` before clearing the cookie. |
+| 7 | Medium | Fixed | `016` replaces the `with check (true)` audit-insert policy with `actor_ref = auth.uid()`. |
+| 8 | Low | Deferred | In-RPC ownership check for `reschedule_appointment` — route already guards it. |
+| 9 | Low | Deferred | `__Host-` cookie prefix / always-`Secure` — logs every user out on ship; needs a timed rollout. |
+| 10 | Low | Deferred | Production password-length floor — a Supabase dashboard setting, not code. |
+
+**Verification done here:** full `tsc --noEmit` clean; the Docker-free unit tests
+for the changed share/email/throttle code pass (`tests/share/links.test.ts`,
+`tests/notify/reminders.test.ts`, `tests/access/login-throttle.test.ts`).
+
+**Verification still required before merge:** the Docker-backed database suite
+(`tests/db/rls.test.ts`, `tests/db/migration-*.test.ts`, `tests/notify/retry.test.ts`)
+was updated to the post-016 expectations but not executed here — it shares one
+`pip-testpg` container and a second Claude session may be active. Run it in a quiet
+window (`node_modules/.bin/vitest run --project unit tests/db tests/notify/retry.test.ts`),
+plus the login/logout/verify e2e specs, then apply migration 016 to the hosted
+database and confirm the live `anon`/`authenticated` grants.
+
+**Also needed from a human (unchanged from the audit):** confirm the Vercel proxy
+header for finding #2, decide the timing for the cookie rename (#9), and raise the
+password floor in the Supabase dashboard (#10).
+
+---
+
 ## Critical
 
 ### 1. Any logged-in user can read the email queue, which holds live share links to other patients' medical files

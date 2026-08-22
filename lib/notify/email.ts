@@ -6,7 +6,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Resend } from 'resend'
 import { config } from '../config'
-import type { anonClient } from '../db/client'
+import { serviceClient } from '../db/client'
 
 export type EmailMessage = { to: string; subject: string; text: string }
 export type SendOutcome = {
@@ -15,12 +15,12 @@ export type SendOutcome = {
   error?: string // never PHI
 }
 
-type EmailOutboxClient = Pick<ReturnType<typeof anonClient>, 'from'>
-
-/** Persists a message for the reminder job using the caller's authenticated client. */
-export async function enqueueEmail(client: EmailOutboxClient, message: EmailMessage): Promise<boolean> {
+/** Persists a message for the reminder job to drain. Runs as the service role:
+ *  email_outbox is service-role-only (db/migrations/016) because a share email's
+ *  body carries the raw share-link token, which no patient session may read. */
+export async function enqueueEmail(message: EmailMessage): Promise<boolean> {
   try {
-    const { error } = await client.from('email_outbox').insert({
+    const { error } = await serviceClient().from('email_outbox').insert({
       recipient: message.to,
       subject: message.subject,
       body: message.text,

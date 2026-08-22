@@ -99,25 +99,32 @@ describe('bounded email delivery', () => {
 })
 
 describe('durable enqueue', () => {
-  test('enqueueEmail writes exactly one message row through the authenticated client', async () => {
+  test('enqueueEmail writes exactly one message row through the service role', async () => {
+    // email_outbox is service-role-only (db/migrations/016): a share email body
+    // carries the raw token, so enqueue must not go through a patient session.
     const insert = vi.fn().mockResolvedValue({ data: null, error: null })
     const from = vi.fn(() => ({ insert }))
-    const { enqueueEmail } = await loadEmail()
-    const message: EmailMessage = {
-      to: 'recipient@example.com',
-      subject: 'Someone shared a secure medical file with you',
-      text: 'A patient shared a secure file: https://portal.example/s/opaque-token',
-    }
+    vi.doMock('../../lib/db/client', () => ({ serviceClient: () => ({ from }) }))
+    try {
+      const { enqueueEmail } = await loadEmail()
+      const message: EmailMessage = {
+        to: 'recipient@example.com',
+        subject: 'Someone shared a secure medical file with you',
+        text: 'A patient shared a secure file: https://portal.example/s/opaque-token',
+      }
 
-    await expect(enqueueEmail({ from } as never, message)).resolves.toBe(true)
-    expect(from).toHaveBeenCalledOnce()
-    expect(from).toHaveBeenCalledWith('email_outbox')
-    expect(insert).toHaveBeenCalledOnce()
-    expect(insert).toHaveBeenCalledWith({
-      recipient: message.to,
-      subject: message.subject,
-      body: message.text,
-    })
+      await expect(enqueueEmail(message)).resolves.toBe(true)
+      expect(from).toHaveBeenCalledOnce()
+      expect(from).toHaveBeenCalledWith('email_outbox')
+      expect(insert).toHaveBeenCalledOnce()
+      expect(insert).toHaveBeenCalledWith({
+        recipient: message.to,
+        subject: message.subject,
+        body: message.text,
+      })
+    } finally {
+      vi.doUnmock('../../lib/db/client')
+    }
   })
 })
 

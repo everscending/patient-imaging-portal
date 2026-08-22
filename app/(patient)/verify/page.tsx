@@ -20,7 +20,14 @@ function safeNextPath(): string {
   } catch {
     return '/studies'
   }
-  if (!decoded.startsWith('/') || decoded.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(decoded)) {
+  // '\' is rejected too: browsers normalize it to '/', so '/\evil.com' would
+  // resolve off-origin despite the startsWith('/') check (AUDIT.md #5).
+  if (
+    !decoded.startsWith('/') ||
+    decoded.startsWith('//') ||
+    decoded.includes('\\') ||
+    /^[a-z][a-z0-9+.-]*:/i.test(decoded)
+  ) {
     return '/studies'
   }
   return decoded

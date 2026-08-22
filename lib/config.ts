@@ -18,6 +18,8 @@ export type Config = {
   reminderLeadHours: number // default 24
   identityMaxAttempts: number // default 3
   identityLockoutMinutes: number // default 5
+  loginMaxAttempts: number // default 10 — per email AND per source within the window
+  loginLockoutMinutes: number // default 15
   signedUrlTtlSeconds: number // default 300
   slotHorizonDays: number // default 60 (ADR-0012)
   maxRequestBodyBytes: number // default 65536 — 64 KiB (ADR-0012)
@@ -135,6 +137,8 @@ function loadConfig(): Config {
   const reminderLeadHours = intWithDefault('REMINDER_LEAD_HOURS', 24)
   const identityMaxAttempts = intWithDefault('IDENTITY_MAX_ATTEMPTS', 3)
   const identityLockoutMinutes = intWithDefault('IDENTITY_LOCKOUT_MINUTES', 5)
+  const loginMaxAttempts = intWithDefault('LOGIN_MAX_ATTEMPTS', 10)
+  const loginLockoutMinutes = intWithDefault('LOGIN_LOCKOUT_MINUTES', 15)
   const signedUrlTtlSeconds = intWithDefault('SIGNED_URL_TTL_SECONDS', 300)
   const slotHorizonDays = intWithDefault('SLOT_HORIZON_DAYS', 60)
   const maxRequestBodyBytes = intWithDefault('MAX_REQUEST_BODY_BYTES', 65536)
@@ -168,6 +172,8 @@ function loadConfig(): Config {
     reminderLeadHours,
     identityMaxAttempts,
     identityLockoutMinutes,
+    loginMaxAttempts,
+    loginLockoutMinutes,
     signedUrlTtlSeconds,
     slotHorizonDays,
     maxRequestBodyBytes,

@@ -228,8 +228,11 @@ describe('share minting', () => {
     const patientQuery = query({ data: { id: PATIENT_ID }, error: null })
     const shareQuery = query({ data: { id: LINK_ID }, error: null })
     const outboxQuery = query({ data: null, error: null })
-    const client = clientFor({ patients: [patientQuery], share_links: [shareQuery], email_outbox: [outboxQuery] })
+    const client = clientFor({ patients: [patientQuery], share_links: [shareQuery] })
     anonMock.mockReturnValue(client)
+    // email_outbox is service-role-only (db/migrations/016): enqueue goes through
+    // the service client, never the caller's anon client.
+    serviceMock.mockReturnValue(clientFor({ email_outbox: [outboxQuery] }))
 
     const response = await mintPost(jsonRequest({
       resourceKind: 'image',
@@ -266,7 +269,7 @@ describe('share minting', () => {
       { kind: 'image', id: IMAGE_ID },
       'share.create',
     )
-    expect(serviceMock).not.toHaveBeenCalled()
+    expect(serviceMock).toHaveBeenCalledOnce()
   })
 
   test('outboxFailureKeepsActiveLinkAndNeverSendsInline', async () => {
@@ -285,9 +288,13 @@ describe('share minting', () => {
         query({ data: { id: LINK_ID }, error: null }),
         query({ data: { id: LINK_ID }, error: null }),
       ],
-      email_outbox: [returnedErrorOutbox, thrownOutbox],
     })
     anonMock.mockReturnValue(callerClient)
+    // Each mint enqueues through its own service client (016); both outbox
+    // writes fail — one returns an error, one throws.
+    serviceMock
+      .mockReturnValueOnce(clientFor({ email_outbox: [returnedErrorOutbox] }))
+      .mockReturnValueOnce(clientFor({ email_outbox: [thrownOutbox] }))
 
     const responses = await Promise.all([
       mintPost(jsonRequest({ resourceKind: 'image', resourceId: IMAGE_ID, recipientEmail: 'recipient@example.com' })),
@@ -302,7 +309,6 @@ describe('share minting', () => {
     }))
     expect(returnedErrorOutbox.insert).toHaveBeenCalledOnce()
     expect(thrownOutbox.insert).toHaveBeenCalledOnce()
-    expect(serviceMock).not.toHaveBeenCalled()
 
     const active = link()
     const image = {
@@ -325,16 +331,18 @@ describe('share minting', () => {
     expect((await response.json() as { payload: { id: string } }).payload.id).toBe(IMAGE_ID)
   })
 
-  test('mintAndRevokeUseOnlyTheAuthenticatedAnonClient', async () => {
+  test('mintUsesAnonForLinkAndServiceRoleForOutbox_RevokeUsesAnon', async () => {
     const mintInsert = query({ data: { id: LINK_ID }, error: null })
     const outboxInsert = query({ data: null, error: null })
     const revokeRead = query({ data: link(), error: null })
     const revokeUpdate = query({ data: null, error: null })
     const client = clientFor({
       share_links: [mintInsert, revokeRead, revokeUpdate],
-      email_outbox: [outboxInsert],
     })
     anonMock.mockReturnValue(client)
+    // The share_links write is the caller's (anon) client; the email_outbox
+    // enqueue is the service role (016).
+    serviceMock.mockReturnValue(clientFor({ email_outbox: [outboxInsert] }))
 
     await mintShareLink({
       patientId: PATIENT_ID,
@@ -349,7 +357,8 @@ describe('share minting', () => {
     expect(anonMock).toHaveBeenCalledTimes(2)
     expect(anonMock).toHaveBeenNthCalledWith(1, 'caller-token')
     expect(anonMock).toHaveBeenNthCalledWith(2, 'caller-token')
-    expect(serviceMock).not.toHaveBeenCalled()
+    expect(serviceMock).toHaveBeenCalledOnce()
+    expect(outboxInsert.insert).toHaveBeenCalledOnce()
     expect(revokeUpdate.update).toHaveBeenCalledWith({ revoked_at: NOW.toISOString() })
     expect(guardMock).toHaveBeenCalledWith(
       { kind: 'patient', userId: USER_ID },

@@ -100,9 +100,11 @@ export async function mintShareLink(input: {
       .single()
     if (error || !data) throw new Error('share: link could not be created')
 
-    // PHI-free, queued only: this request never invokes an email transport.
+    // Queued only: this request never invokes an email transport. Enqueue runs
+    // as the service role inside enqueueEmail (email_outbox is service-role-only
+    // per db/migrations/016), not through the caller's client.
     let delivery: 'sent' | 'failed' = 'failed'
-    const queued = await enqueueEmail(client, {
+    const queued = await enqueueEmail({
       to: input.recipientEmail,
       subject: 'Someone shared a secure medical file with you',
       text: `A patient has shared a secure file with you through their clinic's portal.\n\n${url}\n\nThe link works until ${expiresAt} and can be revoked by the person who shared it at any time. Opening it is recorded.\n\nIf you were not expecting this, ignore this message.`,

@@ -38,6 +38,9 @@ function sanitizeNextPath(raw: string): string {
   }
   if (!decoded.startsWith('/')) return FALLBACK_NEXT_PATH
   if (decoded.startsWith('//')) return FALLBACK_NEXT_PATH
+  // Browsers and the WHATWG URL parser treat '\' as '/', so '/\evil.com'
+  // resolves off-origin despite passing the startsWith('/') check (AUDIT.md #5).
+  if (decoded.includes('\\')) return FALLBACK_NEXT_PATH
   if (/^[a-z][a-z0-9+.-]*:/i.test(decoded)) return FALLBACK_NEXT_PATH
   return decoded
 }

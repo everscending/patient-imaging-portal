@@ -10,15 +10,11 @@
 // exercises the same identity boundary as production.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { ensureContainer, startRun, stopRun, type Container, type Run } from '../setup/postgres'
 
 const CONTAINER_NAME = 'pip-testpg'
 const PG_USER = 'postgres'
-const MIGRATION_003_PATH = join(process.cwd(), 'db', 'migrations', '003_rls.sql')
-const MIGRATION_003_SQL = readFileSync(MIGRATION_003_PATH, 'utf8')
 
 function psql(dbName: string, sql: string): string {
   // -q suppresses command completion tags ("INSERT 0 1") that -tA alone
@@ -63,35 +59,22 @@ function appUserScript(claimUserId: string | null, sql: string): string {
   return `set role app_user; ${claim} ${sql}`
 }
 
-// §4 pins RLS + a policy on exactly 14 tables (13 in the enable block plus
-// audit_events) and exempts email_outbox by name. Every other table in the
-// schema — services, provider_services, staff_admins, working_hours,
-// availability_blocks, reminder_sends, appointment_transitions — holds no
-// patient-identifying data and is never named in §4 at all: not PHI, so
-// never a candidate for RLS in the first place. "Holds PHI" isn't something
-// a check can derive from the catalogue alone, so this list — like the
-// email_outbox exemption itself — is the reviewed, by-name record of what's
-// deliberately out of scope. A table that is not on it and not RLS-enabled
-// is presumed PHI until proven otherwise, which is what lets this same
-// check catch a genuinely new, unwired table (enabledCheckCatchesTableMissingRlsEnable).
-const NON_PHI_TABLES = [
-  'email_outbox',
-  'services',
-  'provider_services',
-  'staff_admins',
-  'working_hours',
-  'availability_blocks',
-  'reminder_sends',
-  'appointment_transitions',
-]
+// db/migrations/016 closed the deliberate no-RLS exemptions the audit flagged:
+// email_outbox and reminder_sends are now service-role-only, staff_admins and
+// appointment_transitions are scoped, and the reference/schedule tables carry an
+// explicit read policy. Every public table now has RLS enabled, so the exempt
+// list is empty and any RLS-disabled table is a finding.
+const NON_PHI_TABLES: string[] = []
 
 function rlsGapTables(dbName: string): string {
-  const exempt = NON_PHI_TABLES.map((t) => `'${t}'`).join(',')
+  const exemptClause = NON_PHI_TABLES.length
+    ? `and relname not in (${NON_PHI_TABLES.map((t) => `'${t}'`).join(',')})`
+    : ''
   return psql(
     dbName,
     `select relname from pg_class
      where relnamespace = 'public'::regnamespace and relkind = 'r'
-       and relname not in (${exempt}) and relrowsecurity = false
+       ${exemptClause} and relrowsecurity = false
      order by relname;`,
   )
 }
@@ -232,14 +215,16 @@ describe('AC: the complete forward migration chain applies cleanly', () => {
     )
     expect(functionCount).toBe('3')
 
+    // 14 original PHI tables + 8 exemptions closed by 016 + login_attempts = 23.
     const enabledCount = psql(
       mainRun.dbName,
       `select count(*) from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' and relrowsecurity = true;`,
     )
-    expect(enabledCount).toBe('14')
+    expect(enabledCount).toBe('23')
 
-    expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.email_outbox', 'INSERT');`)).toBe('t')
-    expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.email_outbox', 'UPDATE');`)).toBe('t')
+    // 016 revoked email_outbox writes from app_user (service-role-only).
+    expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.email_outbox', 'INSERT');`)).toBe('f')
+    expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.email_outbox', 'UPDATE');`)).toBe('f')
     expect(psql(mainRun.dbName, `select has_table_privilege('app_user', 'public.deletion_requests', 'INSERT');`)).toBe('f')
     expect(
       psql(
@@ -247,17 +232,19 @@ describe('AC: the complete forward migration chain applies cleanly', () => {
         `select has_function_privilege('app_user', 'request_profile_deletion(boolean)', 'EXECUTE');`,
       ),
     ).toBe('t')
+    // 016 revoked app_user EXECUTE on regenerate_provider_slots — only
+    // apply_provider_availability (owner) may call it.
     expect(
       psql(
         mainRun.dbName,
         `select has_function_privilege('app_user', 'regenerate_provider_slots(uuid,timestamptz,timestamptz,tstzrange[])', 'EXECUTE');`,
       ),
-    ).toBe('t')
+    ).toBe('f')
   })
 })
 
-describe('AC: pg_tables.rowsecurity is true for all 14 pinned tables', () => {
-  test('rowSecurityEnabledOnAllFourteenPhiTables', function rowSecurityEnabledOnAllFourteenPhiTables() {
+describe('AC: pg_tables.rowsecurity is true for every pinned table', () => {
+  test('rowSecurityEnabledOnAllPhiTables', function rowSecurityEnabledOnAllPhiTables() {
     const pinnedTables = [
       'patients',
       'providers',
@@ -273,6 +260,16 @@ describe('AC: pg_tables.rowsecurity is true for all 14 pinned tables', () => {
       'share_links',
       'deletion_requests',
       'audit_events',
+      // enabled by db/migrations/016
+      'email_outbox',
+      'reminder_sends',
+      'staff_admins',
+      'appointment_transitions',
+      'working_hours',
+      'availability_blocks',
+      'services',
+      'provider_services',
+      'login_attempts',
     ]
     const rows = psql(
       mainRun.dbName,
@@ -294,15 +291,24 @@ describe('AC: pg_tables.rowsecurity is true for all 14 pinned tables', () => {
   })
 })
 
-describe("AC: email_outbox is exempted by name in the enabled-check, with §4's reason recorded alongside it", () => {
-  test('emailOutboxExemptedByNameWithReasonRecordedInMigration', function emailOutboxExemptedByNameWithReasonRecordedInMigration() {
-    expect(MIGRATION_003_SQL).toMatch(/email_outbox[\s\S]{0,400}service role/i)
-
+describe('AC: email_outbox is locked to the service role (db/migrations/016)', () => {
+  test('emailOutboxHasRlsServiceRoleWritesAppUserBlind', function emailOutboxHasRlsServiceRoleWritesAppUserBlind() {
     const emailOutboxRls = psql(
       mainRun.dbName,
       `select relrowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = 'email_outbox';`,
     )
-    expect(emailOutboxRls).toBe('f')
+    expect(emailOutboxRls).toBe('t')
+
+    // The service role (the owner in this harness) still enqueues and drains.
+    const ownerInsert = psql(
+      mainRun.dbName,
+      `insert into email_outbox (recipient, subject, body) values ('svc@example.com', 'Reminder', 'body') returning id;`,
+    )
+    expect(ownerInsert).toMatch(/^[0-9a-f-]{36}$/)
+
+    // A patient session sees zero rows — no harvesting share links from the queue.
+    const appRead = psql(mainRun.dbName, appUserScript(null, `select count(*) from email_outbox;`))
+    expect(appRead).toBe('0')
   })
 })
 
@@ -314,7 +320,9 @@ describe('adversarial: a policy created on a table whose RLS was never enabled i
     // not leave a stray table behind for later tests. Same exemption list
     // rlsGapTables uses, inlined because this has to run inside the same
     // transaction as the probe table so the rollback also undoes it.
-    const exempt = NON_PHI_TABLES.map((t) => `'${t}'`).join(',')
+    const exemptClause = NON_PHI_TABLES.length
+      ? `and relname not in (${NON_PHI_TABLES.map((t) => `'${t}'`).join(',')})`
+      : ''
     const probe = psql(
       mainRun.dbName,
       `begin;
@@ -322,7 +330,7 @@ describe('adversarial: a policy created on a table whose RLS was never enabled i
        create policy rls_probe_missing_enable_select on rls_probe_missing_enable for select using (true);
        select relname from pg_class
          where relnamespace = 'public'::regnamespace and relkind = 'r'
-           and relname not in (${exempt}) and relrowsecurity = false
+           ${exemptClause} and relrowsecurity = false
          order by relname;
        rollback;`,
     )
@@ -726,33 +734,86 @@ describe('AC + adversarial: a provider generates their own slot; naming another 
   })
 })
 
-describe('AC: as app_user, email_outbox insert and update succeed', () => {
-  test('appUserEmailOutboxInsertAndUpdateSucceed', function appUserEmailOutboxInsertAndUpdateSucceed() {
-    const insertedId = psql(
+describe('AC: as app_user, email_outbox insert is refused (service-role only, 016)', () => {
+  test('appUserEmailOutboxInsertRefused', function appUserEmailOutboxInsertRefused() {
+    expectRawFailure(
       mainRun.dbName,
-      appUserScript(null, `insert into email_outbox (recipient, subject, body) values ('to@example.com', 'Reminder', 'body') returning id;`),
+      appUserScript(null, `insert into email_outbox (recipient, subject, body) values ('to@example.com', 'Reminder', 'body');`),
+      '42501',
     )
-    expect(insertedId).toMatch(/^[0-9a-f-]{36}$/)
-
-    const updated = psql(
-      mainRun.dbName,
-      appUserScript(null, `update email_outbox set attempts = attempts + 1 where id = '${insertedId}' returning attempts::text;`),
-    )
-    expect(updated).toBe('1')
   })
 })
 
-describe('AC: as app_user, regenerate_provider_slots executes', () => {
-  test('appUserExecutesRegenerateProviderSlots', function appUserExecutesRegenerateProviderSlots() {
-    const result = psql(
+describe('AC: as app_user, reminder_sends write is refused (service-role only, 016)', () => {
+  test('appUserReminderSendsWriteRefused', function appUserReminderSendsWriteRefused() {
+    // Closes the reminder-suppression vector: a patient session cannot pre-mark
+    // another patient's reminder as handled. The claim RPC (owner) still writes it.
+    expectRawFailure(
+      mainRun.dbName,
+      appUserScript(null, `insert into reminder_sends (appointment_id, lead_hours, outcome) values (gen_random_uuid(), 24, 'skipped');`),
+      '42501',
+    )
+  })
+})
+
+describe('AC: staff_admins is not enumerable by other sessions (016)', () => {
+  test('staffAdminsSelfOrAdminOnly', function staffAdminsSelfOrAdminOnly() {
+    const adminUser = insertAuthUser(mainRun.dbName)
+    insertStaffAdmin(mainRun.dbName, adminUser)
+    const otherUser = insertAuthUser(mainRun.dbName)
+    insertPatient(mainRun.dbName, otherUser)
+
+    // an unrelated session cannot enumerate administrators
+    const seenByOther = psql(mainRun.dbName, appUserScript(otherUser, `select count(*) from staff_admins;`))
+    expect(seenByOther).toBe('0')
+
+    // is_admin() (SECURITY DEFINER) still resolves, so the admin sees admin rows
+    const seenBySelf = psql(mainRun.dbName, appUserScript(adminUser, `select count(*) from staff_admins where user_id = '${adminUser}';`))
+    expect(seenBySelf).toBe('1')
+  })
+})
+
+describe('AC: audit_events rejects a forged actor_ref, accepts self (016)', () => {
+  test('auditInsertMustBeSelfAttributed', function auditInsertMustBeSelfAttributed() {
+    const userA = insertAuthUser(mainRun.dbName)
+    insertPatient(mainRun.dbName, userA)
+
+    const ok = psql(
+      mainRun.dbName,
+      appUserScript(
+        userA,
+        `insert into audit_events (actor_kind, actor_ref, action, target_kind, outcome)
+         values ('account', '${userA}', 'audit.view', 'audit_events', 'granted') returning id;`,
+      ),
+    )
+    expect(ok).toMatch(/^[0-9]+$/)
+
+    const userB = insertAuthUser(mainRun.dbName)
+    expectRawFailure(
+      mainRun.dbName,
+      appUserScript(
+        userA,
+        `insert into audit_events (actor_kind, actor_ref, action, target_kind, outcome)
+         values ('account', '${userB}', 'study.view', 'study', 'granted');`,
+      ),
+      '42501',
+    )
+  })
+})
+
+describe('AC: as app_user, regenerate_provider_slots is not executable (016)', () => {
+  test('appUserCannotExecuteRegenerateProviderSlots', function appUserCannotExecuteRegenerateProviderSlots() {
+    // Only apply_provider_availability (owner) may call it; a direct app_user
+    // call would let any session wipe/rewrite a provider's open slots.
+    expectRawFailure(
       mainRun.dbName,
       appUserScript(
         null,
-        `select removed::text || '|' || generated::text from regenerate_provider_slots(
+        `select * from regenerate_provider_slots(
            gen_random_uuid(), now(), now() + interval '1 hour', ARRAY[]::tstzrange[]);`,
       ),
+      '42501',
     )
-    expect(result).toBe('0|0')
   })
 })
 
@@ -857,32 +918,33 @@ describe('adversarial: the same isolation suite run as the table owner is not ac
   })
 })
 
-describe("adversarial: a current_patient_id()-keyed policy on email_outbox would blind the reminder job's own drain", () => {
-  test('emailOutboxPatientKeyedPolicyWouldBlindTheReminderJob', function emailOutboxPatientKeyedPolicyWouldBlindTheReminderJob() {
-    psql(mainRun.dbName, `insert into email_outbox (recipient, subject, body) values ('drain-probe@example.com', 'Reminder', 'body');`)
-
-    // Rolled back at the end: email_outbox holds no patient identifier at
-    // all, so the closest honest simulation of "a current_patient_id()-keyed
-    // policy" joins back through the recipient address. The reminder job has
-    // no patient claim (it is not a patient session), so current_patient_id()
-    // is null and the join can never match — exactly the failure §4 warns
-    // against, reproduced and then undone.
-    const withHypotheticalPolicy = psql(
+describe('AC: appointment_transitions is scoped to the appointment participants (016)', () => {
+  test('appointmentTransitionsParticipantScoped', function appointmentTransitionsParticipantScoped() {
+    const providerId = insertProvider(mainRun.dbName)
+    const serviceId = insertService(mainRun.dbName)
+    const userA = insertAuthUser(mainRun.dbName)
+    const patientA = insertPatient(mainRun.dbName, userA)
+    const slotA = insertSlot(mainRun.dbName, providerId, futureTs(40), futureTs(41))
+    const apptA = insertAppointment(mainRun.dbName, { slotId: slotA, patientId: patientA, providerId, serviceId })
+    // Owner insert (RLS bypass) stands in for the booking RPC's transition row.
+    psql(
       mainRun.dbName,
-      `begin;
-       alter table email_outbox enable row level security;
-       create policy probe_email_outbox_patient_keyed on email_outbox for select
-         using (recipient = (select email from patients where id = current_patient_id()));
-       set role app_user;
-       select count(*) from email_outbox;
-       rollback;`,
+      `insert into appointment_transitions (appointment_id, from_status, to_status) values ('${apptA}', null, 'requested');`,
     )
-    expect(withHypotheticalPolicy).toBe('0')
 
-    const stillNoRls = psql(
+    const otherUser = insertAuthUser(mainRun.dbName)
+    insertPatient(mainRun.dbName, otherUser)
+
+    const seenByOwner = psql(
       mainRun.dbName,
-      `select relrowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = 'email_outbox';`,
+      appUserScript(userA, `select count(*) from appointment_transitions where appointment_id = '${apptA}';`),
     )
-    expect(stillNoRls).toBe('f')
+    expect(seenByOwner).toBe('1')
+
+    const seenByOther = psql(
+      mainRun.dbName,
+      appUserScript(otherUser, `select count(*) from appointment_transitions where appointment_id = '${apptA}';`),
+    )
+    expect(seenByOther).toBe('0')
   })
 })
