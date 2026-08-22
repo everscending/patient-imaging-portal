@@ -26,8 +26,21 @@ id — the tracked file's default is never touched. This lets two checkouts
 (a worktree, a scratch clone, the main clone) run the runtime at the same
 time without one's `stop`/`reset` tearing down the other's stack.
 
+A derived id alone is not enough for coexistence: the committed config also
+pins its listen ports, and a second checkout's `start` would die on "port is
+already allocated" (cleanly — the first stack survives — but it never comes
+up). The generated config therefore also shifts every port into a
+per-checkout block of 200, derived from the same path hash, and the script
+reads the database port back from the CLI's own `status` output rather than
+assuming the committed value — so a second checkout's provisioning can never
+talk to the first checkout's database.
+
 - `bash scripts/local-del4-runtime.sh project-id` prints the id this checkout
   would use, without starting or touching anything.
-- `DEL4_PROJECT_ID=<id>` overrides the derived id.
+- `bash scripts/local-del4-runtime.sh port-base` prints the derived port
+  block's base the same way.
+- `bash scripts/local-del4-runtime.sh materialize` prints the generated
+  config exactly as the CLI would receive it.
+- `DEL4_PROJECT_ID=<id>` and `DEL4_PORT_BASE=<port>` override the derivations.
 - Running the Supabase CLI directly (not through this script) still uses the
-  committed default, `patient-imaging-308`.
+  committed default id and ports.

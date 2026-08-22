@@ -63,6 +63,14 @@ materialize_workdir() {
     /^(shadow_)?port = [0-9][0-9][0-9][0-9][0-9]$/ {
       n = $NF; sub(/[0-9]+$/, base + (n % 200)); print; next
     }
+    /^inspector_port = [0-9]+$/ {
+      # The edge-runtime inspector binds a host port too; its 4-digit value
+      # gets its own fold (base+100+(n%50) -> residue 133 for 8083) so the
+      # committed residues stay pairwise distinct from the 5-digit family
+      # residues (80-84, 89, 127). The derivation test asserts this against
+      # the real generated file, not this comment.
+      n = $NF; sub(/[0-9]+$/, base + 100 + (n % 50)); print; next
+    }
     { print }
   ' supabase/config.toml > "$WORKDIR/supabase/config.toml"
 }
@@ -150,6 +158,12 @@ case "${1:-}" in
     port_base
     echo
     ;;
+  materialize)
+    # Dry run for the test harness: print the config exactly as the CLI
+    # would receive it, without invoking the CLI.
+    materialize_workdir
+    cat "$WORKDIR/supabase/config.toml"
+    ;;
   start)
     start
     # API_URL is exported by runtime_env from the CLI's own status output —
@@ -158,7 +172,8 @@ case "${1:-}" in
     ;;
   reset)
     reset
-    echo "local DEL-4 runtime reset on http://127.0.0.1:55481"
+    # reset() ends in start(), which ran runtime_env — API_URL is derived.
+    echo "local DEL-4 runtime reset on ${API_URL}"
     ;;
   stop)
     supabase_cli stop --no-backup >/dev/null

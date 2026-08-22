@@ -101,16 +101,29 @@ describe('scripts/local-del4-runtime.sh port base derivation', () => {
     }
   })
 
-  test('every committed port materializes into the derived block, none survives verbatim', () => {
-    const config = readFileSync(path.join(REPO_ROOT, 'supabase', 'config.toml'), 'utf8')
-    const ports = [...config.matchAll(/^(?:shadow_)?port = (\d{5})$/gm)].map((m) => Number(m[1]))
-    expect(ports.length).toBeGreaterThanOrEqual(7)
-    const mapped = ports.map((p) => 56000 + (p % 200))
-    expect(new Set(mapped).size).toBe(new Set(ports).size)
-    for (const p of mapped) {
+  test('the real materialized config shifts every committed port into the derived block, none survives verbatim', () => {
+    // Runs the script's actual generation (the `materialize` dry run), not a
+    // re-derivation of its formula — a regression in the awk itself fails
+    // here rather than slipping past a mirrored calculation.
+    const generated = execFileSync(SCRIPT_PATH, ['materialize'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: { ...env, DEL4_PORT_BASE: '56000', DEL4_PROJECT_ID: 'patient-imaging-materialize-test' },
+    })
+    const committed = readFileSync(path.join(REPO_ROOT, 'supabase', 'config.toml'), 'utf8')
+    const committedPorts = [...committed.matchAll(/^(?:shadow_|inspector_)?port = (\d+)$/gm)].map((m) => Number(m[1]))
+    const generatedPorts = [...generated.matchAll(/^(?:shadow_|inspector_)?port = (\d+)$/gm)].map((m) => Number(m[1]))
+    expect(committedPorts.length).toBeGreaterThanOrEqual(7)
+    expect(generatedPorts).toHaveLength(committedPorts.length)
+    // Every port moved into the checkout's 200-wide block, all distinct,
+    // and none of the committed values survives verbatim.
+    expect(new Set(generatedPorts).size).toBe(generatedPorts.length)
+    for (const p of generatedPorts) {
       expect(p).toBeGreaterThanOrEqual(56000)
       expect(p).toBeLessThan(56200)
+      expect(committedPorts).not.toContain(p)
     }
+    expect(generated).toContain('project_id = "patient-imaging-materialize-test"')
   })
 })
 
