@@ -214,7 +214,7 @@ against availability.
 
 | Window end (UTC) | Total checks | Reachable and healthy | Reachable but degraded | Unreachable | Availability |
 | --- | --- | --- | --- | --- | --- |
-| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| 2026-08-22T17:45:53Z | 42 | 42 | 0 | 0 | 100.00% |
 
 ## Performance
 
