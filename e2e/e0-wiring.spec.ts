@@ -242,14 +242,14 @@ test.describe('Ports — acceptance + mandatory adversarial: the pinned §9 port
   })
 })
 
-test.describe('Environment contract — acceptance + mandatory adversarial: §8, all 22 rows, fails loudly', () => {
-  test('acceptance: .env.example lists all 22 §8 rows with placeholder values only', () => {
+test.describe('Environment contract — acceptance + mandatory adversarial: §8, all 25 rows, fails loudly', () => {
+  test('acceptance: .env.example lists all 25 §8 rows with placeholder values only', () => {
     const content = readFileSync(path.join(REPO_ROOT, '.env.example'), 'utf8')
     const keys = content
       .split('\n')
       .filter((line) => line.length > 0 && !line.startsWith('#'))
       .map((line) => line.split('=')[0])
-    expect(keys).toHaveLength(22)
+    expect(keys).toHaveLength(25)
     expect(keys).toContain('SUPABASE_SERVICE_ROLE_KEY')
   })
 
