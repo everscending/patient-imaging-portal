@@ -216,8 +216,9 @@ Full conditions, methodology, and every measured value:
 quoted from one of those two files.
 
 - **PF-1 single image** — accepted as an exceedance at the pre-elective
-  baseline (1130.00 ms p95); met after EL-1 (934.80 ms p95 and 859.05 ms p95
-  across two after-runs).
+  baseline (1130.00 ms p95); met after EL-1 (859.05 ms to 934.80 ms p95
+  across the two after-runs, confirmed at 870.55 ms and 913.09 ms p95 by the
+  E11 confirming run).
 - **PF-2 cine first frame** — met throughout (649.25 ms to 783.35 ms p95
   across all measured runs).
 - **PF-3 cine fully loaded** — straddles its target across four runs
