@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -212,8 +213,13 @@ describe('JOR-212 public demo-run evidence', () => {
       .toContain('reminder server log is missing')
   })
 
-  test('producerPublishesOneCompleteArtifactAndScansEveryDrivenRow', () => {
-    execFileSync(SCRIPT_PATH, { cwd: REPO_ROOT, stdio: 'pipe', timeout: 300_000 })
+  test('producerPublishesOneCompleteArtifactAndScansEveryDrivenRow', async () => {
+    // Async execFile, not execFileSync: the demo run takes ~40 s locally and
+    // longer on the hosted runner, and a synchronous wait blocks this
+    // worker's event loop past birpc's fixed 60 s RPC deadline (the
+    // JOR-227/JOR-320 "Timeout calling onTaskUpdate" failure). The child
+    // process does the work either way; only the wait needs to be async.
+    await promisify(execFile)(SCRIPT_PATH, { cwd: REPO_ROOT, timeout: 300_000, maxBuffer: 64 * 1024 * 1024 })
     const artifact = readFileSync(ARTIFACT_PATH, 'utf8')
     const rows = drivenRows()
     try {
