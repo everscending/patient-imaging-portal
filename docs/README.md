@@ -5,10 +5,6 @@ worktree. It links to each document; it does not restate a policy, a
 parameter, or a number that document already states — see that document for
 the fact itself.
 
-The recorded demo belongs here once its own ticket lands and creates the file.
-It does not exist in this worktree yet, so it is not linked below — a link with
-nothing behind it is worse than no link.
-
 ## Policies
 
 - [Retention and deletion](retention-and-deletion.md)
@@ -36,6 +32,11 @@ nothing behind it is worse than no link.
   variables and the `phi` bucket are set, and the run record for every
   deploy.
 - [Credential-free DEL-4 runtime](local-del4-runtime.md)
+
+## Demo
+
+- [The recorded demo walkthrough](demo.md) — where the recording is, the one
+  command that makes it again, and what each moment of it shows.
 
 ## Quality evidence
 

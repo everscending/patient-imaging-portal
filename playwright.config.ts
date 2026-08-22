@@ -12,7 +12,17 @@ export default defineConfig({
   projects: [
     {
       name: 'product',
-      testIgnore: /e[0123458]-wiring\.spec\.ts/,
+      testIgnore: [/e[0123458]-wiring\.spec\.ts/, /demo-walkthrough\.spec\.ts/],
+    },
+    {
+      // JOR-261's recorded DEL-6 walkthrough. It gets its own project so the
+      // screen recording stays scoped to this one spec — `video` lives here,
+      // never in the shared `use` block, so no other spec starts recording —
+      // and so `--project=demo-walkthrough` regenerates the recording without
+      // rerunning the whole product suite.
+      name: 'demo-walkthrough',
+      testMatch: /demo-walkthrough\.spec\.ts/,
+      use: { video: 'on' },
     },
     {
       // The E2 fixture exposes mutable identity and audit state. Running it

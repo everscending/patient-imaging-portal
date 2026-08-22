@@ -30,7 +30,7 @@ const REQUIRED_UI_GATE_PREFIX = [
   'npx vitest run --project integration tests/integration tests/scheduling/booking-concurrency.test.ts',
   'npx vitest run --project e8',
 ]
-const PLAYWRIGHT_COMMAND = 'npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring'
+const PLAYWRIGHT_COMMAND = 'npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring --project=demo-walkthrough'
 const REQUIRED_UI_SUITES = [
   'e2e/e8-wiring.spec.ts',
   'e2e/e5-wiring.spec.ts',
@@ -187,7 +187,9 @@ describe('per-change coverage stays cumulative', () => {
 
   test('ordinary product Playwright excludes dedicated wiring specs; E2/E3 depend on product while E0/E1 remain certification', () => {
     expect(playwrightConfig).toMatch(/name:\s*'product'/)
-    expect(playwrightConfig).toMatch(/testIgnore:\s*\/e\[0123458\]-wiring\\\.spec\\\.ts\//)
+    expect(playwrightConfig).toMatch(
+      /testIgnore:\s*\[\/e\[0123458\]-wiring\\\.spec\\\.ts\/,\s*\/demo-walkthrough\\\.spec\\\.ts\/\]/,
+    )
     expect(playwrightConfig).toMatch(/name:\s*'e2-wiring'/)
     expect(playwrightConfig).toMatch(/testMatch:\s*\/e2-wiring\\\.spec\\\.ts\//)
     expect(playwrightConfig).toMatch(/name:\s*'e3-wiring'/)

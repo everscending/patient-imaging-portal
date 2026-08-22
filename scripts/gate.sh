@@ -85,7 +85,7 @@ run_ui() {
   run_api
   # One Playwright process runs every product/wiring project. Playwright
   # resolves the product dependency once, so E2/E3 no longer repeat it.
-  step PLAYWRIGHT npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring
+  step PLAYWRIGHT npx playwright test --project=product --project=e2-wiring --project=e3-wiring --project=e4-wiring --project=e5-wiring --project=e8-wiring --project=demo-walkthrough
   step PLAYWRIGHT_E8_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e8-wiring.spec.ts
   step PLAYWRIGHT_E10_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e10-wiring.spec.ts
   step PLAYWRIGHT_E9_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e9-wiring.spec.ts
@@ -104,6 +104,7 @@ run_ui() {
   step PLAYWRIGHT_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e2-wiring.spec.ts
   step PLAYWRIGHT_E3_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e3-wiring.spec.ts
   step PLAYWRIGHT_E4_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/e4-wiring.spec.ts
+  step PLAYWRIGHT_DEMO_WALKTHROUGH_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/demo-walkthrough.spec.ts
 }
 
 case "$TIER" in
