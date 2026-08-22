@@ -147,6 +147,70 @@ guessed object path in `phi`, both made after the run record above.
 | 2026-08-19T16:09:39Z | Deployed URL (`GET /`) | 200 | Google Trust Services (`WR1`) | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
 | 2026-08-19T16:09:39Z | Guessed object in `phi` | 400 | — | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` |
 
+### GitHub Actions secrets (JOR-252)
+
+`.github/workflows/deploy.yml` reads its environment from repository
+secrets, never a literal value in the workflow file (SEC-7). Beyond the four
+already set for `ci.yml`/`certification.yml`
+(`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `SOURCE_REF_SALT`), this ticket added:
+
+- `APP_BASE_URL`, `RESEND_API_KEY`, `RESEND_FROM`, `EMAIL_TRANSPORT`,
+  `CRON_SECRET` — the same set the **Vercel project** section above lists as
+  set in the Vercel project's environment, so the gate that runs before
+  promotion sees the values production actually runs with.
+- `VERCEL_TOKEN` — read-only use only, to list the current production
+  deployment for the confirmation step below; never used to promote or
+  otherwise mutate a deployment. The same token was used once, locally, to
+  confirm (name only, `GET /v9/projects/patient-imaging-portal/env`, no
+  value read or printed) that `CRON_SECRET` and every other §8 variable this
+  section lists are present in the Vercel project for both `preview` and
+  `production` — the §8 environment contract this deploy actually needs.
+
+## Promotion run (JOR-252)
+
+Vercel's git integration (see **Vercel project** above) is the actual promote
+mechanism: every push to `main` builds and promotes that commit to
+production directly, continuously, independent of any GitHub Actions
+workflow. `.github/workflows/deploy.yml` adds a gate on top of that
+mechanism — it runs `scripts/gate.sh ui` against the pushed commit and, only
+if that passes, confirms (read-only, via the Vercel API) that the production
+alias reflects the gated commit. It does not itself promote or roll back —
+see the workflow's own header comment for why a second `vercel promote` step
+would be the wrong shape here.
+
+| Date | Deployed commit | How promoted |
+| --- | --- | --- |
+| 2026-08-22 | `089757ebfa5c2a2c80eab9b581f9f46cdf952e95` | Vercel git integration (push to `main`), gated going forward by `.github/workflows/deploy.yml` |
+
+## Uptime check (JOR-252)
+
+`scripts/uptime-check.sh run` polls `GET /api/health` on the deployed URL on
+an interval and appends one JSON line per poll — timestamp and the three
+states health can be in — to a log file; `scripts/uptime-check.sh report`
+reads that same log and computes availability from nothing but its own
+recorded results, over the window the log itself covers. A reachable-but-
+degraded response (a dependency down, `app` still `ok`) is counted as up,
+not as downtime — only `unreachable` counts against availability.
+
+This section is appended once when a window opens and once more — never
+edited after that — when it closes with the report's own figures.
+
+| Field | Value |
+| --- | --- |
+| Window start (UTC) | 2026-08-22T14:58:21Z |
+| Base URL | https://patient-imaging-portal.vercel.app |
+| Interval | 60s |
+| Log | `tests/artifacts/uptime-check.log` (gitignored; not committed) |
+| Poller PID | 58519 |
+
+Window close, appended when the window ends, from
+`scripts/uptime-check.sh report tests/artifacts/uptime-check.log`:
+
+| Window end (UTC) | Total checks | Reachable and healthy | Reachable but degraded | Unreachable | Availability |
+| --- | --- | --- | --- | --- | --- |
+| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+
 ## E0 wiring confirmation (JOR-217)
 
 Appended by `e2e/e0-wiring.spec.ts`, the wiring ticket's own live check —

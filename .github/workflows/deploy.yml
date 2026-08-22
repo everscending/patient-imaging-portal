@@ -1,0 +1,103 @@
+name: Deploy
+
+# Vercel's git integration already builds and promotes every push to `main`
+# to production directly (docs/deploy.md's Vercel project section) — that
+# happens whether or not this workflow exists, and this workflow does not
+# control it. What this workflow adds is the gate: it runs the repo's own
+# product test suite (scripts/gate.sh, never reimplemented here) against the
+# same commit, and only once that passes does it confirm the production
+# alias actually reflects that commit. It is deliberately a confirmation, not
+# a second promote — issuing our own `vercel promote` here could race a
+# newer push and reassign production to an older, already-superseded commit,
+# which would be worse than the race it is meant to fix. A failure in the
+# confirmation step is a real, actionable signal (production diverged from
+# the gated commit) even though it cannot roll anything back by itself.
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  gate-then-confirm:
+    runs-on: ubuntu-latest
+    env:
+      PORT: "4310"
+      # Every §8 variable the deployed app actually reads in production
+      # (docs/deploy.md's Vercel project section), from repository secrets —
+      # never a literal value in this file (SEC-7).
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SOURCE_REF_SALT: ${{ secrets.SOURCE_REF_SALT }}
+      APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      RESEND_FROM: ${{ secrets.RESEND_FROM }}
+      EMAIL_TRANSPORT: ${{ secrets.EMAIL_TRANSPORT }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup — npm dependencies
+        run: npm ci
+
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}-${{ steps.playwright-version.outputs.version }}
+
+      - name: Setup — Playwright browser
+        timeout-minutes: 5
+        run: npx playwright install chromium
+
+      # The gate a deploy must pass — logic + api + ui, exactly what CI runs,
+      # called rather than reimplemented (scripts/gate.sh is the repo's one
+      # definition of done).
+      - name: Product gate
+        run: scripts/gate.sh ui
+
+      # Read-only: lists Vercel's own record of the current production
+      # deployment and checks its git commit against the one that just
+      # passed the gate above. Runs only when the gate step above succeeded
+      # (no `continue-on-error`, no `if: always()`), so a gate failure never
+      # reaches this step.
+      - name: Confirm production reflects this gated commit
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected="${{ github.sha }}"
+          for attempt in 1 2 3 4 5 6; do
+            response=$(curl -sS -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v6/deployments?app=patient-imaging-portal&target=production&limit=1")
+            actual=$(node -e "
+              const data = JSON.parse(process.argv[1])
+              const deployment = (data.deployments || [])[0]
+              process.stdout.write((deployment && deployment.meta && deployment.meta.githubCommitSha) || '')
+            " "$response")
+            if [ "$actual" = "$expected" ]; then
+              echo "production deployment matches gated commit $expected"
+              exit 0
+            fi
+            echo "attempt $attempt: production is at ${actual:-unknown}, waiting for $expected"
+            sleep 15
+          done
+          echo "production deployment did not reach the gated commit $expected in time" >&2
+          exit 1
