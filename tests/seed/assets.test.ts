@@ -18,6 +18,7 @@ import {
   BROKEN_CINE_SET_INDEX,
   BROKEN_FRAME_INDEX,
   CINE_SET_COUNT,
+  computeAssetPool,
   FRAME_HEIGHT,
   FRAME_WIDTH,
   FRAMES_PER_CINE_SET,
@@ -124,12 +125,17 @@ beforeAll(() => {
 }, GENERATE_TIMEOUT_MS)
 
 describe('AC: generating the pool twice from the same seed is byte-identical', () => {
+  // Two genuine computations, not generateAssetPool called twice (JOR-320
+  // memoizes that, so a second call would just hand back the first call's
+  // cached object and this test would compare a pool to itself).
   test('reproducesByteIdenticalPoolAcrossRuns', function reproducesByteIdenticalPoolAcrossRuns() {
-    const again = generateAssetPool(DEFAULT_SEED)
-    expect(fullManifestOf(again)).toEqual(fullManifestOf(pool))
-    expect(again.totalBytes).toBe(pool.totalBytes)
-    expect(again.missingKey).toBe(pool.missingKey)
-  }, GENERATE_TIMEOUT_MS)
+    const first = computeAssetPool(DEFAULT_SEED)
+    const again = computeAssetPool(DEFAULT_SEED)
+    expect(again).not.toBe(first)
+    expect(fullManifestOf(again)).toEqual(fullManifestOf(first))
+    expect(again.totalBytes).toBe(first.totalBytes)
+    expect(again.missingKey).toBe(first.missingKey)
+  }, GENERATE_TIMEOUT_MS * 2)
 
   // Mandatory adversarial: "a second generation run producing different
   // bytes" — proves the manifest comparison above actually discriminates,
