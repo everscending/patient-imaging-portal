@@ -346,7 +346,11 @@ describe('repo-wide guards', () => {
     // JOR-319's shim-regression test forwards the environment to a child
     // demo-run process with the version-manager shim restored to PATH — a
     // process-launch boundary like start-test-server.mjs above.
+    // JOR-265's wiring spec forwards the environment (with its own PORT) to
+    // the timed clean-checkout quick-start child processes — the same
+    // process-launch boundary shape.
     expect(hits.sort()).toEqual([
+      'e2e/e14-wiring.spec.ts',
       'e2e/fixtures/start-test-server.mjs',
       'e2e/playback-frames.spec.ts',
       'lib/config.ts',
