@@ -99,7 +99,15 @@ export type ContrastOptions = {
 }
 
 export async function expectRenderedTextContrast(page: Page, options: ContrastOptions = {}): Promise<void> {
-  const rendersOwnValueSelector = options.rendersOwnValueSelector ?? 'input, textarea, select'
+  // The default excludes input types that render no text of their own
+  // (range/checkbox/radio/color/file): a text-contrast rule applied to a
+  // textless control measures the platform's native widget styling, which
+  // differs per OS — the hosted Linux runner's native range slider scored
+  // 2.92:1 against the pinned 4.5:1 while macOS passed, failing e12-wiring
+  // on an element with no rendered text (2026-08-22). accessibility.spec.ts
+  // passes its own stricter selector and is unaffected.
+  const rendersOwnValueSelector = options.rendersOwnValueSelector
+    ?? 'input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]), textarea, select'
   const forbiddenColours = options.forbiddenColours ?? []
   const offenders = await page.evaluate(({ rendersOwnValueSelector, forbiddenColours }) => {
     type Colour = [number, number, number, number]
