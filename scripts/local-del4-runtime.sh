@@ -29,10 +29,42 @@ project_id() {
   printf 'patient-imaging-%s' "$hash"
 }
 
+# The committed config pins its ports in the 554xx block. A derived project
+# id alone is not enough for two checkouts to coexist — the second start
+# fails on "port is already allocated" (proven 2026-08-22: the failure is
+# clean, the first stack survives, but coexistence needs distinct ports).
+# Derive a per-checkout port base from the same path hash and shift every
+# 554xx port by (base - 55480), preserving the config's internal spacing.
+# DEL4_PORT_BASE overrides, mirroring DEL4_PROJECT_ID. Consumers read real
+# ports from `status --output env`, never from the committed file, so the
+# shift is invisible to the harness.
+port_base() {
+  if [[ -n "${DEL4_PORT_BASE:-}" ]]; then
+    printf '%s' "$DEL4_PORT_BASE"
+    return
+  fi
+  local hash
+  if command -v shasum >/dev/null 2>&1; then
+    hash="$(printf '%s' "$PWD" | shasum -a 256 | cut -c1-4)"
+  else
+    hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-4)"
+  fi
+  # 4 hex chars -> 0..65535, folded into 56000..63800 in steps of 200: the
+  # config's ports live in two families (554xx and 543xx) that map to
+  # base+(port%200), i.e. base+80..89 and base+125..127, so one checkout's
+  # block spans <200 ports and blocks 200 apart never straddle.
+  printf '%d' $(( 56000 + (16#$hash % 40) * 200 ))
+}
+
 materialize_workdir() {
   mkdir -p "$WORKDIR/supabase"
-  sed "s/^project_id = \"$DEFAULT_PROJECT_ID\"\$/project_id = \"$(project_id)\"/" \
-    supabase/config.toml > "$WORKDIR/supabase/config.toml"
+  awk -v base="$(port_base)" -v id="$(project_id)" -v def="$DEFAULT_PROJECT_ID" '
+    $0 == "project_id = \"" def "\"" { print "project_id = \"" id "\""; next }
+    /^(shadow_)?port = [0-9][0-9][0-9][0-9][0-9]$/ {
+      n = $NF; sub(/[0-9]+$/, base + (n % 200)); print; next
+    }
+    { print }
+  ' supabase/config.toml > "$WORKDIR/supabase/config.toml"
 }
 
 supabase_cli() {
@@ -51,7 +83,12 @@ runtime_env() {
   export SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
   export SOURCE_REF_SALT=local-del4-source-ref-salt
   export APP_BASE_URL="http://127.0.0.1:${PORT:-45308}"
-  export PGHOST=127.0.0.1 PGPORT=55482 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres
+  # The DB port is derived per checkout (JOR-321) — read it from the CLI's
+  # own DB_URL rather than pinning the committed default, or a second
+  # checkout's provisioning would talk to the FIRST checkout's database.
+  local db_port
+  db_port="$(printf '%s' "$DB_URL" | sed -E 's|.*:([0-9]+)/[^/]*$|\1|')"
+  export PGHOST=127.0.0.1 PGPORT="$db_port" PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres
 }
 
 grant_local_service_role() {
@@ -108,9 +145,16 @@ reset() {
 }
 
 case "${1:-}" in
+  port-base)
+    # Dry run for the test harness: print the derived port base, no CLI.
+    port_base
+    echo
+    ;;
   start)
     start
-    echo "local DEL-4 runtime ready on http://127.0.0.1:55481"
+    # API_URL is exported by runtime_env from the CLI's own status output —
+    # the derived per-checkout port, never the committed default (JOR-321).
+    echo "local DEL-4 runtime ready on ${API_URL}"
     ;;
   reset)
     reset

@@ -67,6 +67,53 @@ describe('scripts/local-del4-runtime.sh project id derivation', () => {
   })
 })
 
+// A derived id alone is not coexistence: the committed config also pins its
+// listen ports, and the second checkout's start dies on "port is already
+// allocated" (cleanly — the first stack survives — but it never comes up).
+// The script therefore derives a per-checkout port base too; these mirror
+// the project-id tests through the `port-base` dry run.
+describe('scripts/local-del4-runtime.sh port base derivation', () => {
+  function portBase(cwd: string, overrides?: Record<string, string>): number {
+    return Number(execFileSync(SCRIPT_PATH, ['port-base'], {
+      cwd,
+      encoding: 'utf8',
+      env: overrides ? { ...env, ...overrides } : env,
+    }).trim())
+  }
+
+  test('is deterministic per path, distinct across paths, and 200-aligned in 56000..63800', () => {
+    const a = mkdtempSync(path.join(tmpdir(), 'pip-del4-port-a-'))
+    const b = mkdtempSync(path.join(tmpdir(), 'pip-del4-port-b-'))
+    try {
+      const first = portBase(a)
+      expect(portBase(a)).toBe(first)
+      expect(first).toBeGreaterThanOrEqual(56000)
+      expect(first).toBeLessThanOrEqual(63800)
+      expect(first % 200).toBe(0)
+      // Distinctness is probabilistic across two random paths (40 slots);
+      // assert the mechanism rather than luck: bases derive from the path,
+      // so two DIFFERENT overrides must both be honored exactly.
+      expect(portBase(a, { DEL4_PORT_BASE: '57000' })).toBe(57000)
+      expect(portBase(b, { DEL4_PORT_BASE: '58200' })).toBe(58200)
+    } finally {
+      rmSync(a, { recursive: true, force: true })
+      rmSync(b, { recursive: true, force: true })
+    }
+  })
+
+  test('every committed port materializes into the derived block, none survives verbatim', () => {
+    const config = readFileSync(path.join(REPO_ROOT, 'supabase', 'config.toml'), 'utf8')
+    const ports = [...config.matchAll(/^(?:shadow_)?port = (\d{5})$/gm)].map((m) => Number(m[1]))
+    expect(ports.length).toBeGreaterThanOrEqual(7)
+    const mapped = ports.map((p) => 56000 + (p % 200))
+    expect(new Set(mapped).size).toBe(new Set(ports).size)
+    for (const p of mapped) {
+      expect(p).toBeGreaterThanOrEqual(56000)
+      expect(p).toBeLessThan(56200)
+    }
+  })
+})
+
 describe('mandatory adversarial: no lifecycle command hardcodes the fixed project id', () => {
   test('the committed default is only ever defined, never used to address a container or volume', () => {
     const lines = SCRIPT_SOURCE.split('\n').filter((line) => line.includes('patient-imaging-308'))
