@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 
-import { buildMigrationProgram, buildSeedChecksum, EL1_DERIVATIVE_SEED_CHECKSUM, readMigrationFiles } from '../../scripts/provision-deployed-stack'
+import { buildMigrationProgram, buildSeedChecksum, readMigrationFiles, ULTRASOUND_PIXELS_SEED_CHECKSUM } from '../../scripts/provision-deployed-stack'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 const GRANTS = readFileSync(path.join(REPO_ROOT, 'db', 'deploy', 'postgrest-grants.sql'), 'utf8')
@@ -134,7 +134,7 @@ describe('deployed schema provisioning', () => {
   // marker can never reach this checkout and the provisioner shuts — which is
   // correct, and much better found here than at a deploy.
   test('theSeedUpgradeChainEndsAtThisCheckoutsIdentity', function theSeedUpgradeChainEndsAtThisCheckoutsIdentity() {
-    expect(EL1_DERIVATIVE_SEED_CHECKSUM).toBe(
+    expect(ULTRASOUND_PIXELS_SEED_CHECKSUM).toBe(
       buildSeedChecksum({
         supabaseUrl: 'http://127.0.0.1',
         supabaseAnonKey: 'anon',
