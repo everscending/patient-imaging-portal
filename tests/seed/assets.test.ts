@@ -158,11 +158,15 @@ describe('AC: generating the pool twice from the same seed is byte-identical', (
 })
 
 describe('AC: changing SEED_SOURCE_SEED produces a different pool', () => {
-  test('differentSeedProducesADifferentPool', function differentSeedProducesADifferentPool() {
+  test('differentSeedProducesADifferentPool', async function differentSeedProducesADifferentPool() {
+    // Same timer-yield rationale as reproducesByteIdenticalPoolAcrossRuns:
+    // this is the file's third full pool computation, and without a real
+    // yield it stacks onto the previous one into a >60 s hosted block.
+    await new Promise((resolve) => setTimeout(resolve, 0))
     const alternate = generateAssetPool(`${DEFAULT_SEED}-alternate`)
     expect(fullManifestOf(alternate)).not.toEqual(fullManifestOf(pool))
     expect(alternate.missingKey).not.toBe(pool.missingKey)
-  }, GENERATE_TIMEOUT_MS)
+  }, GENERATE_TIMEOUT_MS * 3)
 })
 
 describe('JOR-320: generateAssetPool is memoized per source seed', () => {
