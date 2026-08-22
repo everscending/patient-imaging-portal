@@ -95,8 +95,8 @@ test.describe.serial('provider availability', () => {
     await expect(page.getByLabel('Monday open')).toBeChecked()
     await page.getByLabel('Slot length in minutes').fill('30')
     await page.getByRole('button', { name: 'Add block' }).click()
-    await page.getByLabel('Block 1 start').fill('2026-08-18T13:00:00-05:00')
-    await page.getByLabel('Block 1 end').fill('2026-08-18T14:00:00-05:00')
+    await page.getByLabel('Block 1 start').fill('2026-08-18T13:00')
+    await page.getByLabel('Block 1 end').fill('2026-08-18T14:00')
     await page.getByLabel('Block 1 reason').fill('Team meeting')
 
     const firstSave = await saveAndReadResponse(page)
@@ -142,7 +142,9 @@ test.describe.serial('provider availability', () => {
 
     await page.getByLabel('Slot length in minutes').fill('45')
     await page.getByRole('button', { name: 'Save availability' }).click()
-    await expect(page.locator('.pip-error')).toHaveText('The request could not be validated.')
+    await expect(page.locator('.pip-error')).toHaveText(
+      "A 45-minute slot length does not fit America/Chicago's daylight-saving change. Choose a length that divides 60 minutes.",
+    )
     await expect(page.getByLabel('Slot length in minutes')).toHaveValue('45')
 
     await page.getByLabel('Slot length in minutes').fill('30')
@@ -150,7 +152,8 @@ test.describe.serial('provider availability', () => {
     await page.getByLabel('Monday start 2').fill('10:00')
     await page.getByLabel('Monday end 2').fill('12:00')
     await page.getByRole('button', { name: 'Save availability' }).click()
-    await expect(page.locator('.pip-error')).toHaveText('The request could not be validated.')
+    // Overlap is caught in the browser before any PATCH is sent.
+    await expect(page.locator('.pip-error')).toHaveText('Monday: 10:00–12:00 overlaps 09:00–17:00.')
     await expect(page.getByLabel('Monday start 2')).toHaveValue('10:00')
   })
 

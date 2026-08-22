@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import SlotList from '../../../components/scheduling/SlotList'
 
@@ -135,32 +136,51 @@ export default function BookPage() {
   return (
     <main className="pip-book-page">
       <h1>Book an appointment</h1>
-      <div className="pip-field">
-        <label htmlFor="service-select">Service</label>
-        <select id="service-select" data-testid="service-select" className="pip-input" value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
-          <option value="">Select a service</option>
-          {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-        </select>
-      </div>
-      <div className="pip-field">
-        <label htmlFor="provider-select">Provider</label>
-        <select id="provider-select" data-testid="provider-select" className="pip-input" disabled={!serviceId} value={providerId} onChange={(event) => setProviderId(event.target.value)}>
-          <option value="">Select a provider</option>
-          {providers.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName}</option>)}
-        </select>
-        {serviceId && providers.length === 0 && <p className="pip-notice" data-testid="provider-empty">No providers offer this service.</p>}
-      </div>
-      {provider && <SlotList slots={slots} viewerTimeZone={viewerZone} providerTimeZone={provider.timeZone} selectedSlotId={selectedSlot?.id ?? null} unavailableSlotIds={unavailableSlotIds} onSelect={selectSlot} />}
-      {selectedSlot && provider && (
-        <section className="pip-book-confirmation" aria-label="Booking confirmation">
-          <p>Confirm {services.find((service) => service.id === serviceId)?.name} with {provider.fullName}.</p>
-          <p>Provider-local time: {localTime(selectedSlot.startsAt, provider.timeZone)} ({provider.timeZone})</p>
-          <button type="button" className="pip-button-primary" data-testid="book-submit" onClick={() => void confirm()}>Confirm appointment</button>
+      {!success ? (
+        <>
+          <div className="pip-field">
+            <label htmlFor="service-select">Service</label>
+            <select id="service-select" data-testid="service-select" className="pip-input" value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
+              <option value="">Select a service</option>
+              {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+            </select>
+          </div>
+          <div className="pip-field">
+            <label htmlFor="provider-select">Provider</label>
+            <select id="provider-select" data-testid="provider-select" className="pip-input" disabled={!serviceId} value={providerId} onChange={(event) => setProviderId(event.target.value)}>
+              <option value="">Select a provider</option>
+              {providers.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName}</option>)}
+            </select>
+            {serviceId && providers.length === 0 && <p className="pip-notice" data-testid="provider-empty">No providers offer this service.</p>}
+          </div>
+          {provider && <SlotList slots={slots} viewerTimeZone={viewerZone} providerTimeZone={provider.timeZone} selectedSlotId={selectedSlot?.id ?? null} unavailableSlotIds={unavailableSlotIds} onSelect={selectSlot} />}
+          {selectedSlot && provider && (
+            <section className="pip-book-confirmation" aria-label="Booking confirmation">
+              <p>Confirm {services.find((service) => service.id === serviceId)?.name} with {provider.fullName}.</p>
+              <p>Provider-local time: {localTime(selectedSlot.startsAt, provider.timeZone)} ({provider.timeZone})</p>
+              <button type="button" className="pip-button-primary" data-testid="book-submit" onClick={() => void confirm()}>Confirm appointment</button>
+            </section>
+          )}
+          {conflict && <p className="pip-error" data-testid="booking-conflict" role="alert"><strong>{LOSER_HEADING}</strong>{LOSER_GUIDANCE}</p>}
+          {error && <p className="pip-error" role="alert">{error}</p>}
+        </>
+      ) : (
+        <section className="pip-book-done pip-save-summary" aria-label="Appointment requested">
+          <p data-testid="booking-success" role="status">
+            Appointment requested for {success.serviceName} with {success.providerName} at {localTime(success.startsAt, viewerZone)}.
+          </p>
+          {provider && provider.timeZone !== viewerZone ? (
+            <p className="pip-notice">Provider-local time: {localTime(success.startsAt, provider.timeZone)} ({provider.timeZone})</p>
+          ) : null}
+          <p className="pip-notice">{success.providerName} will confirm your request.</p>
+          <div className="pip-book-done-actions">
+            <Link className="pip-button-primary pip-book-done-view" href="/appointments">View my appointments</Link>
+            <button type="button" className="pip-button-secondary" data-testid="book-another" onClick={() => setSuccess(null)}>
+              Book another appointment
+            </button>
+          </div>
         </section>
       )}
-      {conflict && <p className="pip-error" data-testid="booking-conflict" role="alert"><strong>{LOSER_HEADING}</strong>{LOSER_GUIDANCE}</p>}
-      {error && <p className="pip-error" role="alert">{error}</p>}
-      {success && <p className="pip-save-summary" data-testid="booking-success" role="status">Appointment requested for {success.serviceName} with {success.providerName} at {localTime(success.startsAt, viewerZone)}.</p>}
     </main>
   )
 }

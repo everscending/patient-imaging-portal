@@ -80,7 +80,8 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
     return Response.json(result, { status: 200 })
   } catch (error) {
     if (error instanceof AvailabilityValidationError) {
-      return errorResponse(422, 'validation_failed', 'The request could not be validated.')
+      // The message names weekdays and durations only — never patient data.
+      return errorResponse(422, 'validation_failed', error.message || 'The request could not be validated.')
     }
     return errorResponse(503, 'availability_unavailable', 'Availability could not be saved.')
   }

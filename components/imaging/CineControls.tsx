@@ -8,6 +8,8 @@ type CineControlsProps = {
   fps: number
   isPlaying: boolean
   playbackReady: boolean
+  /** Progress line while frames decode, null once playback is ready. */
+  bufferingNotice: string | null
   unavailableFrames: number[]
   onFrameChange: (frame: number) => void
   onFpsChange: (fps: number) => void
@@ -22,6 +24,7 @@ export function CineControls({
   fps,
   isPlaying,
   playbackReady,
+  bufferingNotice,
   unavailableFrames,
   onFrameChange,
   onFpsChange,
@@ -94,6 +97,11 @@ export function CineControls({
       <p className="cine-controls__counter" aria-live="polite">
         Frame {currentFrame + 1} of {frameCount}
       </p>
+      {bufferingNotice ? (
+        <p className="cine-controls__notice" data-testid="cine-buffering" role="status">
+          {bufferingNotice}
+        </p>
+      ) : null}
       {unavailableFrames.length > 0 ? <p className="cine-controls__notice">{unavailableNotice}</p> : null}
 
       <style jsx>{`

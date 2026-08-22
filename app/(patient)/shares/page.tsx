@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { EmptyState } from '../../../components/system/EmptyState'
 
@@ -82,7 +83,12 @@ export default function SharesPage() {
       {error ? <p className="pip-error" role="alert">{error}</p> : null}
       {loading ? <p aria-live="polite">Loading shares…</p> : null}
       {!loading && !error && shares.length === 0 ? (
-        <EmptyState id="shares-empty-message" message="You haven't shared anything yet — sharing an image or a report creates a link here." testId="share-empty" />
+        <EmptyState
+          id="shares-empty-message"
+          message="You haven't shared anything yet — sharing an image or a report creates a link here."
+          testId="share-empty"
+          action={<p><Link href="/studies">Go to Imaging to share an image</Link></p>}
+        />
       ) : null}
       <ul
         aria-describedby={!loading && !error && shares.length === 0 ? 'shares-empty-message' : undefined}

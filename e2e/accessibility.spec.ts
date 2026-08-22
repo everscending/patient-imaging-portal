@@ -454,6 +454,15 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('booking-success')).toBeVisible()
 
+    await page.route('**/api/appointments/*/slots', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          providerTimeZone: 'America/Chicago',
+          slots: [{ id: RESCHEDULE_SLOT_ID, startsAt: '2030-06-11T14:00:00-05:00', endsAt: '2030-06-11T15:00:00-05:00' }],
+        }),
+      })
+    })
     await page.route('**/api/appointments/*', async (route) => {
       const action = (route.request().postDataJSON() as { action: string }).action
       await route.fulfill({
@@ -478,10 +487,11 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     await expect(reschedule).toHaveAccessibleName('Reschedule')
     await tabTo(page, reschedule)
     await page.keyboard.press('Enter')
-    const newSlot = changeable.getByRole('textbox', { name: 'New appointment slot ID' })
+    const newSlot = changeable.getByTestId('slot-item').first()
+    await expect(newSlot).toBeVisible()
     await tabTo(page, newSlot)
-    await page.keyboard.type(RESCHEDULE_SLOT_ID)
-    await tabTo(page, changeable.getByRole('button', { name: 'Confirm reschedule' }))
+    await page.keyboard.press('Enter')
+    await tabTo(page, changeable.getByTestId('appointment-reschedule-confirm'))
     await page.keyboard.press('Enter')
     const updatedAppointment = page.getByTestId('appointment-item').filter({ hasText: 'Jun 11, 2030' })
     await expect(updatedAppointment).toBeVisible()

@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 import { createContext, useContext } from 'react'
 import type { ReactNode } from 'react'
 import Wordmark from '../branding/Wordmark'
+import SignOutButton from './SignOutButton'
 
 export type StaffRole = 'provider' | 'admin'
 
@@ -71,6 +72,7 @@ export default function ProviderShell({
               </Link>
             ))}
           </nav>
+          <SignOutButton className="pip-shell-sign-out" />
         </aside>
         <main className="pip-staff-main">{children}</main>
       </div>

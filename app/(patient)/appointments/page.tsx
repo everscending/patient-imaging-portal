@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { AppointmentCard, type Appointment } from '../../../components/scheduling/AppointmentCard'
 import { EmptyState } from '../../../components/system/EmptyState'
@@ -24,11 +25,15 @@ function readAppointments(value: unknown): Appointment[] {
 
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[] | null>(null)
-  const [unavailable, setUnavailable] = useState(false)
+  // /appointments is deliberately session-only (middleware never redirects it
+  // to /verify — e2e/auth.spec.ts pins that), so the 403 the API returns for
+  // an unverified patient surfaces here as a prompt instead of a dead end.
+  const [blocked, setBlocked] = useState<'verify' | 'unavailable' | null>(null)
 
   useEffect(() => {
     let active = true
     void fetch('/api/appointments', { cache: 'no-store' }).then(async (response) => {
+      if (response.status === 403) throw new Error('verification required')
       if (!response.ok) throw new Error('appointments unavailable')
       return readAppointments(await response.json())
     }).then((items) => {
@@ -36,7 +41,7 @@ export default function AppointmentsPage() {
     }).catch((error: unknown) => {
       if (!active) return
       if (error instanceof Error && error.message.includes('allowedTransitions')) throw error
-      setUnavailable(true)
+      setBlocked(error instanceof Error && error.message === 'verification required' ? 'verify' : 'unavailable')
     })
     return () => { active = false }
   }, [])
@@ -47,8 +52,21 @@ export default function AppointmentsPage() {
 
   return (
     <main className="pip-appointments-page">
-      <h1>Appointments</h1>
-      {unavailable ? <p role="alert">Appointments are temporarily unavailable.</p> : null}
+      <div className="pip-appointments-header">
+        <h1>Appointments</h1>
+        {blocked !== 'verify' ? (
+          <Link className="pip-button-primary pip-appointments-book" data-testid="book-appointment-link" href="/book">
+            Book appointment
+          </Link>
+        ) : null}
+      </div>
+      {blocked === 'unavailable' ? <p role="alert">Appointments are temporarily unavailable.</p> : null}
+      {blocked === 'verify' ? (
+        <p role="alert">
+          Verify your identity to see and book appointments.{' '}
+          <Link href="/verify?next=%2Fappointments">Verify now</Link>
+        </p>
+      ) : null}
       <section aria-label="Appointments" className="pip-appointment-list" data-testid="appointment-list">
         {appointments?.length === 0 ? <EmptyState message="No appointments yet — booked appointments appear here." testId="appointments-empty" /> : null}
         {appointments && appointments.length > 0 ? (
@@ -61,6 +79,8 @@ export default function AppointmentsPage() {
       </section>
       <style>{`
         .pip-appointments-page { max-width: 72rem; margin: 0 auto; overflow-wrap: anywhere; }
+        .pip-appointments-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; }
+        .pip-appointments-book { display: inline-flex; align-items: center; text-decoration: none; }
         .pip-appointment-list { max-width: 100%; overflow-x: auto; }
         .pip-appointment-card { display: grid; gap: 0.5rem; min-width: 0; padding: 1rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.75rem; background: var(--pip-color-base-100); }
         .pip-appointment-card td { display: block; padding: 0; border: 0; }
@@ -68,10 +88,10 @@ export default function AppointmentsPage() {
         .pip-appointment-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
         .pip-appointment-actions p { margin: 0; }
         .pip-appointment-button { min-width: var(--pip-tap-target); min-height: var(--pip-tap-target); padding: 0.5rem 0.75rem; border: 1px solid var(--pip-color-primary); border-radius: 0.5rem; color: var(--pip-color-primary); background: var(--pip-color-base-100); font: inherit; font-weight: 600; }
-        .pip-appointment-button:focus-visible, .pip-appointment-reschedule-form input:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
-        .pip-appointment-reschedule-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; width: 100%; min-width: max-content; }
-        .pip-appointment-reschedule-form label { display: grid; gap: 0.25rem; font-weight: 600; }
-        .pip-appointment-reschedule-form input { min-height: var(--pip-tap-target); max-width: 100%; border: 1px solid var(--pip-color-base-300); border-radius: 0.5rem; padding: 0.5rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); font: inherit; }
+        .pip-appointment-button:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
+        .pip-appointment-reschedule { display: grid; gap: 0.5rem; width: 100%; min-width: 16rem; }
+        .pip-appointment-reschedule-heading { margin: 0; font-weight: 600; }
+        .pip-appointment-reschedule-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
         .pip-appointment-table { display: block; width: 100%; border-collapse: collapse; }
         .pip-appointment-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
         .pip-appointment-table tbody { display: grid; gap: 0.75rem; }

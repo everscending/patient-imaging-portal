@@ -368,7 +368,7 @@ test.describe('Registering, signing in, and reaching a session-only page', () =>
 })
 
 test.describe('PatientShell — U-1, acceptance + mandatory adversarial', () => {
-  const DESTINATIONS = ['Imaging', 'Reports', 'Visits', 'Shares']
+  const DESTINATIONS = ['Appointments', 'Imaging', 'Reports', 'Shares']
 
   async function signedInPage(page: Page): Promise<void> {
     const email = uniqueEmail('shell')

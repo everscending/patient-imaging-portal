@@ -1353,6 +1353,23 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       return
     }
 
+    // Migration 015's definer-rights view: provider-scoped appointment rows
+    // carrying the patient reference only.
+    if (url.pathname === '/rest/v1/provider_schedule_appointments') {
+      const rows = callerProvider
+        ? applyEqualityFilters(scheduleAppointments.filter((row) => row.provider_id === callerProvider.id), url).map((appointment) => ({
+          id: appointment.id,
+          slot_id: appointment.slot_id,
+          status: appointment.status,
+          out_of_hours: appointment.out_of_hours,
+          patient_ref: patients.find((candidate) => candidate.id === appointment.patient_id)?.patient_ref ?? '',
+          service_name: appointment.service_name,
+        }))
+        : []
+      sendPostgrestRows(req, res, rows)
+      return
+    }
+
     if (url.pathname === '/rest/v1/appointments') {
       if (!callerProvider) {
         sendPostgrestRows(req, res, patientScopedRows(req, url, patientAppointments))
@@ -1977,6 +1994,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       url.pathname === '/rest/v1/cine_frames' ||
       url.pathname === '/rest/v1/slots' ||
       url.pathname === '/rest/v1/appointments' ||
+      url.pathname === '/rest/v1/provider_schedule_appointments' ||
       url.pathname === '/rest/v1/reports' ||
       SEEDED_PATIENT_TABLES.has(url.pathname)
     ) {

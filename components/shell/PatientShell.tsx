@@ -11,11 +11,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
 import Wordmark from '../branding/Wordmark'
+import SignOutButton from './SignOutButton'
 
 const DESTINATIONS = [
+  { href: '/appointments', label: 'Appointments' },
   { href: '/studies', label: 'Imaging' },
   { href: '/reports', label: 'Reports' },
-  { href: '/appointments', label: 'Visits' },
   { href: '/shares', label: 'Shares' },
 ] as const
 
@@ -38,7 +39,13 @@ export default function PatientShell({
     <div className="pip-shell">
       <aside className="pip-shell-sidebar" data-testid="patient-sidebar" aria-label="Patient navigation">
         <Wordmark name={practiceName} />
-        <p className="pip-shell-patient-name">{patientName}</p>
+        <Link
+          className="pip-shell-patient-name"
+          href="/profile"
+          aria-current={isCurrent(pathname, '/profile') ? 'page' : undefined}
+        >
+          {patientName}
+        </Link>
         <nav aria-label="Primary">
           {DESTINATIONS.map((destination) => (
             <Link
@@ -50,9 +57,23 @@ export default function PatientShell({
             </Link>
           ))}
         </nav>
+        <SignOutButton className="pip-shell-sign-out" />
       </aside>
 
-      <div className="pip-shell-main">{children}</div>
+      <div className="pip-shell-main">
+        <header className="pip-shell-topbar" data-testid="patient-topbar">
+          <Wordmark name={practiceName} />
+          <Link
+            className="pip-shell-account"
+            href="/profile"
+            aria-label={`Profile — ${patientName}`}
+            aria-current={isCurrent(pathname, '/profile') ? 'page' : undefined}
+          >
+            {(patientName[0] ?? '?').toUpperCase()}
+          </Link>
+        </header>
+        {children}
+      </div>
 
       <nav className="pip-shell-tabbar" data-testid="patient-tabbar" aria-label="Primary">
         {DESTINATIONS.map((destination) => (

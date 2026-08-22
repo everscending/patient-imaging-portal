@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+
 type Slot = { id: string; startsAt: string; endsAt: string }
 
 export type SlotListProps = {
@@ -38,21 +40,57 @@ export default function SlotList({
   unavailableSlotIds,
   onSelect,
 }: SlotListProps) {
+  // One day on screen at a time: paging is only between days that actually
+  // have open times (a day with nothing open is never a page), so the arrows
+  // always land somewhere useful.
+  const [dayIndex, setDayIndex] = useState(0)
+  useEffect(() => {
+    setDayIndex(0)
+  }, [slots])
+
   const groups = new Map<string, Slot[]>()
   for (const slot of slots) {
     const day = dayLabel(slot.startsAt, viewerTimeZone)
     groups.set(day, [...(groups.get(day) ?? []), slot])
   }
+  const days = [...groups]
+  const boundedIndex = Math.min(dayIndex, Math.max(0, days.length - 1))
+  const shown = days[boundedIndex]
 
   return (
     <section data-testid="slot-list" aria-label={`Open appointment times in ${viewerTimeZone}`} className="pip-slot-list">
       <p className="pip-time-zone">Times shown in your time zone: {viewerTimeZone}. Provider time zone: {providerTimeZone}.</p>
       {slots.length === 0 && <p className="pip-notice" data-testid="slot-empty">No open times are available for this provider.</p>}
-      {[...groups].map(([day, daySlots]) => (
-        <section key={day} className="pip-slot-day" aria-label={day}>
-          <h2>{day}</h2>
+      {shown ? (
+        <section className="pip-slot-day" aria-label={shown[0]}>
+          <div className="pip-slot-day-nav">
+            <button
+              type="button"
+              className="pip-slot-day-arrow"
+              data-testid="slot-day-previous"
+              aria-label="Previous day with open times"
+              disabled={boundedIndex === 0}
+              onClick={() => setDayIndex(boundedIndex - 1)}
+            >
+              ‹
+            </button>
+            <h2 aria-live="polite">
+              {shown[0]}
+              <span className="pip-slot-day-count"> — day {boundedIndex + 1} of {days.length} with open times</span>
+            </h2>
+            <button
+              type="button"
+              className="pip-slot-day-arrow"
+              data-testid="slot-day-next"
+              aria-label="Next day with open times"
+              disabled={boundedIndex >= days.length - 1}
+              onClick={() => setDayIndex(boundedIndex + 1)}
+            >
+              ›
+            </button>
+          </div>
           <div className="pip-slot-grid" data-testid="slot-grid">
-            {daySlots.map((slot) => {
+            {shown[1].map((slot) => {
               const unavailable = unavailableSlotIds.has(slot.id)
               return (
                 <button
@@ -72,7 +110,7 @@ export default function SlotList({
             })}
           </div>
         </section>
-      ))}
+      ) : null}
     </section>
   )
 }

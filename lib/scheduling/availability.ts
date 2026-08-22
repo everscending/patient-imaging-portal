@@ -198,10 +198,27 @@ export function defaultHorizon(today: string): { fromDate: string; toDate: strin
 }
 
 export class AvailabilityValidationError extends Error {
-  constructor() {
-    super('availability input is invalid')
+  constructor(message = 'availability input is invalid') {
+    super(message)
     this.name = 'AvailabilityValidationError'
   }
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
+
+/** Translates generateSlots' developer-facing messages into caller-safe
+ * prose. These name weekdays and durations only — never patient data. */
+function validationMessage(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message : ''
+  const overlap = /working-hours windows overlap on weekday (\d)/.exec(raw)
+  if (overlap) return `${WEEKDAY_NAMES[Number(overlap[1])]}'s working-hours windows overlap.`
+  if (raw.includes('endsLocal must be later')) return 'A working-hours window must end after it starts.'
+  if (raw.includes('block endsAt must be later')) return 'A time-off block must end after it starts.'
+  if (raw.includes('not a parseable timestamp')) return 'A time-off block has an invalid date or time.'
+  const dst = /slotMinutes \((\d+)\) does not divide (.+)'s DST shift \((\d+) minutes\)/.exec(raw)
+  if (dst) return `A ${dst[1]}-minute slot length does not fit ${dst[2]}'s daylight-saving change. Choose a length that divides ${dst[3]} minutes.`
+  if (raw.includes('slotMinutes must be between')) return 'Slot length must be between 5 and 240 minutes.'
+  return 'The request could not be validated.'
 }
 
 type AvailabilityRow = { time_zone: string; slot_minutes: number }
@@ -293,8 +310,8 @@ export async function applyAvailability(input: {
       blocks: input.blocks,
       ...horizon,
     })
-  } catch {
-    throw new AvailabilityValidationError()
+  } catch (cause) {
+    throw new AvailabilityValidationError(validationMessage(cause))
   }
 
   const from = zones.zonedTimeToInstant(timeZone, horizon.fromDate, '00:00:00').toISOString()

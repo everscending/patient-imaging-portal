@@ -328,12 +328,12 @@ test.describe.serial('JOR-261 — the recorded DEL-6 demo walkthrough', () => {
         .filter({ has: page.getByTestId('appointment-reschedule') })
         .first()
       await card.getByTestId('appointment-reschedule').click()
-      await card.locator('input:visible').fill(target!.id)
+      await card.locator(`[data-testid="slot-item"][data-slot-id="${target!.id}"]`).click()
       const [rescheduled] = await Promise.all([
         page.waitForResponse((candidate) =>
           candidate.request().method() === 'PATCH'
           && new URL(candidate.url()).pathname.startsWith('/api/appointments/')),
-        card.getByRole('button', { name: 'Confirm reschedule' }).click(),
+        card.getByTestId('appointment-reschedule-confirm').click(),
       ])
       expect(rescheduled.status(), await rescheduled.text()).toBe(200)
     })

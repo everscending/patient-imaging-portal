@@ -28,7 +28,8 @@ export default function LoginPage() {
         setError(body.message)
         return
       }
-      router.push('/appointments')
+      const { role } = (await response.json()) as { role?: 'patient' | 'provider' | 'admin' }
+      router.push(role === 'provider' ? '/provider/schedule' : role === 'admin' ? '/admin/audit' : '/appointments')
       router.refresh()
     } finally {
       setSubmitting(false)

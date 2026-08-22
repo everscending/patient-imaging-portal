@@ -19,8 +19,8 @@ type AppointmentRow = {
   slot_id: string
   status: AppointmentStatus
   out_of_hours: boolean
-  patients: { patient_ref: string } | Array<{ patient_ref: string }> | null
-  services: { name: string } | Array<{ name: string }> | null
+  patient_ref: string
+  service_name: string
 }
 
 function nextDate(date: string): string {
@@ -93,12 +93,21 @@ export async function GET(request: Request): Promise<Response> {
     const slotIds = slots.map((slot) => slot.id)
     const appointmentsResult = slotIds.length === 0
       ? { data: [] as AppointmentRow[], error: null }
+      // provider_schedule_appointments (migration 015): providers cannot read
+      // the patients table under RLS, so the definer-rights view supplies the
+      // patient_ref — and only the ref.
       : await client
-        .from('appointments')
-        .select('id,slot_id,status,out_of_hours,patients!inner(patient_ref),services!inner(name)')
+        .from('provider_schedule_appointments')
+        .select('id,slot_id,status,out_of_hours,patient_ref,service_name')
         .in('slot_id', slotIds)
     if (appointmentsResult.error) throw new Error('schedule appointments read failed')
-    const appointments = new Map((appointmentsResult.data as AppointmentRow[]).map((appointment) => [appointment.slot_id, appointment]))
+    // A slot can carry a cancelled appointment plus a live rebooking; the
+    // live one must win regardless of row order.
+    const appointments = new Map<string, AppointmentRow>()
+    for (const appointment of appointmentsResult.data as AppointmentRow[]) {
+      const existing = appointments.get(appointment.slot_id)
+      if (!existing || existing.status === 'cancelled') appointments.set(appointment.slot_id, appointment)
+    }
     const now = new Date()
 
     return Response.json({
@@ -106,8 +115,6 @@ export async function GET(request: Request): Promise<Response> {
       slots: slots.map((slot) => {
         const appointment = appointments.get(slot.id)
         if (!appointment) return { id: slot.id, startsAt: slot.starts_at, endsAt: slot.ends_at, status: slot.status, appointment: null }
-        const patient = Array.isArray(appointment.patients) ? appointment.patients[0] : appointment.patients
-        const service = Array.isArray(appointment.services) ? appointment.services[0] : appointment.services
         const starts = new Date(slot.starts_at)
         return {
           id: slot.id,
@@ -116,8 +123,8 @@ export async function GET(request: Request): Promise<Response> {
           status: slot.status,
           appointment: {
             id: appointment.id,
-            patientRef: patient?.patient_ref ?? '',
-            serviceName: service?.name ?? '',
+            patientRef: appointment.patient_ref,
+            serviceName: appointment.service_name,
             status: appointment.status,
             outOfHours: appointment.out_of_hours,
             allowedTransitions: allowedTransitions({

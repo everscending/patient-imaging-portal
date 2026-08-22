@@ -78,6 +78,10 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
   const posterVisible = Boolean(clip.posterUrl) && !posterFailed
   const imageLoading = !unavailable && !loadedFrames.has(currentFrame)
   const playbackReady = availableFrames.every((candidate) => settledFrames.has(candidate.index))
+  const settledAvailableCount = availableFrames.filter((candidate) => settledFrames.has(candidate.index)).length
+  const bufferingNotice = playbackReady
+    ? null
+    : `Preparing playback — ${settledAvailableCount} of ${availableFrames.length} frames`
 
   function markLoaded(index: number): void {
     setLoadedFrames((current) => withFrame(current, index))
@@ -114,19 +118,25 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
       framesInFlight.current += 1
       const image = new Image()
       image.fetchPriority = priority
-      image.onload = () => {
+      const finish = (decoded: boolean): void => {
         if (!mounted.current) return
-        frameCache.current.set(index, image)
+        if (decoded) frameCache.current.set(index, image)
         framesInFlight.current -= 1
-        setLoadedFrames((loaded) => withFrame(loaded, index))
-        setSettledFrames((settled) => withFrame(settled, index))
-      }
-      image.onerror = () => {
-        if (!mounted.current) return
-        framesInFlight.current -= 1
+        if (decoded) setLoadedFrames((loaded) => withFrame(loaded, index))
         setSettledFrames((settled) => withFrame(settled, index))
       }
       image.src = url
+      // decode(), not onload: onload fires when bytes have arrived, but the
+      // bitmap is rasterized lazily at first paint — which made the first
+      // playback lap flicker as every frame paid its decode on screen.
+      // Settling only after decode() means playbackReady = every frame's
+      // bitmap is already in the browser's image cache.
+      if (typeof image.decode === 'function') {
+        image.decode().then(() => finish(true), () => finish(false))
+      } else {
+        image.onload = () => finish(true)
+        image.onerror = () => finish(false)
+      }
     }
 
     // The frame on screen goes first and alone: until it has settled nothing
@@ -171,7 +181,10 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
               src={frame.url}
               alt={`Cine frame ${currentFrame + 1}`}
               data-frame-index={currentFrame}
-              decoding="async"
+              // sync: this element remounts every tick (key above); async
+              // decoding lets the browser paint a blank frame first, sync
+              // paints the already-decoded cached bitmap in the same frame.
+              decoding="sync"
               fetchPriority="high"
               onLoad={() => markLoaded(currentFrame)}
               onError={() => markSettled(currentFrame)}
@@ -202,6 +215,7 @@ export function CineViewer({ clip }: CineViewerProps): JSX.Element {
         fps={fps}
         isPlaying={isPlaying}
         playbackReady={playbackReady}
+        bufferingNotice={bufferingNotice}
         unavailableFrames={unavailableFrames}
         onFrameChange={setCurrentFrame}
         onFpsChange={setFps}

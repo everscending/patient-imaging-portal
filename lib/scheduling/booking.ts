@@ -167,9 +167,11 @@ export async function bookForActor(input: {
 export async function listAppointments(actorUserId: string): Promise<AppointmentDto[]> {
   const client = await callerClient()
   const role = await resolveActorRole(client, actorUserId)
-  const { data, error } = await client.from('appointments').select(APPOINTMENT_SELECT).order('created_at', { ascending: false })
+  const { data, error } = await client.from('appointments').select(APPOINTMENT_SELECT)
   if (error) throw new Error('booking: appointment list failed')
-  return ((data ?? []) as unknown as AppointmentSelectRow[]).map((row) => selectedAppointmentDto(row, role))
+  return ((data ?? []) as unknown as AppointmentSelectRow[])
+    .map((row) => selectedAppointmentDto(row, role))
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
 }
 
 /** Persists a lifecycle edge after consulting lifecycle.ts's sole matrix. */

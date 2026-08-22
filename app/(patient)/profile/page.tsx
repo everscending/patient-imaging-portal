@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
+import SignOutButton from '../../../components/shell/SignOutButton'
 
 type Profile = {
   email: string
@@ -163,6 +164,11 @@ export default function ProfilePage() {
             {saving ? 'Saving…' : 'Save profile'}
           </button>
 
+          <section className="pip-sign-out-section" aria-label="Session">
+            <h2>Session</h2>
+            <SignOutButton className="pip-shell-sign-out" />
+          </section>
+
           <section className="pip-deletion-request">
             <h2>Data deletion</h2>
             {deletionState ? (
@@ -203,7 +209,8 @@ export default function ProfilePage() {
           </dialog>
 
           <style jsx>{`
-            .pip-deletion-request { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--pip-color-base-300); }
+            .pip-deletion-request, .pip-sign-out-section { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--pip-color-base-300); }
+            .pip-sign-out-section .pip-shell-sign-out { margin-top: 0.5rem; }
             .pip-deletion-open, .pip-deletion-cancel { min-width: var(--pip-tap-target); min-height: var(--pip-tap-target); padding: 0.5rem 1rem; border: 1px solid var(--pip-color-primary); border-radius: 0.5rem; color: var(--pip-color-primary); background: var(--pip-color-base-100); font: inherit; font-weight: 600; }
             .pip-deletion-open:focus-visible, .pip-deletion-cancel:focus-visible { outline: 2px solid var(--pip-color-accent); outline-offset: 2px; }
             .pip-deletion-dialog { width: calc(100% - 2rem); max-width: 28rem; border: 1px solid var(--pip-color-base-300); border-radius: 0.75rem; color: var(--pip-color-base-content); background: var(--pip-color-base-100); }

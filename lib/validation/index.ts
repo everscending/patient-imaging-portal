@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
-import type { AuditAction } from '../audit/events'
+import { auditActions } from '../audit/actions'
 import { config } from '../config'
 import { errorResponse } from './envelope'
 
@@ -197,30 +197,6 @@ export const identityVerifyRequestSchema = z.object({
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 }).strict()
 
-const auditActions = [
-  'identity.verify',
-  'identity.lockout',
-  'identity.link',
-  'study.view',
-  'image.view',
-  'clip.view',
-  'report.view',
-  'share.create',
-  'share.use',
-  'share.revoke',
-  'share.view',
-  'booking.create',
-  'booking.reschedule',
-  'booking.cancel',
-  'appointment.view',
-  'appointment.transition',
-  'schedule.view',
-  'availability.update',
-  'availability.collision',
-  'reminder.dispatch',
-  'audit.view',
-  'profile.deletion_request',
-] as const satisfies readonly AuditAction[]
 
 const auditLogQueryFields = z
   .object({

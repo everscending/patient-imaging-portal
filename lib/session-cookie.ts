@@ -30,3 +30,9 @@ export function setSessionCookie(response: NextResponse, accessToken: string): v
 export function getSessionToken(request: NextRequest): string | null {
   return request.cookies.get(SESSION_COOKIE_NAME)?.value ?? null
 }
+
+/** Expires the session cookie — logout. Same options as issuance, so the
+ *  browser matches and drops the original cookie rather than keeping both. */
+export function clearSessionCookie(response: NextResponse): void {
+  response.cookies.set(SESSION_COOKIE_NAME, '', { ...COOKIE_OPTIONS, maxAge: 0 })
+}
