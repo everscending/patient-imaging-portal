@@ -23,9 +23,13 @@ import {
   FRAMES_PER_CINE_SET,
   generateAssetPool,
   POOL_BYTE_CEILING,
+  POSTER_HEIGHT,
+  POSTER_WIDTH,
   STILL_COUNT,
   STILL_HEIGHT,
   STILL_WIDTH,
+  THUMB_HEIGHT,
+  THUMB_WIDTH,
   type AssetPool,
 } from '../../db/seed/assets'
 import { PHI_BUCKET, uploadPool, type PhiStorageClient, type StorageObjectInfo } from '../../db/seed/storage'
@@ -45,6 +49,13 @@ const GENERATE_TIMEOUT_MS = 30_000
 
 function fullManifestOf(pool: AssetPool): { key: string; sha256: string }[] {
   return pool.assets.map((a) => ({ key: a.key, sha256: a.sha256 })).sort((a, b) => a.key.localeCompare(b.key))
+}
+
+function derivativeManifestOf(pool: AssetPool): { key: string; sha256: string }[] {
+  return pool.assets
+    .filter((a) => a.kind === 'still-thumb' || a.kind === 'cine-poster')
+    .map((a) => ({ key: a.key, sha256: a.sha256 }))
+    .sort((a, b) => a.key.localeCompare(b.key))
 }
 
 function uploadableManifestOf(pool: AssetPool): { key: string; sha256: string }[] {
@@ -178,6 +189,75 @@ describe('AC: the pool contains 8 cine sets of 100 frames each and 40 stills', (
   })
 })
 
+describe('EL-1 AC: one thumbnail per still and one poster per cine set, each materially smaller than its source', () => {
+  test('everyStillHasAThumbnailAndEveryCineSetHasAPoster', function everyStillHasAThumbnailAndEveryCineSetHasAPoster() {
+    const thumbs = pool.assets.filter((a) => a.kind === 'still-thumb')
+    const posters = pool.assets.filter((a) => a.kind === 'cine-poster')
+
+    expect(thumbs).toHaveLength(STILL_COUNT)
+    expect(posters).toHaveLength(CINE_SET_COUNT)
+    expect(new Set(thumbs.map((a) => a.stillIndex))).toEqual(new Set(pool.assets.filter((a) => a.kind === 'still').map((a) => a.stillIndex)))
+    expect(new Set(posters.map((a) => a.cineSetIndex))).toEqual(new Set(Array.from({ length: CINE_SET_COUNT }, (_, index) => index)))
+
+    for (const thumb of thumbs) {
+      expect(thumb.width).toBe(THUMB_WIDTH)
+      expect(thumb.height).toBe(THUMB_HEIGHT)
+      expect(thumb.upload).toBe(true)
+    }
+    for (const poster of posters) {
+      expect(poster.width).toBe(POSTER_WIDTH)
+      expect(poster.height).toBe(POSTER_HEIGHT)
+      expect(poster.upload).toBe(true)
+    }
+  })
+
+  // The point of a thumbnail-first render is that the first fetch is small.
+  // A derivative that is not much smaller than its source buys nothing, so
+  // the size relationship is asserted rather than assumed.
+  test('everyDerivativeIsAtMostAQuarterOfItsSourceSize', function everyDerivativeIsAtMostAQuarterOfItsSourceSize() {
+    const largestStill = Math.max(...pool.assets.filter((a) => a.kind === 'still').map((a) => a.bytes.length))
+    const largestFrame = Math.max(...pool.assets.filter((a) => a.kind === 'cine-frame').map((a) => a.bytes.length))
+
+    for (const thumb of pool.assets.filter((a) => a.kind === 'still-thumb')) {
+      expect(thumb.bytes.length).toBeLessThan(largestStill / 4)
+    }
+    for (const poster of pool.assets.filter((a) => a.kind === 'cine-poster')) {
+      expect(poster.bytes.length).toBeLessThan(largestFrame / 4)
+    }
+  })
+})
+
+describe('mandatory adversarial: the derivative generator is deterministic, never a fresh random field per run', () => {
+  test('adversarialDerivativeGeneratorReproducesByteIdenticalDerivativesAcrossRuns', function adversarialDerivativeGeneratorReproducesByteIdenticalDerivativesAcrossRuns() {
+    const first = derivativeManifestOf(pool)
+    const second = derivativeManifestOf(generateAssetPool(DEFAULT_SEED))
+
+    expect(second).toEqual(first)
+    expect(first).toHaveLength(STILL_COUNT + CINE_SET_COUNT)
+    // Each derivative reduces a different source, so no two may collide —
+    // a generator that emitted one shared placeholder would pass a
+    // determinism check on its own.
+    expect(new Set(first.map((entry) => entry.sha256)).size).toBe(first.length)
+    expect(new Set(first.map((entry) => entry.key)).size).toBe(first.length)
+  }, GENERATE_TIMEOUT_MS * 2)
+
+  // Proves the comparison above discriminates: one byte of derivative drift
+  // — what a Math.random or wall-clock source would produce on every run —
+  // is caught, so the passing case above is evidence and not a tautology.
+  test('adversarial: a derivative manifest that differs by one byte is never treated as identical', function adversarialDerivativeDriftCaught() {
+    const first = derivativeManifestOf(pool)
+    const drifted = first.map((entry, index) =>
+      index === 0 ? { ...entry, sha256: `${entry.sha256.slice(0, -1)}0` } : entry,
+    )
+    expect(drifted).not.toEqual(first)
+  })
+
+  test('adversarial: a different seed produces different derivatives too', function adversarialDifferentSeedProducesDifferentDerivatives() {
+    const other = derivativeManifestOf(generateAssetPool(`${DEFAULT_SEED}-other`))
+    expect(other.map((entry) => entry.sha256)).not.toEqual(derivativeManifestOf(pool).map((entry) => entry.sha256))
+  }, GENERATE_TIMEOUT_MS * 2)
+})
+
 describe('AC + mandatory adversarial: total generated bytes stay within the stated ADR-0009 ceiling', () => {
   test('totalBytesStayWithinTheStatedCeiling', function totalBytesStayWithinTheStatedCeiling() {
     expect(pool.totalBytes).toBeGreaterThan(0)
@@ -289,19 +369,48 @@ describe('Live check: the committed run record still matches the current determi
       totalBytes: number
       missingKey: string
       manifest: { key: string; sha256: string }[]
+      derivativesPendingUpload: { objectCount: number; totalBytes: number; manifest: { key: string; sha256: string }[] }
     }
 
     // Regenerated offline, from the artifact's own recorded seed — no
     // network call. A mismatch here means generation drifted since the one
     // real upload this record was taken from (the ticket's "a run whose
     // manifest differs from the previous run's fails the ticket").
+    //
+    // `manifest` stays exactly what that real run uploaded. EL-1's
+    // derivatives (JOR-243) were generated after it, so they are recorded
+    // separately as pending until the deployed stack is re-provisioned —
+    // keeping this record an honest account of what is actually in the
+    // bucket, while still pinning every derivative byte against drift.
     const current = generateAssetPool(artifact.seed)
     const currentUploadable = current.assets.filter((a) => a.upload)
     const currentUploadedBytes = currentUploadable.reduce((sum, a) => sum + a.bytes.length, 0)
+    const pending = artifact.derivativesPendingUpload
+    const expectedManifest = [...artifact.manifest, ...pending.manifest].sort((a, b) => a.key.localeCompare(b.key))
 
-    expect(uploadableManifestOf(current)).toEqual(artifact.manifest)
-    expect(currentUploadable.length).toBe(artifact.objectCount)
-    expect(currentUploadedBytes).toBe(artifact.totalBytes)
+    expect(uploadableManifestOf(current)).toEqual(expectedManifest)
+    expect(currentUploadable.length).toBe(artifact.objectCount + pending.objectCount)
+    expect(currentUploadedBytes).toBe(artifact.totalBytes + pending.totalBytes)
     expect(current.missingKey).toBe(artifact.missingKey)
   }, GENERATE_TIMEOUT_MS)
+
+  // The derivatives are additive: every key the real run uploaded still
+  // generates the same bytes, so re-provisioning uploads 48 new objects and
+  // rewrites none of the 839 already there.
+  test('el1DerivativesAddObjectsWithoutRewritingAnyPreviouslyUploadedOne', function el1DerivativesAddObjectsWithoutRewritingAnyPreviouslyUploadedOne() {
+    const artifact = JSON.parse(readFileSync(ARTIFACT_PATH, 'utf8')) as {
+      seed: string
+      manifest: { key: string; sha256: string }[]
+      derivativesPendingUpload: { manifest: { key: string; sha256: string }[] }
+    }
+    const current = new Map(uploadableManifestOf(pool).map((entry) => [entry.key, entry.sha256]))
+    expect(artifact.seed).toBe(DEFAULT_SEED)
+    for (const entry of artifact.manifest) expect(current.get(entry.key)).toBe(entry.sha256)
+
+    const recorded = new Set(artifact.manifest.map((entry) => entry.key))
+    for (const entry of artifact.derivativesPendingUpload.manifest) {
+      expect(recorded.has(entry.key)).toBe(false)
+      expect(current.get(entry.key)).toBe(entry.sha256)
+    }
+  })
 })

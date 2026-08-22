@@ -199,18 +199,29 @@ function withTime(day: Date, hour: number, minute: number): Date {
 }
 
 // ── pool lookups ────────────────────────────────────────────────────────
-type PoolIndex = { cineFrameKey: Map<string, string>; stillKey: Map<number, string>; allKeys: Set<string> }
+type PoolIndex = {
+  cineFrameKey: Map<string, string>
+  stillKey: Map<number, string>
+  // EL-1 derivatives, indexed by the source they were reduced from.
+  stillThumbKey: Map<number, string>
+  cinePosterKey: Map<number, string>
+  allKeys: Set<string>
+}
 
 function indexPool(pool: AssetPool): PoolIndex {
   const cineFrameKey = new Map<string, string>()
   const stillKey = new Map<number, string>()
+  const stillThumbKey = new Map<number, string>()
+  const cinePosterKey = new Map<number, string>()
   const allKeys = new Set<string>()
   for (const asset of pool.assets) {
     allKeys.add(asset.key)
     if (asset.kind === 'cine-frame') cineFrameKey.set(`${asset.cineSetIndex}:${asset.frameIndex}`, asset.key)
+    else if (asset.kind === 'cine-poster') cinePosterKey.set(asset.cineSetIndex as number, asset.key)
+    else if (asset.kind === 'still-thumb') stillThumbKey.set(asset.stillIndex as number, asset.key)
     else stillKey.set(asset.stillIndex as number, asset.key)
   }
-  return { cineFrameKey, stillKey, allKeys }
+  return { cineFrameKey, stillKey, stillThumbKey, cinePosterKey, allKeys }
 }
 
 function frameKeyOf(index: PoolIndex, cineSetIndex: number, frameIndex: number): string {
@@ -222,6 +233,18 @@ function frameKeyOf(index: PoolIndex, cineSetIndex: number, frameIndex: number):
 function stillKeyOf(index: PoolIndex, stillIndex: number): string {
   const key = index.stillKey.get(stillIndex)
   if (!key) throw new Error(`db/seed/rows: no pool still at index ${stillIndex}`)
+  return key
+}
+
+function stillThumbKeyOf(index: PoolIndex, stillIndex: number): string {
+  const key = index.stillThumbKey.get(stillIndex)
+  if (!key) throw new Error(`db/seed/rows: no pool thumbnail for still index ${stillIndex}`)
+  return key
+}
+
+function cinePosterKeyOf(index: PoolIndex, cineSetIndex: number): string {
+  const key = index.cinePosterKey.get(cineSetIndex)
+  if (!key) throw new Error(`db/seed/rows: no pool poster for cine set ${cineSetIndex}`)
   return key
 }
 
@@ -407,7 +430,7 @@ function buildImages(sourceSeed: string, plans: VisitPlan[], poolIndex: PoolInde
         study_id: plan.study.id,
         patient_id: plan.study.patient_id,
         storage_key: stillKeyOf(poolIndex, stillIndex),
-        thumb_key: null,
+        thumb_key: stillThumbKeyOf(poolIndex, stillIndex),
         width: 800,
         height: 600,
         ordinal,
@@ -454,7 +477,7 @@ function buildCineClipsAndFrames(
         patient_id: plan.study.patient_id,
         frame_count: frameCount,
         default_fps: 12,
-        poster_key: frameKeyOf(poolIndex, cineSetIndex, 0),
+        poster_key: cinePosterKeyOf(poolIndex, cineSetIndex),
       })
 
       for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
@@ -773,7 +796,11 @@ function validateRowSet(rowSet: RowSet, poolIndex: PoolIndex): void {
   )
 
   for (const frame of rowSet.cineFrames) assertFrameKeyResolvesToPool(frame.storage_key, poolIndex.allKeys)
-  for (const image of rowSet.images) assertFrameKeyResolvesToPool(image.storage_key, poolIndex.allKeys)
+  for (const image of rowSet.images) {
+    assertFrameKeyResolvesToPool(image.storage_key, poolIndex.allKeys)
+    if (image.thumb_key) assertFrameKeyResolvesToPool(image.thumb_key, poolIndex.allKeys)
+  }
+  for (const clip of rowSet.cineClips) assertFrameKeyResolvesToPool(clip.poster_key, poolIndex.allKeys)
 
   const brokenClips = rowSet.cineClips.filter((c) => c.id === rowSet.fixtures.brokenCineClipId)
   if (brokenClips.length !== 1) throw new Error('db/seed/rows: expected exactly one broken cine clip')

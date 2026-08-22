@@ -145,7 +145,11 @@ export async function clipManifest(client: Client, studyId: string, clipId: stri
   if (storedFramesResult.status === 'rejected') throw storedFramesResult.reason
   const storedFrames = storedFramesResult.value
   const keysByIndex = new Map(storedFrames.map((frame) => [frame.frame_index, frame.storage_key]))
-  const signed = await signStorageKeys(storedFrames.map((frame) => frame.storage_key))
+  // The poster (EL-1) rides the frame batch rather than a second round: it is
+  // the first thing the viewer can draw, so it must not wait on a round of
+  // its own.
+  const posterKeys = clip.poster_key ? [clip.poster_key] : []
+  const signed = await signStorageKeys([...posterKeys, ...storedFrames.map((frame) => frame.storage_key)])
   const signedByKey = new Map(signed.map((entry) => [entry.key, entry]))
   const expiry = expiresAt()
 
@@ -153,6 +157,7 @@ export async function clipManifest(client: Client, studyId: string, clipId: stri
     id: clip.id,
     frameCount: clip.frame_count,
     defaultFps: clip.default_fps,
+    posterUrl: clip.poster_key ? (signedByKey.get(clip.poster_key)?.url ?? null) : null,
     frames: Array.from({ length: clip.frame_count }, (_, index) => {
       const key = keysByIndex.get(index)
       const entry = key ? signedByKey.get(key) : undefined

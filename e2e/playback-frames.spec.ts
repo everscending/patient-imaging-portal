@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -11,6 +12,13 @@ import {
 } from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
+// Read from the viewer rather than restated here, so the bound this test
+// checks is the bound the component actually applies (EL-1, JOR-243).
+const CINE_FRAME_WINDOW = Number(
+  /export const CINE_FRAME_WINDOW = (\d+)/.exec(
+    readFileSync(path.join(REPO_ROOT, 'components/imaging/CineViewer.tsx'), 'utf8'),
+  )?.[1],
+)
 const PLAYBACK_LIVE = process.env.PLAYBACK_LIVE === '1'
 const PASSWORD = 'PlaybackPatientPassword9'
 let identityFixtureLockToken: string | undefined
@@ -125,6 +133,10 @@ test.describe.serial('JOR-221 100-frame playback', () => {
     concurrency.stop()
     expect(preload.completed).toBeGreaterThanOrEqual(target.manifest.frameCount)
     expect(preload.maximum).toBeGreaterThan(0)
+    // EL-1 (JOR-243): all 100 frames still load, but in windows of the size
+    // the viewer states, never 100 at once. The allowance covers the poster
+    // and the `<img>` element for the frame on screen.
+    expect(preload.maximum).toBeLessThanOrEqual(CINE_FRAME_WINDOW + 2)
     test.info().annotations.push({ type: 'frame-preload-concurrency', description: String(preload.maximum) })
     console.log(JSON.stringify({ op: 'playback.preload', frames: preload.completed, maxConcurrency: preload.maximum }))
 
