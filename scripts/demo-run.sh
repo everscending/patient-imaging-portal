@@ -3,6 +3,13 @@
 # security scanner's public input. The real Next app talks only to the test
 # Supabase boundary; the reminder fixture uses the local pip-testpg container.
 set -euo pipefail
+# JOR-319: job control gives the backgrounded launcher its own process group
+# (pgid == its pid). `node` on PATH may itself be a version-manager shim that
+# forks the real interpreter and then exits, orphaning the real process tree
+# (start-test-server.mjs -> run-next.mjs -> next -> next-server) before a
+# plain `kill $SERVER_PID` ever reaches it — but the process group survives
+# that reparenting, so killing the whole group in stop_server still works.
+set -m
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT="$REPO_ROOT/tests/artifacts/demo-run.log"
@@ -20,7 +27,7 @@ rm -f "$ARTIFACT" "$PHI_STATE"
 
 stop_server() {
   if [[ -n "$SERVER_PID" ]]; then
-    kill "$SERVER_PID" 2>/dev/null || true
+    kill -- "-$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
     SERVER_PID=""
   fi

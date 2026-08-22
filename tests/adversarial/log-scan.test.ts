@@ -1,9 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import { describe, expect, test } from 'vitest'
 
+import { unusedPort } from '../../e2e/fixtures/local-runtime'
 import {
   dateVariants,
   REQUIRED_STEPS,
@@ -249,4 +251,46 @@ describe('JOR-212 public demo-run evidence', () => {
     expect(script).toContain('console.log(`DEMO_AUDIT_DETAIL')
     expect(script).not.toContain('npx vitest')
   })
+
+  // JOR-319: a demo run must not strand its next-server on the port. This
+  // is only observable when `node` on PATH is a version-manager shim (e.g.
+  // Volta) that forks the real interpreter as a child instead of exec'ing
+  // in place — which is what happens in a developer's plain terminal, but
+  // NOT when this test's own runner was itself launched through that same
+  // shim, because the shim then puts its already-resolved tool directory
+  // ahead of itself on PATH for everything it spawns. Put the shim
+  // directory back in front so the script sees the PATH shape a fresh
+  // terminal does (a no-op where no such shim is on PATH). The check runs
+  // in a delegate `node` process, one step removed from this test's own
+  // vitest worker — running demo-run.sh's execFileSync directly inside the
+  // worker under the rewritten PATH stalls the worker's task-update
+  // channel for the whole run.
+  test('producerReleasesItsPortEvenWhenNodeIsAVersionManagerShim', async () => {
+    const port = await unusedPort('demo-run-jor-319')
+    const shimDir = path.join(os.homedir(), '.volta', 'bin')
+
+    const delegate = `
+      import { execFileSync } from 'node:child_process'
+      const [repoRoot, scriptPath, port] = process.argv.slice(1)
+      const env = { ...process.env, PORT: port }
+      execFileSync(scriptPath, { cwd: repoRoot, env, stdio: 'pipe', timeout: 120_000 })
+      let listening = true
+      try { await fetch(\`http://127.0.0.1:\${port}\`) } catch { listening = false }
+      process.stdout.write(JSON.stringify({ listening }))
+    `
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    if (existsSync(shimDir)) env.PATH = `${shimDir}:${env.PATH}`
+
+    try {
+      const out = execFileSync(
+        'node',
+        ['--input-type=module', '-e', delegate, '--', REPO_ROOT, SCRIPT_PATH, String(port)],
+        { env, stdio: 'pipe', timeout: 150_000 },
+      )
+      const { listening } = JSON.parse(out.toString())
+      expect(listening).toBe(false)
+    } finally {
+      unlinkSync(PHI_STATE_PATH)
+    }
+  }, 160_000)
 })
