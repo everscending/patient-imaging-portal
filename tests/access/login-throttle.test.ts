@@ -74,6 +74,16 @@ describe('login throttle', () => {
     expect(await isLoginLocked(atClient.client as never, 'eh', 'sr')).toBe(true)
   })
 
+  test('fails open (not locked) when the attempt store is unreachable', async () => {
+    const { isLoginLocked } = await loadThrottle()
+    const brokenClient = {
+      from: () => ({
+        select: () => ({ eq() { return this }, gte: () => Promise.resolve({ count: null, error: { message: 'store down' } }) }),
+      }),
+    }
+    expect(await isLoginLocked(brokenClient as never, 'eh', 'sr')).toBe(false)
+  })
+
   test('recordLoginAttempt writes email_hash, source_ref and succeeded', async () => {
     const { recordLoginAttempt } = await loadThrottle()
     const { client, insertRows } = makeClient(0)

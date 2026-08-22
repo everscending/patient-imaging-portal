@@ -41,14 +41,24 @@ async function countRecentFailures(
 }
 
 /** True when this email OR this source has too many recent failures — either
- *  alone locks (ADR-0008's per-reference-and-per-source shape). */
+ *  alone locks (ADR-0008's per-reference-and-per-source shape).
+ *
+ *  Fails OPEN: if the attempt store is unreachable this returns false rather
+ *  than throwing. A brute-force rate limiter must not take login down when its
+ *  bookkeeping table is unavailable — the password check remains authoritative. */
 export async function isLoginLocked(client: ServiceClient, hashedEmail: string, sourceRef: string): Promise<boolean> {
   const windowStart = new Date(Date.now() - config.loginLockoutMinutes * 60_000).toISOString()
-  const [byEmail, bySource] = await Promise.all([
-    countRecentFailures(client, 'email_hash', hashedEmail, windowStart),
-    countRecentFailures(client, 'source_ref', sourceRef, windowStart),
-  ])
-  return byEmail >= config.loginMaxAttempts || bySource >= config.loginMaxAttempts
+  try {
+    const [byEmail, bySource] = await Promise.all([
+      countRecentFailures(client, 'email_hash', hashedEmail, windowStart),
+      countRecentFailures(client, 'source_ref', sourceRef, windowStart),
+    ])
+    return byEmail >= config.loginMaxAttempts || bySource >= config.loginMaxAttempts
+  } catch {
+    // No PHI/credentials in the log line (SEC-6).
+    console.error(JSON.stringify({ event: 'login_throttle.read_failed', category: 'login_throttle_unavailable' }))
+    return false
+  }
 }
 
 export async function recordLoginAttempt(
