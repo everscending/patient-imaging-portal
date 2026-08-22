@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { ShareDialog } from '../../components/share/ShareDialog'
 import type { JSX } from 'react'
 
@@ -58,7 +59,15 @@ export function ReportView(props: ReportViewProps): JSX.Element {
           </div>
           <div className="pip-report-reference">
             <dt>Study reference</dt>
-            <dd>{report.studyDescription} ({report.studyId})</dd>
+            <dd>
+              {variant === 'portal' ? (
+                <Link data-testid="report-study-link" href={`/studies/${report.studyId}`}>
+                  {report.studyDescription} ({report.studyId})
+                </Link>
+              ) : (
+                <>{report.studyDescription} ({report.studyId})</>
+              )}
+            </dd>
           </div>
           <div className="pip-report-reference">
             <dt>Signing provider</dt>

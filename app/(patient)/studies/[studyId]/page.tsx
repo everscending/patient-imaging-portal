@@ -18,7 +18,20 @@ type StudyManifest = {
   clips: StudyClip[]
 }
 
-async function getStudy(studyId: string): Promise<StudyManifest> {
+// Signed reports only: RLS scopes rows to the caller, and the status filter
+// keeps a preliminary report from leaking even a "report exists" hint.
+async function signedReportId(token: string, studyId: string): Promise<string | null> {
+  const { data, error } = await anonClient(token)
+    .from('reports')
+    .select('id')
+    .eq('study_id', studyId)
+    .eq('status', 'signed')
+    .maybeSingle()
+  if (error || !data) return null
+  return (data as { id: string }).id
+}
+
+async function getStudy(studyId: string): Promise<StudyManifest & { reportId: string | null }> {
   const callerId = await resolveCallerId()
   const access = await guardPhiAccess(
     { kind: 'patient', userId: callerId ?? '' },
@@ -33,9 +46,12 @@ async function getStudy(studyId: string): Promise<StudyManifest> {
 
   const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value
   if (!token) redirect('/login')
-  const detail = await studyDetail(anonClient(token), studyId)
+  const [detail, reportId] = await Promise.all([
+    studyDetail(anonClient(token), studyId),
+    signedReportId(token, studyId),
+  ])
   if (!detail) notFound()
-  return detail as StudyManifest
+  return { ...(detail as StudyManifest), reportId }
 }
 
 export default async function StudyPage({ params }: { params: Promise<{ studyId: string }> }) {
@@ -44,6 +60,13 @@ export default async function StudyPage({ params }: { params: Promise<{ studyId:
   return (
     <main>
       <h1>{study.description}</h1>
+      {study.reportId ? (
+        <p>
+          <Link data-testid="study-report-link" href={`/reports/${study.reportId}`}>
+            View the signed report for this study
+          </Link>
+        </p>
+      ) : null}
       <ImageViewer images={study.images} signingFailed={study.imageSigningFailed} shareLinkTtlHours={config.shareLinkTtlHours} variant="portal" />
       {study.clips.length > 0 ? (
         <ul className="pip-study-clips" data-testid="study-clip-list">
