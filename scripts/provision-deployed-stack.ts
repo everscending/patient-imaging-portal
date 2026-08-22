@@ -28,10 +28,27 @@ const LEGACY_SEED_CHECKSUM_UPGRADES = new Map([
     '39ee3a9e535584d7d8386ecdb4b6ec248151f43becf99558644cabc7cc75b837',
   ],
 ])
-const SEED_DATA_CHECKSUM_UPGRADES = new Map([
+// EL-1's derivatives (JOR-243) changed db/seed/assets.ts and db/seed/rows.ts,
+// so they changed the seed identity. Named exactly, never recomputed: a
+// target that meant "whatever this checkout hashes to" would wave through
+// every future seed change as well.
+// tests/deploy/provisioning.test.ts pins it to the current checkout.
+export const EL1_DERIVATIVE_SEED_CHECKSUM = '3419c54b02d3d00d805b45ffe2414a2d78064bf894bce14f7e05e86f32517be3'
+
+// One entry per intentional seed change, each moving the marker a single
+// step. A stack several changes behind walks the chain in one run; a stack
+// whose marker is not on the chain still finds the provisioner closed.
+const SEED_DATA_CHECKSUM_UPGRADES = new Map<string, SeedDataUpgrade>([
   [
     '39ee3a9e535584d7d8386ecdb4b6ec248151f43becf99558644cabc7cc75b837',
+    {
+      to: 'f6cf03ef229486e9cdfeeda0d82b08efb091bda2b619e0a5d34420e73ba31693',
+      apply: upgradePerformanceClipToHundredFrames,
+    },
+  ],
+  [
     'f6cf03ef229486e9cdfeeda0d82b08efb091bda2b619e0a5d34420e73ba31693',
+    { to: EL1_DERIVATIVE_SEED_CHECKSUM, apply: upgradeDerivativeKeys },
   ],
 ])
 const MIGRATION_LOCK = 7_402_021
@@ -48,6 +65,19 @@ export type DeploymentConfig = {
 }
 
 type SeedMarker = { sourceSeed: string; checksum: string; seedNow: string } | null
+
+/** One step of the seed-identity chain: the marker it produces, and the data
+ *  change that earns it. Both run inside the same guarded transaction. */
+type SeedDataUpgrade = {
+  to: string
+  apply: (
+    sql: typeof runPsql,
+    marker: NonNullable<SeedMarker>,
+    markerChecksum: string,
+    checksum: string,
+    config: DeploymentConfig,
+  ) => void
+}
 
 function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`
@@ -157,15 +187,78 @@ end $$;`)
   return true
 }
 
-function upgradeSeedData(
+/** Every seeded image's thumbnail and every seeded clip's poster, EL-1's
+ *  derivatives (JOR-243). Additive: the source rows keep the keys they have,
+ *  and re-running finds the work already done rather than failing. */
+function upgradeDerivativeKeys(
   sql: typeof runPsql,
   marker: NonNullable<SeedMarker>,
   markerChecksum: string,
   checksum: string,
   config: DeploymentConfig,
-): boolean {
-  if (SEED_DATA_CHECKSUM_UPGRADES.get(markerChecksum) !== checksum) return false
+): void {
+  const rowSet = buildRowSet({
+    pool: generateAssetPool(config.seedSourceSeed),
+    sourceSeed: config.seedSourceSeed,
+    now: new Date(marker.seedNow),
+    minChangeNoticeHours: config.minChangeNoticeHours,
+  })
+  const derivatives = [
+    ...rowSet.images.map((image) => ['image', image.id, image.storage_key, image.thumb_key ?? ''] as const),
+    ...rowSet.cineClips.map((clip) => ['clip', clip.id, '', clip.poster_key] as const),
+  ]
+  if (rowSet.images.some((image) => !image.thumb_key)) {
+    throw new Error('provision-deployed-stack: seeded image without a thumbnail derivative')
+  }
 
+  sql(`do $$
+begin
+  perform 1 from app_deploy.seed_runs
+   where singleton
+     and source_seed = ${sqlLiteral(marker.sourceSeed)}
+     and checksum = ${sqlLiteral(markerChecksum)}
+   for update;
+  if not found then
+    raise exception 'seed marker changed while seed data was upgraded';
+  end if;
+
+  create temp table el1_derivative (kind text, id uuid primary key, storage_key text, derivative_key text) on commit drop;
+  insert into el1_derivative (kind, id, storage_key, derivative_key) values
+${derivatives.map(([kind, id, storageKey, key]) => `(${sqlLiteral(kind)}, ${sqlLiteral(id)}, ${sqlLiteral(storageKey)}, ${sqlLiteral(key)})`).join(',\n')};
+
+  -- Only rows still at their previous seed identity are rewritten: an image
+  -- whose still is the one this checkout generates and has no thumbnail yet,
+  -- and a clip whose poster is still its own frame zero.
+  update images i set thumb_key = d.derivative_key
+    from el1_derivative d
+   where d.kind = 'image' and i.id = d.id and i.storage_key = d.storage_key and i.thumb_key is null;
+  update cine_clips c set poster_key = d.derivative_key
+    from el1_derivative d
+   where d.kind = 'clip' and c.id = d.id
+     and c.poster_key = (select f.storage_key from cine_frames f where f.clip_id = c.id and f.frame_index = 0);
+
+  if exists (
+    select 1 from el1_derivative d join images i on i.id = d.id
+     where d.kind = 'image' and i.thumb_key is distinct from d.derivative_key
+  ) or exists (
+    select 1 from el1_derivative d join cine_clips c on c.id = d.id
+     where d.kind = 'clip' and c.poster_key is distinct from d.derivative_key
+  ) then
+    raise exception 'seeded imaging rows do not match this checkout''s derivative keys';
+  end if;
+
+  update app_deploy.seed_runs set checksum = ${sqlLiteral(checksum)}
+   where singleton and checksum = ${sqlLiteral(markerChecksum)};
+end $$;`)
+}
+
+function upgradePerformanceClipToHundredFrames(
+  sql: typeof runPsql,
+  marker: NonNullable<SeedMarker>,
+  markerChecksum: string,
+  checksum: string,
+  config: DeploymentConfig,
+): void {
   const rowSet = buildRowSet({
     pool: generateAssetPool(config.seedSourceSeed),
     sourceSeed: config.seedSourceSeed,
@@ -206,7 +299,6 @@ begin
      and patient_id = ${sqlLiteral(clip.patient_id)}
      and frame_count = 20
      and default_fps = ${clip.default_fps}
-     and poster_key = ${sqlLiteral(clip.poster_key)}
    for update;
   if not found or exists (
     select 1
@@ -227,7 +319,6 @@ ${addedFrames};
   update app_deploy.seed_runs set checksum = ${sqlLiteral(checksum)}
    where singleton and checksum = ${sqlLiteral(markerChecksum)};
 end $$;`)
-  return true
 }
 
 function readSeedMarker(sql: typeof runPsql): SeedMarker {
@@ -275,11 +366,11 @@ export async function provisionSeed(
     if (legacyChecksum && upgradeLegacySeedChecksum(sql, markerChecksum, legacyChecksum)) {
       markerChecksum = legacyChecksum
     }
-    if (
-      markerChecksum !== checksum &&
-      !upgradeSeedData(sql, marker, markerChecksum, checksum, config)
-    ) {
-      throw new Error('provision-deployed-stack: applied seed does not match this checkout')
+    while (markerChecksum !== checksum) {
+      const upgrade = SEED_DATA_CHECKSUM_UPGRADES.get(markerChecksum)
+      if (!upgrade) throw new Error('provision-deployed-stack: applied seed does not match this checkout')
+      upgrade.apply(sql, marker, markerChecksum, upgrade.to, config)
+      markerChecksum = upgrade.to
     }
     await uploadPool(storage, generateAssetPool(config.seedSourceSeed))
     console.log('provision-deployed-stack: seed rows already applied; assets verified')

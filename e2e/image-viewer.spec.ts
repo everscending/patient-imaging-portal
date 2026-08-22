@@ -162,6 +162,31 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
     }
   })
 
+  // EL-1 (JOR-243, ADR-0005): the next filmstrip image is warmed once the
+  // one on screen has finished — and not a moment sooner, because a prefetch
+  // racing the picture the reader is waiting for makes the page slower.
+  test('el1Prefetch_warmsTheNextImageOnlyAfterTheCurrentOneHasFinished', async function el1Prefetch_warmsTheNextImageOnlyAfterTheCurrentOneHasFinished({ page }) {
+    const heldFirstImage = holdImage(page, 'full-1.png')
+    const heldSecondImage = holdImage(page, 'full-2.png')
+    await openViewer(page)
+    try {
+      await expect.poll(heldFirstImage.requested).toBe(true)
+      await expect(page.getByTestId('image-loading')).toHaveText('Loading full image…')
+      await page.waitForTimeout(500)
+      expect(heldSecondImage.requested(), 'no prefetch may compete with the image on screen').toBe(false)
+
+      heldFirstImage.release()
+      await expect(page.getByTestId('image-full')).toHaveCSS('opacity', '1')
+      // No click: the next image is fetched because it is next, so selecting
+      // it later costs nothing.
+      await expect.poll(heldSecondImage.requested).toBe(true)
+      await expect(page.getByTestId('image-canvas')).toHaveAttribute('aria-busy', 'false')
+    } finally {
+      heldFirstImage.release()
+      heldSecondImage.release()
+    }
+  })
+
   test('nullThumbnail_showsLabelledLoadingNeverBrokenImage', async function nullThumbnail_showsLabelledLoadingNeverBrokenImage({ page }) {
     const heldSecondImage = holdImage(page, 'full-2.png')
     await openViewer(page)
@@ -302,7 +327,10 @@ test.describe('JOR-211 image viewer acceptance and mandatory adversarial coverag
 
   test('cineClipLink_visibleLabelledAndKeyboardReachesCineViewer', async function cineClipLink_visibleLabelledAndKeyboardReachesCineViewer({ page }) {
     await openViewer(page)
-    const clipLink = page.getByTestId('study-clip-link')
+    // The seeded study carries a second clip since JOR-221 added the
+    // performance fixture, so this names the clip it then navigates to
+    // rather than whichever link happens to come first.
+    const clipLink = page.locator(`[data-testid="study-clip-link"][href$="/clips/${E2_SEEDED_CLIP_ID}"]`)
     await expect(clipLink).toBeVisible()
     await expect(clipLink).toHaveAccessibleName('Cine clip — 100 frames')
     const box = await clipLink.boundingBox()

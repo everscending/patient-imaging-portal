@@ -209,6 +209,45 @@ describe('AC: the TTL comes from config.signedUrlTtlSeconds, never a literal or 
   })
 })
 
+describe('mandatory adversarial: EL-1 derivative keys go through this same minter under the same contract', () => {
+  // A thumbnail or poster key is a pool key like any other (JOR-243). It is
+  // minted by this function, at this TTL, and comes back in the one SignedKey
+  // shape — a derivative path with a shape of its own, or one that threw on a
+  // derivative that was never uploaded, would break EC-2's source contract
+  // for every caller that reads it.
+  test('derivativeKeysReturnTheSameSignedKeyShapeAtTheSameTtl', async function derivativeKeysReturnTheSameSignedKeyShapeAtTheSameTtl() {
+    putPresentObject('still-key')
+    putPresentObject('thumb-key')
+    putPresentObject('poster-key')
+    const { signStorageKeys } = await loadSigningModule()
+
+    const result = await signStorageKeys(['still-key', 'thumb-key', 'poster-key'])
+
+    expect(createSignedUrlsMock).toHaveBeenCalledTimes(1)
+    expect(createSignedUrlsMock).toHaveBeenCalledWith(['still-key', 'thumb-key', 'poster-key'], 300)
+    for (const entry of result) {
+      expect(Object.keys(entry).sort()).toEqual(['available', 'key', 'url'])
+    }
+    expect(result).toEqual([
+      { key: 'still-key', url: 'https://signed.example/still-key?expiresIn=300', available: true },
+      { key: 'thumb-key', url: 'https://signed.example/thumb-key?expiresIn=300', available: true },
+      { key: 'poster-key', url: 'https://signed.example/poster-key?expiresIn=300', available: true },
+    ])
+  })
+
+  test('aDerivativeThatWasNeverUploadedComesBackUnavailableNeverThrows', async function aDerivativeThatWasNeverUploadedComesBackUnavailableNeverThrows() {
+    putPresentObject('still-key')
+    const { signStorageKeys } = await loadSigningModule()
+
+    // The source is present, its derivative is not — the case a stack seeded
+    // before EL-1 and not yet re-provisioned is actually in.
+    await expect(signStorageKeys(['still-key', 'thumb-not-uploaded'])).resolves.toEqual([
+      { key: 'still-key', url: 'https://signed.example/still-key?expiresIn=300', available: true },
+      { key: 'thumb-not-uploaded', url: null, available: false },
+    ])
+  })
+})
+
 describe('mandatory adversarial: a key for an object that does not exist never throws', () => {
   test('missingObjectResolvesNullUnavailableInsteadOfThrowing', async function missingObjectResolvesNullUnavailableInsteadOfThrowing() {
     const { signStorageKeys } = await loadSigningModule()

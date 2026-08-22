@@ -56,6 +56,24 @@ export function ImageViewer({ images, initialImageId, signingFailed, shareLinkTt
     if (!images.some((image) => image.id === selectedImageId)) setSelectedImageId(firstImageId)
   }, [firstImageId, images, selectedImageId])
 
+  // EL-1 (ADR-0005): once the image on screen has finished, warm the next one
+  // in the filmstrip so stepping forward is immediate. It waits for the
+  // current image deliberately — a prefetch that competes with the picture
+  // the reader is waiting for makes the page slower, not faster.
+  //
+  // There is nothing to prefetch until the authorized manifest has arrived:
+  // the only URLs this component can reach are the ones already handed to it
+  // as props, so a prefetch can never precede the grant that minted them.
+  useEffect(() => {
+    if (fullImageState !== 'loaded') return
+    const position = images.findIndex((image) => image.id === selectedImageId)
+    const next = position === -1 ? undefined : images[position + 1]
+    if (!next?.url) return
+    const prefetch = new Image()
+    prefetch.fetchPriority = 'low'
+    prefetch.src = next.url
+  }, [fullImageState, images, selectedImageId])
+
   // URLs are issued by the study API. Refresh the server-rendered manifest
   // shortly before the current selection expires; this component never signs
   // or constructs an imaging URL itself.
@@ -146,6 +164,7 @@ export function ImageViewer({ images, initialImageId, signingFailed, shareLinkTt
             alt=""
             className="pip-viewer-image pip-viewer-thumb"
             data-testid="image-thumbnail"
+            fetchPriority="high"
             height={selected.height}
             onError={() => setFailedThumbnailKey(selectedThumbnailKey)}
             src={selected.thumbUrl}
@@ -158,6 +177,8 @@ export function ImageViewer({ images, initialImageId, signingFailed, shareLinkTt
             alt={`Study image ${selected.ordinal}`}
             className="pip-viewer-image pip-viewer-full"
             data-testid="image-full"
+            decoding="async"
+            fetchPriority="high"
             height={selected.height}
             onError={() => setFullImageLoad({ key: selectedAssetKey, state: 'error' })}
             onLoad={() => setFullImageLoad({ key: selectedAssetKey, state: 'loaded' })}

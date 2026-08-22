@@ -390,7 +390,9 @@ const CINE_CLIPS = [
     study_id: E2_SEEDED_STUDY_ID,
     frame_count: 100,
     default_fps: 12,
-    poster_key: null,
+    // EL-1's poster derivative (JOR-243), so the deployed seed's poster path
+    // is exercised end to end here too.
+    poster_key: 'poster-1.png',
   },
   {
     id: E2_PERFORMANCE_CLIP_ID,

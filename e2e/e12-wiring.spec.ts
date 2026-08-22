@@ -144,7 +144,9 @@ test.describe.serial('JOR-246 E12 phone-width, keyboard and coverage wiring', ()
 
     // Cine viewing — reached via the study page's own clip link, not a direct goto
     const clipId = requireSeededFixture(E2_SEEDED_CLIP_ID, 'cine clip')
-    const clipLink = page.getByTestId('study-clip-link')
+    // The seeded study has carried a second clip since JOR-221's performance
+    // fixture, so the link is named by the clip this flow then opens.
+    const clipLink = page.locator(`[data-testid="study-clip-link"][href$="/clips/${clipId}"]`)
     await tabTo(page, clipLink)
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL(new RegExp(`/studies/${studyId}/clips/${clipId}$`))

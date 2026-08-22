@@ -340,8 +340,12 @@ describe('repo-wide guards', () => {
     // to a child. JOR-295's provisioner is a process-entry boundary that reads
     // only its PROVISION_DEPLOYED_STACK bootstrap flag; application
     // configuration remains owned by lib/config.ts.
+    // JOR-221's playback check reads one switch of its own, PLAYBACK_LIVE,
+    // choosing between the local stack and the deployed one; it is a test
+    // harness in the same sense as the entries around it.
     expect(hits.sort()).toEqual([
       'e2e/fixtures/start-test-server.mjs',
+      'e2e/playback-frames.spec.ts',
       'lib/config.ts',
       'scripts/provision-deployed-stack.ts',
       'scripts/run-next.mjs',

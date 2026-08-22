@@ -481,6 +481,56 @@ describe('mandatory adversarial: frames preserve their declared indexing and kee
     ])
   })
 
+  // EL-1 (JOR-243). The poster is the first thing the cine viewer can draw,
+  // so it must arrive with the manifest rather than a round later, and it
+  // must come from the same minter as the frames — one batch, one TTL.
+  test('clipManifestCarriesThePosterInTheSameSigningBatchAsTheFrames', async function clipManifestCarriesThePosterInTheSameSigningBatchAsTheFrames() {
+    const { clipManifest } = await import('../../lib/imaging/studies')
+    const result = await clipManifest(
+      client({
+        cine_clips: [{
+          id: clipId,
+          study_id: studyId,
+          frame_count: 2,
+          default_fps: 12,
+          poster_key: 'poster-secret',
+          studies: { id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit },
+        }],
+        cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-a' }, { clip_id: clipId, frame_index: 1, storage_key: 'frame-b' }],
+      }),
+      studyId,
+      clipId,
+    )
+
+    expect(result).toMatchObject({ posterUrl: 'https://signed.example/poster-secret' })
+    expect(signingMock).toHaveBeenCalledTimes(1)
+    expect(signingMock).toHaveBeenCalledWith(['poster-secret', 'frame-a', 'frame-b'])
+    expect(JSON.stringify(result)).not.toContain('poster_key')
+  })
+
+  test('clipManifestPosterIsNullWithoutADerivativeOrWhenItsObjectIsMissing', async function clipManifestPosterIsNullWithoutADerivativeOrWhenItsObjectIsMissing() {
+    const { clipManifest } = await import('../../lib/imaging/studies')
+    const clip = (posterKey: string | null) => ({
+      cine_clips: [{
+        id: clipId,
+        study_id: studyId,
+        frame_count: 1,
+        default_fps: 12,
+        poster_key: posterKey,
+        studies: { id: studyId, description: 'Owned study', visit_id: 'visit-1', visits: completedVisit },
+      }],
+      cine_frames: [{ clip_id: clipId, frame_index: 0, storage_key: 'frame-a' }],
+    })
+
+    await expect(clipManifest(client(clip(null)), studyId, clipId)).resolves.toMatchObject({ posterUrl: null })
+    // A stack seeded before EL-1's derivatives were uploaded: the row names a
+    // poster, storage has no object for it. The frames still sign.
+    await expect(clipManifest(client(clip('missing-object')), studyId, clipId)).resolves.toMatchObject({
+      posterUrl: null,
+      frames: [{ index: 0, url: 'https://signed.example/frame-a', available: true }],
+    })
+  })
+
   test('responsesContainNoStorageKeysOrExtraPhiFields', async function responsesContainNoStorageKeysOrExtraPhiFields() {
     const { studyDetail } = await import('../../lib/imaging/studies')
     const result = await studyDetail(

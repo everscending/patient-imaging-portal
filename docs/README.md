@@ -40,6 +40,8 @@ linked below — a link with nothing behind it is worse than no link.
 ## Quality evidence
 
 - [Core logic coverage](coverage.md)
+- [Performance baseline](performance-baseline.md) — the fixed pre-elective
+  measurement EL-1 is measured against.
 
 ## Agent operating docs (`docs/agents/`)
 

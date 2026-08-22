@@ -22,6 +22,7 @@ function isClip(value: unknown): value is WireClip {
     typeof clip.frameCount === 'number' &&
     typeof clip.defaultFps === 'number' &&
     typeof clip.expiresAt === 'string' &&
+    (clip.posterUrl === undefined || clip.posterUrl === null || typeof clip.posterUrl === 'string') &&
     Array.isArray(clip.frames) &&
     clip.frames.every(isFrame)
   )
@@ -31,6 +32,7 @@ export function normalizeClipPayload(value: unknown): Clip | null {
   if (!isClip(value)) return null
   return {
     ...value,
+    posterUrl: value.posterUrl ?? null,
     frames: value.frames.map((frame) => ({
       index: frame.index,
       url: frame.available ? frame.url : null,

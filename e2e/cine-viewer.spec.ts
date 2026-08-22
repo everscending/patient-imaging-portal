@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { expect, test } from '@playwright/test'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Page, Route } from '@playwright/test'
 import {
   acquireIdentityFixtureLock,
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
@@ -27,14 +28,80 @@ type Manifest = {
     | { index: number; url: string; available: true }
     | { index: number; url?: null; available: false }
   >
+  posterUrl?: string
 }
 
-function manifest(frames: Manifest['frames'], defaultFps = 17): Manifest {
-  return { id: CLIP_ID, frameCount: frames.length, defaultFps, expiresAt: '2026-08-16T12:00:00.000Z', frames }
+function manifest(frames: Manifest['frames'], defaultFps = 17, posterUrl?: string): Manifest {
+  return { id: CLIP_ID, frameCount: frames.length, defaultFps, expiresAt: '2026-08-16T12:00:00.000Z', frames, posterUrl }
 }
 
 let identityFixtureLockToken: string | undefined
 let seededPatient: SeededPatient
+
+// EL-1 (JOR-243). The bound the viewer states for itself, read from the
+// component rather than copied here, so the two can never drift apart.
+function viewerConstant(name: string): number {
+  return Number(
+    new RegExp(`export const ${name} = (\\d+)`).exec(
+      readFileSync(path.join(REPO_ROOT, 'components/imaging/CineViewer.tsx'), 'utf8'),
+    )?.[1],
+  )
+}
+
+const CINE_FRAME_WINDOW = viewerConstant('CINE_FRAME_WINDOW')
+
+// The viewer's own fetch for the frame on screen and the `<img>` element
+// showing it are the same URL, so a browser that does not coalesce them can
+// account for one extra request. Nothing else is allowed above the window.
+const FRAME_WINDOW_ALLOWANCE = 1
+
+// The poster shares the frames' URL shape so one route observes both: a
+// derivative is just another storage object to the viewer.
+const FRAME_URL_PATTERN = '**/el1-frame-*.png'
+const POSTER_URL = '/el1-frame-poster.png'
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAG7buVgAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+function heldFrameClip(frameCount: number): Manifest['frames'] {
+  return Array.from({ length: frameCount }, (_, index) => ({
+    index,
+    available: true as const,
+    url: `/el1-frame-${index}.png`,
+  }))
+}
+
+/** Intercepts every frame request and holds it until released, so "how many
+ *  are in flight at once" is directly observable rather than inferred. */
+function holdFrames(page: Page): {
+  started: () => number
+  startedUrls: () => string[]
+  inFlight: () => number
+  release: (match?: (url: string) => boolean) => Promise<void>
+} {
+  const startedUrls: string[] = []
+  const pending: Route[] = []
+  void page.route(FRAME_URL_PATTERN, (route) => {
+    startedUrls.push(route.request().url())
+    pending.push(route)
+  })
+  return {
+    started: () => startedUrls.length,
+    startedUrls: () => [...startedUrls],
+    inFlight: () => pending.length,
+    // With no filter every held request is answered; with one, only the
+    // matching requests are, so "this object arrived and that one has not"
+    // is an observable state rather than a race.
+    release: async (match?: (url: string) => boolean) => {
+      const releasing = match ? pending.filter((route) => match(route.request().url())) : [...pending]
+      for (const route of releasing) {
+        pending.splice(pending.indexOf(route), 1)
+        await route.fulfill({ contentType: 'image/png', body: ONE_PIXEL_PNG })
+      }
+    },
+  }
+}
 
 async function fakeServerUrl(): Promise<string> {
   const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
@@ -141,6 +208,185 @@ test.describe.serial('cine viewer', () => {
     const frame = await page.locator('.cine-viewer__frame').boundingBox()
     const controls = await page.locator('.cine-controls').boundingBox()
     expect(controls!.y).toBeGreaterThanOrEqual(frame!.y + frame!.height)
+  })
+
+  test('mandatory adversarial: hundredFrameClip_keepsFramesInFlightInsideTheStatedWindow', async ({ page }) => {
+    await signInLinkedPatient(page.request, seededPatient)
+    expect(CINE_FRAME_WINDOW).toBeGreaterThan(0)
+    expect(CINE_FRAME_WINDOW).toBeLessThan(100)
+    const frames = holdFrames(page)
+
+    await openClip(page, manifest(heldFrameClip(100), 1))
+
+    // Phase one — the frame on screen is fetched alone. Nothing else may
+    // compete with the first frame a reader is waiting for.
+    await expect.poll(frames.started, { timeout: 15_000 }).toBeGreaterThan(0)
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+    expect(frames.inFlight()).toBeLessThanOrEqual(1 + FRAME_WINDOW_ALLOWANCE)
+
+    // Phase two — with the first frame settled, the viewer reads ahead of the
+    // playhead, and stops at the window it states. A viewer that asked for
+    // every frame at once would sit at 100 here.
+    await frames.release()
+    await expect.poll(frames.inFlight, { timeout: 15_000 }).toBeGreaterThan(1)
+    expect(frames.inFlight()).toBeLessThanOrEqual(CINE_FRAME_WINDOW + FRAME_WINDOW_ALLOWANCE)
+    expect(frames.started()).toBeLessThan(100)
+
+    // And it keeps draining: each released window is refilled, never
+    // exceeded, until the whole clip is loaded and playback is ready.
+    for (let round = 0; round < 60 && frames.started() < 100; round++) {
+      await frames.release()
+      await page.waitForTimeout(50)
+      expect(frames.inFlight()).toBeLessThanOrEqual(CINE_FRAME_WINDOW + FRAME_WINDOW_ALLOWANCE)
+    }
+    expect(frames.started()).toBe(100)
+    await frames.release()
+    await expect(page.getByTestId('cine-viewer')).toHaveAttribute('data-playback-ready', 'true', { timeout: 30_000 })
+    // Every frame is loaded and pinned decoded, which is what lets playback
+    // reach each one in time. The cache is bounded by the clip: one entry per
+    // frame, never more.
+    await expect(page.getByTestId('cine-viewer')).toHaveAttribute('data-frame-cache-size', '100')
+    await expect(page.getByTestId('cine-play')).toBeEnabled()
+  })
+
+  test('mandatory adversarial: loadedFrames_areCachedInTheViewerAndNeverRefetchedOnRevisit', async ({ page }) => {
+    await signInLinkedPatient(page.request, seededPatient)
+    const frames = holdFrames(page)
+    await openClip(page, manifest(heldFrameClip(4), 1))
+    for (let round = 0; round < 10 && (frames.started() < 4 || frames.inFlight() > 0); round++) {
+      await frames.release()
+      await page.waitForTimeout(100)
+    }
+    await frames.release()
+    await expect(page.getByTestId('cine-viewer')).toHaveAttribute('data-frame-cache-size', '4', { timeout: 15_000 })
+    const afterFirstPass = frames.started()
+    expect(afterFirstPass).toBeLessThanOrEqual(4 + FRAME_WINDOW_ALLOWANCE)
+
+    // Ground already covered costs nothing: stepping back and forth over
+    // cached frames issues no request at all.
+    for (const control of ['cine-next', 'cine-next', 'cine-prev', 'cine-next', 'cine-prev', 'cine-prev']) {
+      await page.getByTestId(control).click()
+    }
+    await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 1 of 4')
+    expect(frames.started()).toBe(afterFirstPass)
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toHaveCount(0)
+  })
+
+  test('mandatory adversarial: failedFrameFetches_neverBecomeGapsTheManifestDidNotDeclare', async ({ page }) => {
+    await signInLinkedPatient(page.request, seededPatient)
+    // Every frame is declared available and every fetch for it fails. The
+    // viewer may show nothing, but it may never invent a gap: gaps come from
+    // the manifest, never from a failed or slow fetch (EC-2).
+    await page.route(FRAME_URL_PATTERN, (route) => route.fulfill({ status: 404, body: '' }))
+    await openClip(page, manifest(heldFrameClip(6), 1))
+
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+    await expect(page.getByTestId('cine-frame-gap')).toHaveCount(0)
+    await expect(page.locator('.cine-controls__gap-markers i')).toHaveCount(0)
+    await expect(page.getByText('frames unavailable — playback continues')).toHaveCount(0)
+    await expect(page.getByRole('slider', { name: 'Frame scrubber' })).toHaveAttribute('aria-valuetext', 'Frame 1 of 6')
+    for (const control of ['cine-prev', 'cine-next', 'cine-fps']) {
+      await expect(page.getByTestId(control)).toBeEnabled()
+    }
+    await page.getByTestId('cine-next').click()
+    await expect(page.getByTestId('cine-frame-gap')).toHaveCount(0)
+
+    // The same six frames, one of them declared unavailable: now — and only
+    // now — there is a gap, with the denominator counted from the manifest.
+    await openClip(page, manifest(
+      heldFrameClip(6).map((frame) => (frame.index === 2 ? { index: 2, available: false as const } : frame)),
+      1,
+    ))
+    await expect(page.getByText('1 of 6 frames unavailable — playback continues', { exact: true })).toBeVisible()
+    await expect(page.locator('.cine-controls__gap-markers i')).toHaveCount(1)
+    await page.getByRole('slider', { name: 'Frame scrubber' }).fill('2')
+    await expect(page.getByTestId('cine-frame-gap')).toHaveText('Frame 2 unavailable')
+  })
+
+  test('mandatory adversarial: noFrameOrPosterFetch_startsBeforeTheAuthorizedManifestReturns', async ({ page }) => {
+    await signInLinkedPatient(page.request, seededPatient)
+    const frames = holdFrames(page)
+    let releaseManifest = (): void => {}
+    const manifestReleased = new Promise<void>((resolve) => { releaseManifest = resolve })
+    const apiPattern = `**/api/studies/${STUDY_ID}/clips/${CLIP_ID}`
+    await page.unroute(apiPattern)
+    await page.route(apiPattern, async (route) => {
+      await manifestReleased
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify(manifest(heldFrameClip(8), 1, POSTER_URL)),
+      })
+    })
+
+    await page.goto(`/studies/${STUDY_ID}/clips/${CLIP_ID}`)
+    await expect(page.getByText('Loading cine clip…', { exact: true })).toBeVisible()
+    // The grant has not returned, so there is no URL to prefetch and nothing
+    // may be requested — a viewer that guessed at storage URLs would show up
+    // here as a request before the manifest it was supposedly built from.
+    await page.waitForTimeout(750)
+    expect(frames.started()).toBe(0)
+
+    releaseManifest()
+    await expect(page.getByTestId('cine-viewer')).toBeVisible()
+    // Both derivatives and frames wait for the grant, and both follow it.
+    await expect.poll(() => frames.startedUrls().some((url) => url.endsWith(POSTER_URL)), { timeout: 15_000 }).toBe(true)
+    expect(frames.startedUrls().some((url) => url.includes('el1-frame-0.png'))).toBe(true)
+  })
+
+  test('el1Poster_drawsBeforeTheFirstFrameArrivesAndAFailedPosterNeverBreaksTheViewer', async ({ page }) => {
+    await signInLinkedPatient(page.request, seededPatient)
+    const frames = holdFrames(page)
+    await openClip(page, manifest(heldFrameClip(4), 1, POSTER_URL))
+
+    // The poster is a small derivative of the first frame, so it is what the
+    // reader sees while the frame itself is still on the wire.
+    const poster = page.getByTestId('cine-poster')
+    await expect(poster).toHaveAttribute('src', POSTER_URL)
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+
+    // Only the poster is answered: the frames are still on the wire, and the
+    // reader is already looking at the picture rather than an empty box.
+    await frames.release((url) => url.endsWith(POSTER_URL))
+    await expect(poster).toBeVisible()
+    await expect
+      .poll(() => poster.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0))
+      .toBe(true)
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+    await expect(page.locator('.cine-viewer__frame img')).toHaveCount(2)
+
+    // Once the frame itself is on screen the poster steps aside.
+    for (let round = 0; round < 10 && frames.inFlight() > 0; round++) {
+      await frames.release()
+      await page.waitForTimeout(100)
+    }
+    await expect(poster).toHaveCount(0, { timeout: 15_000 })
+    await expect(page.locator('.cine-viewer__frame img')).toHaveCount(1)
+
+    // A poster whose object is gone is a missing decoration, never a broken
+    // image and never a failed clip. The frames stay held throughout, so the
+    // poster's own failure is what removes it — not the frame arriving.
+    await page.unroute(FRAME_URL_PATTERN)
+    const heldWithoutPoster: Route[] = []
+    await page.route(FRAME_URL_PATTERN, async (route) => {
+      if (route.request().url().endsWith(POSTER_URL)) await route.fulfill({ status: 404, body: '' })
+      else heldWithoutPoster.push(route)
+    })
+    await openClip(page, manifest(heldFrameClip(4), 1, POSTER_URL))
+
+    await expect(page.getByRole('status', { name: 'Loading frame…' })).toBeVisible()
+    await expect(page.getByTestId('cine-poster')).toHaveCount(0, { timeout: 15_000 })
+    await expect(page.locator('.cine-viewer__frame img')).toHaveCount(1)
+    await expect(page.getByTestId('cine-frame-gap')).toHaveCount(0)
+
+    // Each released frame opens the window onto the next, so the clip drains
+    // over several rounds rather than one.
+    for (let round = 0; round < 10; round++) {
+      for (const route of heldWithoutPoster.splice(0, heldWithoutPoster.length)) {
+        await route.fulfill({ contentType: 'image/png', body: ONE_PIXEL_PNG })
+      }
+      await page.waitForTimeout(100)
+    }
+    await expect(page.getByTestId('cine-viewer')).toHaveAttribute('data-playback-ready', 'true', { timeout: 15_000 })
   })
 
   test('mandatory adversarial: keyboardAccessibleTouchSizedAt390AndNoHardcodedHex', async ({ page }) => {
