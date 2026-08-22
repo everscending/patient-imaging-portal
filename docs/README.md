@@ -5,9 +5,9 @@ worktree. It links to each document; it does not restate a policy, a
 parameter, or a number that document already states — see that document for
 the fact itself.
 
-The EL-1 benchmark and recorded demo each belong here once their own ticket
-lands and creates the file. Neither exists in this worktree yet, so neither is
-linked below — a link with nothing behind it is worse than no link.
+The recorded demo belongs here once its own ticket lands and creates the file.
+It does not exist in this worktree yet, so it is not linked below — a link with
+nothing behind it is worse than no link.
 
 ## Policies
 
@@ -42,6 +42,9 @@ linked below — a link with nothing behind it is worse than no link.
 - [Core logic coverage](coverage.md)
 - [Performance baseline](performance-baseline.md) — the fixed pre-elective
   measurement EL-1 is measured against.
+- [EL-1 before-and-after benchmark](el1-benchmark.md) — the same workload
+  before and after EL-1, the techniques behind the difference, and the
+  Priority-1 regression re-run.
 
 ## Agent operating docs (`docs/agents/`)
 

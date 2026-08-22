@@ -70,6 +70,7 @@ run_logic() {
   step VITEST_COVERAGE_CONTRACT npx vitest run --project unit tests/coverage-config.test.ts
   step VITEST_COVERAGE npx vitest run --coverage --project unit --project integration
   step VITEST_PERFORMANCE npx vitest run --project unit tests/performance/performance-contract.test.ts
+  step VITEST_EL1_BENCHMARK npx vitest run --project unit tests/performance/el1-benchmark-contract.test.ts
 }
 
 run_api() {
@@ -94,6 +95,7 @@ run_ui() {
   step PLAYWRIGHT_BOOK_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/book.spec.ts
   step PLAYWRIGHT_PROVIDER_SCHEDULE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/provider-schedule.spec.ts
   step PLAYWRIGHT_PERFORMANCE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/playback-frames.spec.ts
+  step PLAYWRIGHT_EL1_REGRESSION_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/el1-regression.spec.ts
   step PLAYWRIGHT_EMPTY_STATES_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/empty-states.spec.ts
   step PLAYWRIGHT_RESPONSIVE_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/responsive.spec.ts
   step PLAYWRIGHT_ACCESSIBILITY_REPORT node scripts/validate-playwright-report.mjs test-results/playwright.json e2e/accessibility.spec.ts
