@@ -26,6 +26,7 @@ import {
   E2_PERFORMANCE_CLIP_ID,
   E2_SEEDED_STUDY_ID,
 } from './fixtures/fake-auth-server'
+import { resetFixtures } from './fixtures/a11y-helpers'
 import {
   acquireIdentityFixtureLock,
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
@@ -287,6 +288,11 @@ test.describe.serial('JOR-235 E11 live wiring against the running app', () => {
     identityFixtureLockToken = await acquireIdentityFixtureLock()
   })
   test.afterAll(async () => releaseIdentityFixtureLock(identityFixtureLockToken))
+  // A previous lock holder may leave the seeded patient claimed by its own
+  // account, which registerSignInAndVerify then hits as claimed_by_other →
+  // an opaque 400 (JOR-265's full-suite runs at position 113/289). Reset
+  // like e13-wiring does, so this spec verifies from a known state.
+  test.beforeEach(async ({ request }) => resetFixtures(request))
 
   test('acceptance: every route the six recorded rows time is one the running app actually serves', async ({ request }) => {
     await registerSignInAndVerify(request)
