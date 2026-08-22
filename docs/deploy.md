@@ -198,18 +198,30 @@ edited after that — when it closes with the report's own figures.
 
 | Field | Value |
 | --- | --- |
-| Window start (UTC) | 2026-08-22T14:58:21Z |
+| Window start (UTC) | 2026-08-22T17:04:38Z |
 | Base URL | https://patient-imaging-portal.vercel.app |
 | Interval | 60s |
-| Log | `tests/artifacts/uptime-check.log` (gitignored; not committed) |
-| Poller PID | 58519 |
+| Log | session scratch directory (outside the repo; see note below) |
+| Poller | harness-tracked background task |
 
-Window close, appended when the window ends, from
-`scripts/uptime-check.sh report tests/artifacts/uptime-check.log`:
+Three earlier poller attempts on 2026-08-22 (starts 14:58:21Z, 16:11:04Z and
+17:02:45Z) were lost before their windows could close: the first's gitignored
+log was removed from `tests/artifacts/` by concurrent tooling on the shared
+machine (its own session's report before shutdown read 74 checks, 100%
+healthy, 14:58:21Z–16:11:52Z — corroborating but not this record's evidence),
+and the next two were reaped as detached child processes seconds after their
+starting shell exited. The recorded window below is the fourth attempt, run
+as a session-tracked task with its log outside the repository so no cleanup
+could reach it. Because that log lives outside the repository, this table —
+produced by `scripts/uptime-check.sh report` against it — is the durable
+record of the window.
+
+Window close, appended when the window ended, from
+`scripts/uptime-check.sh report <session-scratch>/uptime-check-v4.log`:
 
 | Window end (UTC) | Total checks | Reachable and healthy | Reachable but degraded | Unreachable | Availability |
 | --- | --- | --- | --- | --- | --- |
-| _pending_ | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| 2026-08-22T17:45:53Z | 42 | 42 | 0 | 0 | 100.00% |
 
 ## E0 wiring confirmation (JOR-217)
 
