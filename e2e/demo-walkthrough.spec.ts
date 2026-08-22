@@ -13,7 +13,7 @@
 // winner is decided by the database, not by this file.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
@@ -22,12 +22,14 @@ import {
   E2_BOOK_SERVICE_ID,
   E2_PROVIDER_EMAIL,
   E2_PROVIDER_ID,
+  E2_OTHER_PROVIDER_ID,
   E2_PROVIDER_PASSWORD,
   E2_SEEDED_CLIP_ID,
   E2_SEEDED_REPORT_ID,
   E2_SEEDED_STUDY_ID,
   E5_CRON_SECRET,
 } from './fixtures/fake-auth-server'
+import { fixtureUrl } from './fixtures/a11y-helpers'
 import {
   acquireIdentityFixtureLock,
   IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
@@ -56,8 +58,8 @@ const IMAGE_VIEWER_READY_TIMEOUT_MS = 30_000
 // The second seeded provider. Their grid carries the slots the booking and
 // race segments consume, which leaves E2_PROVIDER_ID's own grid intact for
 // the reschedule segment — a reschedule may only move within one provider.
-const RACE_PROVIDER_ID = '66446644-6644-4644-8644-664466446644'
-const RACE_PROVIDER_NAME = 'Dr. Riley Patel'
+const RACE_PROVIDER_ID = E2_OTHER_PROVIDER_ID
+const RACE_PROVIDER_NAME = 'Dr. Riley Patel' // E2_OTHER_PROVIDER's seeded full_name (not exported)
 
 type StepMark = { step: string; atMs: number }
 type ReminderRun = { due: number; sent: number; skipped: number; failed: number }
@@ -74,11 +76,6 @@ let deliveredByLogTransport = 0
 async function demoStep(name: string, body: () => Promise<void>): Promise<void> {
   marks.push({ step: name, atMs: Date.now() - recordingStartedAt })
   await test.step(name, body)
-}
-
-async function fixtureUrl(): Promise<string> {
-  const raw = await readFile(path.join(REPO_ROOT, '.local', 'fake-auth-server.json'), 'utf8')
-  return (JSON.parse(raw) as { url: string }).url
 }
 
 async function openSlots(request: APIRequestContext, providerId: string): Promise<Slot[]> {
