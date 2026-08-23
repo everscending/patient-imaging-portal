@@ -324,16 +324,23 @@ test.describe.serial('JOR-261 — the recorded DEL-6 demo walkthrough', () => {
       const target = (await openSlots(page.request, E2_PROVIDER_ID))[0]
       expect(target, 'the seeded provider must still offer a slot to move into').toBeTruthy()
 
+      // Slot lists are per-appointment-provider, so the card must belong to
+      // the seeded provider the target slot comes from — not whichever
+      // walkthrough-booked appointment happens to sort first.
       const card = page.locator('[data-testid="appointment-item"]:visible')
         .filter({ has: page.getByTestId('appointment-reschedule') })
+        .filter({ hasText: 'Dr. Avery Chen' })
         .first()
       await card.getByTestId('appointment-reschedule').click()
-      await card.locator(`[data-testid="slot-item"][data-slot-id="${target!.id}"]`).click()
+      // Opening the panel hides the card's Reschedule button, so the
+      // has-reschedule card filter no longer matches; anchor on the panel.
+      const panel = page.getByTestId('appointment-reschedule-panel')
+      await panel.locator(`[data-testid="slot-item"][data-slot-id="${target!.id}"]`).click()
       const [rescheduled] = await Promise.all([
         page.waitForResponse((candidate) =>
           candidate.request().method() === 'PATCH'
           && new URL(candidate.url()).pathname.startsWith('/api/appointments/')),
-        card.getByTestId('appointment-reschedule-confirm').click(),
+        page.getByTestId('appointment-reschedule-confirm').click(),
       ])
       expect(rescheduled.status(), await rescheduled.text()).toBe(200)
     })

@@ -238,3 +238,67 @@ server on the ephemeral port above, never 4310, to avoid claiming the port
 this very test run was already using (§9). The test Postgres harness
 (`pip-testpg`) published its own ephemeral host port, read back by
 `tests/setup/postgres.ts`, for every gate tier above that touched it.
+
+## E0 wiring confirmation (JOR-217)
+
+Appended by `e2e/e0-wiring.spec.ts`, the wiring ticket's own live check —
+never edited after the fact, one entry per run.
+
+| Timestamp (UTC) | Commit | Gate tiers (exit code) | Scratch clone's ui-tier port | Deployed URL check |
+| --- | --- | --- | --- | --- |
+| 2026-08-23T03:44:14.586Z | `3b17a191e5714718653deeb74b0cd64b8797d62d` | ui: 1 (cumulative: logic + api + product Playwright + E2 report validation) | 61132 | https://patient-imaging-portal.vercel.app — HTTP 200, matches origin/main HEAD: true |
+
+Running skeleton checked on `config.port` (`PORT=4310` in this environment,
+ADR-0013 default); the scratch clone's own nested `ui` tier ran its Next
+server on the ephemeral port above, never 4310, to avoid claiming the port
+this very test run was already using (§9). The test Postgres harness
+(`pip-testpg`) published its own ephemeral host port, read back by
+`tests/setup/postgres.ts`, for every gate tier above that touched it.
+
+## E0 wiring confirmation (JOR-217)
+
+Appended by `e2e/e0-wiring.spec.ts`, the wiring ticket's own live check —
+never edited after the fact, one entry per run.
+
+| Timestamp (UTC) | Commit | Gate tiers (exit code) | Scratch clone's ui-tier port | Deployed URL check |
+| --- | --- | --- | --- | --- |
+| 2026-08-23T03:48:00.280Z | `3b17a191e5714718653deeb74b0cd64b8797d62d` | ui: 1 (cumulative: logic + api + product Playwright + E2 report validation) | 61495 | https://patient-imaging-portal.vercel.app — HTTP unchecked (commit match unchecked, gh unavailable) |
+
+Running skeleton checked on `config.port` (`PORT=4310` in this environment,
+ADR-0013 default); the scratch clone's own nested `ui` tier ran its Next
+server on the ephemeral port above, never 4310, to avoid claiming the port
+this very test run was already using (§9). The test Postgres harness
+(`pip-testpg`) published its own ephemeral host port, read back by
+`tests/setup/postgres.ts`, for every gate tier above that touched it.
+
+## E0 wiring confirmation (JOR-217)
+
+Appended by `e2e/e0-wiring.spec.ts`, the wiring ticket's own live check —
+never edited after the fact, one entry per run.
+
+| Timestamp (UTC) | Commit | Gate tiers (exit code) | Scratch clone's ui-tier port | Deployed URL check |
+| --- | --- | --- | --- | --- |
+| 2026-08-23T03:51:39.530Z | `3b17a191e5714718653deeb74b0cd64b8797d62d` | ui: 1 (cumulative: logic + api + product Playwright + E2 report validation) | 61874 | https://patient-imaging-portal.vercel.app — HTTP unchecked (commit match unchecked, gh unavailable) |
+
+Running skeleton checked on `config.port` (`PORT=4310` in this environment,
+ADR-0013 default); the scratch clone's own nested `ui` tier ran its Next
+server on the ephemeral port above, never 4310, to avoid claiming the port
+this very test run was already using (§9). The test Postgres harness
+(`pip-testpg`) published its own ephemeral host port, read back by
+`tests/setup/postgres.ts`, for every gate tier above that touched it.
+
+## E0 wiring confirmation (JOR-217)
+
+Appended by `e2e/e0-wiring.spec.ts`, the wiring ticket's own live check —
+never edited after the fact, one entry per run.
+
+| Timestamp (UTC) | Commit | Gate tiers (exit code) | Scratch clone's ui-tier port | Deployed URL check |
+| --- | --- | --- | --- | --- |
+| 2026-08-23T03:51:41.138Z | `3b17a191e5714718653deeb74b0cd64b8797d62d` | ui: skipped (cumulative: logic + api + product Playwright + E2 report validation) | n/a | https://patient-imaging-portal.vercel.app — HTTP unchecked (commit match unchecked, gh unavailable) |
+
+Running skeleton checked on `config.port` (`PORT=4310` in this environment,
+ADR-0013 default); the scratch clone's own nested `ui` tier ran its Next
+server on the ephemeral port above, never 4310, to avoid claiming the port
+this very test run was already using (§9). The test Postgres harness
+(`pip-testpg`) published its own ephemeral host port, read back by
+`tests/setup/postgres.ts`, for every gate tier above that touched it.
