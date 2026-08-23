@@ -3,6 +3,12 @@
 # security scanner's public input. The real Next app talks only to the test
 # Supabase boundary; the reminder fixture uses the local pip-testpg container.
 set -euo pipefail
+# The artifact is the security scanner's public input and must be plain
+# text. Parents can pass color hints down (Playwright sets FORCE_COLOR=1 in
+# its workers, which reaches the Next servers via the certification's
+# scratch-clone gate); NO_COLOR + unset FORCE_COLOR beats them all.
+export NO_COLOR=1
+unset FORCE_COLOR
 # JOR-319: job control gives the backgrounded launcher its own process group
 # (pgid == its pid). `node` on PATH may itself be a version-manager shim that
 # forks the real interpreter and then exits, orphaning the real process tree
