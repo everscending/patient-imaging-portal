@@ -59,14 +59,25 @@ const MIGRATION_SQL = readFileSync(MIGRATION_PATH, 'utf8')
 let container: Container
 let mainRun: Run
 
-// Fresh patient/provider/visit/study chain for FK-dependent tests. Every
-// call uses new random values so parallel-within-file assertions never
-// collide with each other's fixture rows.
+// Sequential refs, not random slices: 'PT-' + 4 random hex chars is a
+// 65k space and two fixtures in one run DB can collide on the unique
+// patient_ref (it happened in CI — PT-3088). Same pattern as rls.test.ts,
+// which reserves 9000+; this file reserves 8000–8499.
+let patientReferenceSequence = 8000
+
+function nextPatientReference(): string {
+  if (patientReferenceSequence > 8499) {
+    throw new Error('migration-001 patient fixture exhausted its reserved reference range')
+  }
+  return `PT-${String(patientReferenceSequence++).padStart(4, '0')}`
+}
+
+// Fresh patient/provider/visit/study chain for FK-dependent tests.
 function seedChain(dbName: string) {
   const patientId = psql(
     dbName,
     `insert into patients (patient_ref, date_of_birth, full_name, email)
-     values ('PT-${randomUUID().slice(0, 4)}', '1990-01-01', 'Fixture Patient', 'fixture@example.com')
+     values ('${nextPatientReference()}', '1990-01-01', 'Fixture Patient', 'fixture@example.com')
      returning id;`,
   )
   const providerId = psql(
@@ -363,7 +374,7 @@ describe('AC: cine_frames has primary key (clip_id, frame_index)', () => {
 
 describe('adversarial: two patients with the same patient_ref', () => {
   test('duplicatePatientRefRejected', function duplicatePatientRefRejected() {
-    const ref = `PT-${randomUUID().slice(0, 4)}`
+    const ref = nextPatientReference()
     psql(
       mainRun.dbName,
       `insert into patients (patient_ref, date_of_birth, full_name, email)
@@ -384,12 +395,12 @@ describe('adversarial: two accounts (patients rows) linked to the same patients.
     psql(
       mainRun.dbName,
       `insert into patients (user_id, patient_ref, date_of_birth, full_name, email)
-       values ('${userId}', 'PT-${randomUUID().slice(0, 4)}', '1990-01-01', 'First', 'first@example.com');`,
+       values ('${userId}', '${nextPatientReference()}', '1990-01-01', 'First', 'first@example.com');`,
     )
     expectGuard(
       mainRun.dbName,
       `insert into patients (user_id, patient_ref, date_of_birth, full_name, email)
-       values ('${userId}', 'PT-${randomUUID().slice(0, 4)}', '1990-01-01', 'Second', 'second@example.com');`,
+       values ('${userId}', '${nextPatientReference()}', '1990-01-01', 'Second', 'second@example.com');`,
       'unique_violation',
     )
   })
@@ -400,7 +411,7 @@ describe('adversarial: a study referencing a visit that does not exist', () => {
     const patientId = psql(
       mainRun.dbName,
       `insert into patients (patient_ref, date_of_birth, full_name, email)
-       values ('PT-${randomUUID().slice(0, 4)}', '1990-01-01', 'Fixture', 'fixture2@example.com') returning id;`,
+       values ('${nextPatientReference()}', '1990-01-01', 'Fixture', 'fixture2@example.com') returning id;`,
     )
     expectGuard(
       mainRun.dbName,
