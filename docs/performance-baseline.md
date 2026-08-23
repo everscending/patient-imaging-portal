@@ -146,14 +146,13 @@ load — 50 `share.create` lines and 50 `booking.create` lines, every one
 `outcome: "ok"` and every one carrying a distinct `requestId`. Neither row is
 computed from k6 request duration.
 
-### Disposition: PF-3 accepted as final (JOR-235, reaffirmed 2026-08-23)
+### Disposition: PF-3 accepted as final (JOR-235)
 
 PF-3 measures 4.7–5.1 s p95 at the target boundary across four runs (JOR-249:
 5105/4657 ms; JOR-235: 5030/4740 ms) under identical conditions;
-human-accepted as the final result 2026-08-22 and reaffirmed 2026-08-23. The
-patient-visible wait is the poster (~650 ms) and the bounded read-ahead window
-(~1.2–1.5 s); whole-clip completion sits at the target line. No threshold was
-changed.
+human-accepted as the final result 2026-08-22. The patient-visible wait is
+the poster (~650 ms) and the bounded read-ahead window (~1.2–1.5 s);
+whole-clip completion sits at the target line. No threshold was changed.
 
 Why this exceedance is acceptable rather than fixed:
 
