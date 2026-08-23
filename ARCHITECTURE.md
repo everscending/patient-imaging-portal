@@ -69,6 +69,12 @@ lib/
   db/client.ts               the ONLY module constructing a Supabase client
   access/guard.ts            session + identity link + ownership + audit, in one call
   access/identity.ts         FR-2 verification, attempts, lockout
+  access/login-throttle.ts   AUDIT.md #2 — per-email + per-source login lockout,
+                             checked before Supabase Auth; fails open if its
+                             own store is unreachable
+  session-cookie.ts          the ONE owner of the session cookie's name and
+                             set/get/clear — middleware, guard, and every
+                             session-reading route go through it
   imaging/studies.ts         studies, images, clips, manifests
   imaging/signing.ts         mints signed Storage URLs
   reports/reports.ts         report reads, signed-only predicate
@@ -80,7 +86,12 @@ lib/
   scheduling/lifecycle.ts    FR-14 status transitions
   share/links.ts             mint, resolve, revoke
   notify/email.ts            the ONLY caller of Resend
+  notify/reminders.ts        the §12 reminder job body: due-band query, claim,
+                             outbox drain — invoked only by api/jobs/reminders
   audit/events.ts            the ONLY TypeScript writer to audit_events (ADR-0003/0014: narrow database exceptions)
+  audit/actions.ts           the closed action list as data, importable from
+                             client components ('server-only'-free); kept in
+                             lockstep with events.ts by a satisfies check
   observability/timing.ts    PF-4 / PF-6 server timing — no PHI
   time/zones.ts              instant ↔ zone conversion
 
@@ -209,6 +220,21 @@ create table identity_attempts (
 );
 create index on identity_attempts (attempted_patient_ref, attempted_at desc);
 create index on identity_attempts (source_ref, attempted_at desc);
+
+-- ── login throttle (AUDIT.md #2, migration 016) ─────────────────────────
+-- identity_attempts' sibling for the FR-1 password login: counted and
+-- written only by the login route as the service role, before Supabase Auth
+-- is called. Hashed identifiers only — no raw address, no raw IP (SEC-6).
+-- RLS is a deny-all policy; no app role holds any grant.
+create table login_attempts (
+  id            uuid primary key default gen_random_uuid(),
+  email_hash    text not null,          -- sha256(salt + lowercased email)
+  source_ref    text not null,          -- sha256(salt + first x-forwarded-for)
+  succeeded     boolean not null,
+  attempted_at  timestamptz not null default now()
+);
+create index on login_attempts (email_hash, attempted_at desc);
+create index on login_attempts (source_ref, attempted_at desc);
 
 -- ── imaging ─────────────────────────────────────────────────────────────
 create table visits (
@@ -539,6 +565,7 @@ create table reminder_sends (
   lead_hours      int  not null,
   sent_at         timestamptz,
   attempted_at    timestamptz not null default now(),
+  retryable_at    timestamptz,          -- claim lease (migration 004, §12)
   outcome         text not null check (outcome in ('sent','failed','skipped')),
   -- 'sent' with no sent_at would make PF-8's reliability figure unfalsifiable
   check ((outcome = 'sent') = (sent_at is not null)),
@@ -639,6 +666,12 @@ failure, not only on success.
 writes one row with `target_id` null and `target_kind` `<kind>_list`.
 `profile.deletion_request` records a SEC-5 deletion request.
 
+`target_kind` is deliberately unconstrained text, but the values in use are
+pinned here: the `PhiTarget` kinds of §5, their `<kind>_list` collection
+forms, `provider` (availability edits), and — since migration 017 — **`slot`**,
+the target of a denied `booking.create` (a refused booking attempt creates no
+appointment to point at; the contested slot is what was fought over).
+
 `schedule.view` and `appointment.view` exist because provider and admin reads
 are PHI reads. `audit.view` exists because an admin reading the audit log is
 itself scoped-and-logged admin access under SEC-2. `identity.link` records the
@@ -726,28 +759,45 @@ fails. The application connects as a **non-superuser, non-owner** role — RLS i
 bypassed by both superusers and table owners, so a policy tested as `postgres`
 proves nothing.
 
+This block shows the **end state after migrations 001–017** (ADR-0015). The
+grants migrated over time: 008 moved the appointment writes behind the
+executor-owned RPCs, and 016 (AUDIT.md) revoked the outbox, reminder, and
+slot-regeneration surfaces from the app role entirely.
+
 ```sql
 -- `create role app_user` already happened in §3, with the audit grants.
 grant usage on schema public to app_user;
 grant select on all tables in schema public to app_user;
-grant insert, update on appointments, identity_attempts,
-                        share_links, reminder_sends to app_user;
+-- (016) email_outbox, reminder_sends and login_attempts are deny-all:
+-- service role only. appointment_transitions: participant-scoped read,
+-- executor-only insert. staff_admins: revoked from anon/authenticated on
+-- hosted; the app role keeps a self-or-admin-scoped SELECT via its policy
+-- (the login route and provider layout still read it).
+grant insert, update on identity_attempts, share_links to app_user;
 -- deliberately NOT granted: any write on `slots`. Its status is derived by the
 -- slots_follow_appointments trigger (§3), which is SECURITY DEFINER, so the app
 -- role never needs it — and therefore can never desynchronise it by hand.
 grant insert on slots to app_user;           -- generation only, never status
-grant insert on appointment_transitions, audit_events to app_user;
-grant insert, update on email_outbox to app_user;      -- drained by the job
+grant insert on audit_events to app_user;
+-- appointments and appointment_transitions: NO direct app-role write since
+-- migration 008 — every mutation goes through the booking_executor-owned
+-- RPCs (book/reschedule/cancel/transition_appointment, §10/ADR-0015), which
+-- also commit their own audit rows (007/008/017, ADR-0014).
+grant execute on function book_appointment(uuid, uuid, uuid, text, uuid) to app_user;
+grant execute on function reschedule_appointment(uuid, uuid, uuid, interval) to app_user;
+grant execute on function cancel_appointment(uuid, uuid, interval) to app_user;
+grant execute on function transition_appointment(uuid, appointment_status, uuid) to app_user;
 -- no direct deletion_requests write: requested_by, requested_at, status and
 -- patient_id are derived inside the narrow transactional RPC below.
 grant execute on function request_profile_deletion(boolean) to app_user;
-grant execute on function regenerate_provider_slots(uuid, timestamptz, timestamptz, tstzrange[]) to app_user;
--- the function is SECURITY DEFINER, so this grant lets the app ask for that ONE
--- narrow operation without holding DELETE on `slots` — or on anything else.
+-- regenerate_provider_slots: execute REVOKED from the app role (016,
+-- AUDIT.md #3) — only apply_provider_availability (ADR-0014, owner-called)
+-- may reach it, so no session can wipe another provider's open slots.
 grant usage, select on all sequences in schema public to app_user;
 -- deliberately NOT granted anywhere: delete
 -- deliberately NOT granted on audit_events: update, delete (§3)
 ```
+
 
 ### Helpers
 
@@ -816,7 +866,25 @@ alter table slots               enable row level security;
 alter table identity_attempts   enable row level security;
 alter table share_links         enable row level security;
 alter table deletion_requests   enable row level security;
+
+-- Migration 016 (AUDIT.md #1/#4) extended the enabled set to every remaining
+-- public table — service-role/executor-only where no session should read:
+alter table email_outbox            enable row level security;  -- deny-all
+alter table reminder_sends          enable row level security;  -- deny-all
+alter table login_attempts          enable row level security;  -- deny-all
+alter table staff_admins            enable row level security;  -- self-or-admin
+alter table appointment_transitions enable row level security;  -- participant read, executor insert
+alter table working_hours           enable row level security;  -- read-only reference
+alter table availability_blocks     enable row level security;  -- read-only reference
+alter table services                enable row level security;  -- read-only reference
+alter table provider_services       enable row level security;  -- read-only reference
 ```
+
+One further policy exists outside this list: `slots_booking_lock`
+(migrations 006/007), a `FOR UPDATE ... TO booking_executor` policy with
+`WITH CHECK (false)` — it lets the executor's `SELECT ... FOR UPDATE` lock
+open future slots while keeping even that role from an actual application
+`UPDATE` on `slots`.
 
 **`patients` is the one that matters most.** `patient_ref` and `date_of_birth`
 are precisely the pair `POST /api/identity/verify` accepts. Left readable, the
@@ -1107,6 +1175,18 @@ them exactly as it applies to patients. Authorising a provider inline in
 "every PHI read is recorded" into "every *patient* PHI read is recorded" — with
 no failing test anywhere, because no test would know to look.
 
+**Pinned: the session-only surfaces that do not call this guard.**
+`GET`/`PATCH /api/profile` and `GET /api/identity/status` authenticate the
+session and return only the caller's own account data — including the caller's
+own `patientRef` once FR-2 has linked it. They deliberately do not cross the
+guard: both must work *before* the identity link exists (the profile form and
+the verify screen are how an unlinked account gets linked at all), the data
+returned can never belong to another patient, and the closed audit-action set
+(§3) carries no `profile.view` — adding one would write an audit row on every
+shell render for no leakage-detection value. This is the complete list; a new
+route that returns any patient-linked field and skips the guard must be added
+here and to the lint rule's `GUARD_ALLOWLIST`, or it is a defect.
+
 Status meanings, pinned so three tickets do not invent three conventions:
 
 | Situation | Status |
@@ -1131,6 +1211,16 @@ exist. All timestamps are RFC 3339 with an explicit offset.
 ```jsonc
 { "error": "snake_case_code", "message": "Human-readable, never PHI." }
 ```
+
+**Dependency failure is a pinned code family, not an unhandled 500 (EC-12,
+CQ-3).** When a route's primary dependency is unreachable, it answers with a
+`5xx` in this envelope, one code per surface:
+`503 booking_unavailable` · `503 appointments_unavailable` ·
+`503 availability_unavailable` · `503 schedule_unavailable` ·
+`503 reminders_unavailable` · `500 profile_unavailable` ·
+`500 profile_update_failed`. The cron endpoint's missing/wrong secret is
+`401 unauthorized`. New surfaces follow the same `<surface>_unavailable`
+shape.
 
 **Every request body is validated server-side against a schema before a handler
 touches it — including the auth payloads.** EC-12 names five input surfaces:
@@ -1162,6 +1252,20 @@ POST /api/auth/login
                                                                 one response
   ← 422 { "error": "validation_failed", "message": "…" }
 ```
+
+```
+POST /api/auth/logout
+  → {}
+  ← 200 { "ok": true }
+```
+
+Logout attempts a best-effort token revocation at Supabase Auth (GoTrue
+`/auth/v1/logout`, AUDIT.md #6 — a revocation failure is swallowed, because
+the cleared cookie alone already ends this browser's access) and then clears
+the session cookie; it never returns a non-2xx —
+a caller with no session gets the same `200 { "ok": true }`, because "you are
+signed out" is true either way. It is a session action on no PHI target, so it
+sits in the guard rule's allowlist (§5) rather than crossing the guard.
 
 **Sessions expire after 60 minutes of inactivity** (ADR-0012), stated in plain
 words on both screens. That is a Supabase Auth project setting, not an
@@ -1360,6 +1464,20 @@ same key against a *different* slot is `409 idempotency_key_reused`, never a
 silent no-op (§10).
 
 ```
+GET  /api/appointments/:id/slots
+  ← 200 { "providerTimeZone": "America/Chicago",
+          "slots": [ { "id","startsAt","endsAt" } ] }        open + future only
+```
+
+The reschedule picker's endpoint: the same provider's open slots from now to
+`SLOT_HORIZON_DAYS` (the route reads the config value, never a hardcoded
+twin), resolved from the appointment so the client never has to carry
+provider/service ids. It is guarded (the appointment is the PHI target),
+and `providerTimeZone` exists here — and only here among slot shapes — because
+the picker renders the provider's local time next to the viewer's (EC-6);
+`GET /api/slots` already knows the provider from its own query parameter.
+
+```
 GET   /api/appointments
   ← 200 { "appointments": [ { "id","startsAt","endsAt","status","providerName",
                               "serviceName","outOfHours","canChange","changeDeadline",
@@ -1432,7 +1550,7 @@ reminder.
 ### Provider and admin scheduling reads
 
 ```
-GET /api/provider/schedule?date=…
+GET /api/provider/schedule?date=…[&providerId=…]
   ← 200 { "timeZone": "America/Chicago",
           "slots": [ { "id","startsAt","endsAt","status",
                        "appointment": { "id","patientRef","serviceName","status",
@@ -1442,6 +1560,10 @@ GET /api/provider/schedule?date=…
 A separate endpoint, not a role-conditional `/api/appointments` — that shape is
 pinned patient-side and §6 forbids adding fields to a pinned shape. **The patient
 appears by reference only**, never by name or date of birth (SEC-6).
+`providerId` is optional and inert: non-provider callers 404 before it is
+read, and for a provider any value other than their own id also resolves
+`404` — it exists for symmetry with the client's fetch shape and leaks
+nothing.
 
 ### Audit log — SEC-4, admin only
 
@@ -1509,7 +1631,7 @@ letting a missing value surface as a runtime null. All of these appear in
 | `NEXT_PUBLIC_SUPABASE_URL` | — | `lib/db/client.ts` | required |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | `lib/db/client.ts` | required |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | `lib/db/client.ts` | required · **server only, never `NEXT_PUBLIC_`** |
-| `NEXT_PUBLIC_PRACTICE_NAME` | `Patient Imaging Portal` | `components/branding/Wordmark.tsx` (landing, patient/provider shells) | JOR-310 · one wordmark string, no multi-tenancy |
+| `NEXT_PUBLIC_PRACTICE_NAME` | `Patient Imaging Portal` | `lib/config.ts`, threaded as a prop into `components/branding/Wordmark.tsx` (landing, patient/provider shells) | JOR-310 · one wordmark string, no multi-tenancy — Wordmark itself reads no env (§2's rule) |
 | `APP_BASE_URL` | `http://localhost:4310` | `lib/share/links.ts`, `lib/notify/email.ts` | share links are absolute |
 | `RESEND_API_KEY` | — | `lib/notify/email.ts` | absent ⇒ transport falls back to `log` (GAP-3) |
 | `RESEND_FROM` | — | `lib/notify/email.ts` | verified sender |
@@ -1522,6 +1644,8 @@ letting a missing value surface as a runtime null. All of these appear in
 | `REMINDER_LEAD_HOURS` | `24` | reminder job | ADR-0008 |
 | `IDENTITY_MAX_ATTEMPTS` | `3` | `lib/access/identity.ts` | ADR-0008 |
 | `IDENTITY_LOCKOUT_MINUTES` | `5` | `lib/access/identity.ts` | ADR-0008 |
+| `LOGIN_MAX_ATTEMPTS` | `10` | `lib/access/login-throttle.ts` | AUDIT.md #2 · per email AND per source within the window |
+| `LOGIN_LOCKOUT_MINUTES` | `15` | `lib/access/login-throttle.ts` | AUDIT.md #2 |
 | `SIGNED_URL_TTL_SECONDS` | `300` | `lib/imaging/signing.ts` | ADR-0003 |
 | `SLOT_HORIZON_DAYS` | `60` | `lib/scheduling/availability.ts` | ADR-0012 · every availability write regenerates today → +60 days |
 | `MAX_REQUEST_BODY_BYTES` | `65536` | `lib/validation/` | ADR-0012 · 64 KiB; larger bodies are `422 validation_failed` |
@@ -1531,6 +1655,7 @@ letting a missing value surface as a runtime null. All of these appear in
 | `SEED_SOURCE_SEED` | `patient-imaging-portal` | `db/seed/**` | deterministic assets (ADR-0009) |
 | `PORT` | `4310` | Next dev/start | §9 |
 | `TEST_PG_PORT` | *(unset)* | test harness | ADR-0013 · **optional pin.** Unset means the OS picks a free port and the harness reads it back. Set it only to attach a database client during a debugging session. |
+| `PLAYWRIGHT_BASE_URL` | *(unset)* | `lib/config.ts`, consumed as `config.playwrightBaseUrl` by `playwright.config.ts` and e2e specs | **optional pin**, TEST_PG_PORT's analogue: unset means Playwright derives its address from `PORT`; set it only to point the e2e suite at an already-running deployment. |
 
 ---
 
@@ -1575,6 +1700,19 @@ asks for a free one instead.**
 Two independent mechanisms. The index is what makes the guarantee true; the lock
 is what makes the loser's error clean rather than a constraint violation.
 
+**As built (ADR-0015), this transaction lives in the database, not the
+client.** PostgREST cannot hold a multi-statement client transaction, so the
+logic below is implemented as `SECURITY DEFINER` functions owned by the
+uncallable `booking_executor` role — `book_appointment` (migration 006,
+audited wrapper 017), `reschedule_appointment` / `cancel_appointment` (007),
+`transition_appointment` (008) — and `lib/scheduling/booking.ts` calls them by
+RPC. Every rule in this section is a semantic contract those functions
+implement verbatim; the SQL sketches below describe the transaction each
+function performs. Migration 017 additionally commits the granted-or-denied
+`booking.create` audit row inside the same transaction (ADR-0014): granted
+targeting the appointment (fresh create and EC-10 replay alike), denied
+targeting the contested slot.
+
 ```sql
 -- book(slot_id, patient_id, idempotency_key)
 begin;
@@ -1584,7 +1722,8 @@ begin;
    where patient_id = $2 and idempotency_key = $3;
   -- found → commit and return it with 200.
 
-  -- 2. FR-12: take the row lock. Losers block here, then see 'booked'.
+  -- 2. FR-12: take the row lock. Losers block here, then re-evaluate the
+  --    status predicate and find no open row.
   select id from slots
    where id = $1 and status = 'open'
    for update;
@@ -1595,8 +1734,6 @@ begin;
   insert into appointments (slot_id, patient_id, provider_id, service_id, idempotency_key)
   values ($1, $2, (select provider_id from slots where id = $1), $4, $3);
   -- appointments_one_live_per_slot is the backstop if the lock logic is ever wrong.
-
-  update slots set status = 'booked' where id = $1;
 
   insert into appointment_transitions (appointment_id, to_status, actor_user_id)
   values (…, 'requested', …);
@@ -1826,6 +1963,14 @@ run, and a retried run all insert zero rows and send zero emails. Verified under
 ten simultaneous runs on a common barrier: one run sent 24, nine sent 0, zero
 duplicate keys.
 
+**As built, the insert is a lease, not a bare `on conflict do nothing`**
+(migration 004's `claim_reminder_send`, ADR-0015). The RPC inserts-or-claims a
+row with a `retryable_at` lease window: a crashed worker's claim becomes
+reclaimable when the lease lapses, instead of leaving a permanently-`failed`
+row only the next pass's delete could clear. Strictly stronger than the sketch
+above — the PK still makes duplicates impossible; the lease only improves
+crash recovery.
+
 **But the cadence IS load-bearing for the other half of PF-8.** "No duplicates"
 is structural and holds at any cadence. "≥99% of due reminders sent" is not: the
 query looks at a fixed **30-minute** window, so a job running hourly leaves a
@@ -2050,23 +2195,17 @@ same runner, so they cannot drift.
 
 The `ui` additions use one serial Playwright invocation for `product` (which
 also carries E9's spec inside the `product` project rather than a dedicated
-one — see e2e/e9-wiring.spec.ts), E2, E3, E4, E5, and E8. Playwright runs
+one — see e2e/e9-wiring.spec.ts) plus the wiring projects. Playwright runs
 `product` once before its E2/E3 dependents. The single JSON report is then
-validated for each mandatory specification:
+validated once per mandatory specification. **The authoritative validator
+inventory is `scripts/gate.sh` itself** (the `PLAYWRIGHT_*_REPORT` steps — 19
+of them as of 2026-08-23), guarded by `tests/ci/workflow.test.ts`, which
+rejects a UI-gate extension without a matching report validation. An earlier
+draft enumerated the list here and drifted from the script within a week;
+the script is the document of record for this one inventory.
 
-1. `e2e/e8-wiring.spec.ts`
-2. `e2e/e5-wiring.spec.ts`
-3. `e2e/book.spec.ts`
-4. `e2e/provider-schedule.spec.ts`
-5. `e2e/empty-states.spec.ts`
-6. `e2e/responsive.spec.ts`
-7. `e2e/accessibility.spec.ts`
-8. `e2e/e9-wiring.spec.ts`
-9. `e2e/e2-wiring.spec.ts`
-10. `e2e/e3-wiring.spec.ts`
-11. `e2e/e4-wiring.spec.ts`
-
-The Playwright suite has seven projects. `product` contains ordinary browser
+The Playwright suite has eight projects (`demo-walkthrough` joined the
+original seven). `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
 `e4-wiring`, `e5-wiring`, and `e8-wiring` remain isolated projects selected by
@@ -2124,3 +2263,18 @@ Stated here rather than discovered later.
   arrange it; the README says so.
 - **SEC-7's hashing is delegated** to Supabase Auth, so it is documented rather
   than readable in this repo (ADR-0004).
+- **`provider_schedule_appointments` is a definer-rights view** (migration
+  015): providers may read `appointments` but not `patients`, so the provider
+  schedule's `patient_ref` embed reads `patients` past row-level security,
+  with the view's own `provider_id = current_provider_id() or is_admin()`
+  predicate as the sole guard. `security_barrier` is set; the predicate is
+  deliberate and reviewed, and any change to that view is a §4-grade security
+  change, not a query tweak.
+- **The login throttle fails open** (AUDIT.md #2 remediation): if its own
+  store is unreachable, login proceeds unthrottled rather than locking every
+  patient out. Availability was chosen over strictness for FR-1's front door.
+- **Duplicate migration number prefixes exist** (two 004s, two 009s, two
+  010s) and order correctly under the harness's full-filename sort; applied
+  migrations are never renamed (the 013/014 repairs exist because an in-place
+  edit bit once). A guard test asserting the resolved order is the tracked
+  fix (sync-report T11).

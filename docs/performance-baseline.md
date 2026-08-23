@@ -146,13 +146,37 @@ load — 50 `share.create` lines and 50 `booking.create` lines, every one
 `outcome: "ok"` and every one carrying a distinct `requestId`. Neither row is
 computed from k6 request duration.
 
-### Disposition: PF-3 accepted as final (JOR-235)
+### Disposition: PF-3 accepted as final (JOR-235, reaffirmed 2026-08-23)
 
 PF-3 measures 4.7–5.1 s p95 at the target boundary across four runs (JOR-249:
 5105/4657 ms; JOR-235: 5030/4740 ms) under identical conditions;
-human-accepted as the final result 2026-08-22. The patient-visible wait is the
-poster (~650 ms) and the bounded read-ahead window (~1.2–1.5 s); whole-clip
-completion sits at the target line. No threshold was changed.
+human-accepted as the final result 2026-08-22 and reaffirmed 2026-08-23. The
+patient-visible wait is the poster (~650 ms) and the bounded read-ahead window
+(~1.2–1.5 s); whole-clip completion sits at the target line. No threshold was
+changed.
+
+Why this exceedance is acceptable rather than fixed:
+
+- **The measured quantity is not the experienced quantity.** PF-3 times the
+  100th frame's byte completion, but the viewer is playable long before that:
+  playback starts from the poster and the read-ahead window, both measured
+  well under their sibling targets (PF-2 first frame 649–710 ms p95). A
+  patient pressing play at the default 12 FPS consumes 100 frames over ~8.3
+  seconds, so a whole-clip completion of ~5 s never stalls playback — frames
+  arrive ahead of the playhead throughout.
+- **The spread straddles the line symmetrically.** Two of four runs are under
+  target and two are over, with the band (±4%) inside run-to-run variance on
+  shared free-tier infrastructure. Buying certainty below 5.0 s would mean
+  optimizing for the benchmark harness (or paying for dedicated capacity,
+  which CUT-3 forbids) rather than for any patient-visible outcome.
+- **The client-side playback check passes.** The smooth-playback half of the
+  PF-3 row — no visible dropped frames at the default rate — holds in the
+  committed Playwright evidence (`e2e/playback-frames.spec.ts`), which is the
+  half a patient can perceive.
+
+The verdict column above deliberately keeps `unstable`: the number is
+reported as measured, and this section records the human decision about it —
+never a quietly widened threshold.
 
 This acceptance is a new one and it is terminal. It replaces the deferral
 JOR-249 recorded, which had held PF-3 open for this run. Nothing defers PF-3

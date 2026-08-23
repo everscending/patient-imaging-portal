@@ -134,6 +134,7 @@ Appended once per deploy run — never edited after the fact.
 | Timestamp (UTC) | Commit | Provisioned state |
 | --- | --- | --- |
 | 2026-08-19T16:09:39Z | `eaefa78c0e914c1d1a65ac40252a8e40367bc414` | 9 migrations; 1 seed run; 50 patients; 10 providers; private `phi` bucket; `pg_cron` and `pg_net`; one active five-minute reminder job whose latest run succeeded with HTTP 200 |
+| 2026-08-23 (recorded after the fact) | security-audit-fixes merge | Migrations through `016_security_audit_fixes.sql` applied to the hosted database. The apply itself was run without a run-record entry; this row was added on 2026-08-23 after a read-only verification against the live database confirmed all four 016 markers: `email_outbox` has RLS enabled, `login_attempts` exists, the `audit_insert_self` policy is active, and `regenerate_provider_slots` execute is revoked from `authenticated`. |
 
 ## Live check
 

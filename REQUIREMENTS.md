@@ -220,6 +220,7 @@ in front of the first unlock, and EC-1's lockout is unchanged.
 | Minimum change notice | **24 hours** | FR-13 |
 | Reminder lead time | **24 hours** before start | FR-15, EC-9, PF-8 |
 | Failed-attempt lockout | **3 failures → 5-minute lock**, counted per patient reference and per source | EC-1 |
+| Login lockout *(added 2026-08-23 by the ADR-0008 amendment)* | **10 failures → 15-minute lock**, counted per email and per source; fails open if the throttle store is unreachable | FR-1, SEC-7 |
 
 ---
 

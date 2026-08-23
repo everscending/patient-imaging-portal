@@ -20,10 +20,20 @@ and the UI copy drift apart.
 | Minimum change notice | **24 hours** | FR-13 |
 | Reminder lead time | **24 hours** before start | FR-15, EC-9, PF-8 |
 | Failed-attempt lockout | **3 failures → 5-minute lock** | EC-1 |
+| Login lockout *(added 2026-08-23, AUDIT.md #2)* | **10 failures → 15-minute lock**, per email and per source | FR-1, SEC-7 |
 
 These values are single-sourced in application config, surfaced in the README,
 and quoted in the acceptance criteria of every ticket that enforces one. No
 ticket hardcodes a duplicate.
+
+> **Amendment (2026-08-23).** The security remediation added a fifth
+> stated-rule parameter: the password-login throttle
+> (`LOGIN_MAX_ATTEMPTS`/`LOGIN_LOCKOUT_MINUTES`, enforced by
+> `lib/access/login-throttle.ts` before Supabase Auth is called). It is looser
+> than EC-1's identity lockout because a login failure is not probing a
+> patient-matching second factor; it exists to blunt credential stuffing
+> while the fail-open rule keeps an unreachable throttle store from locking
+> every patient out.
 
 ## Rationale and consequences
 

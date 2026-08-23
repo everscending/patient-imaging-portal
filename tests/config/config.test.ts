@@ -29,6 +29,8 @@ const ALL_ENV_KEYS = [
   'REMINDER_LEAD_HOURS',
   'IDENTITY_MAX_ATTEMPTS',
   'IDENTITY_LOCKOUT_MINUTES',
+  'LOGIN_MAX_ATTEMPTS',
+  'LOGIN_LOCKOUT_MINUTES',
   'SIGNED_URL_TTL_SECONDS',
   'SLOT_HORIZON_DAYS',
   'MAX_REQUEST_BODY_BYTES',
@@ -38,6 +40,7 @@ const ALL_ENV_KEYS = [
   'SEED_SOURCE_SEED',
   'PORT',
   'TEST_PG_PORT',
+  'PLAYWRIGHT_BASE_URL',
 ]
 
 let savedEnv: Record<string, string | undefined> = {}
@@ -238,9 +241,9 @@ describe('.env.example — acceptance + adversarial: complete, ordered, placehol
     .filter((line) => line.length > 0 && !line.startsWith('#'))
     .map((line) => line.split('=')[0])
 
-  test('lists all 25 §8 rows, in §8 order, and nothing else', () => {
+  test('lists all 28 §8 rows, in §8 order, and nothing else', () => {
     expect(envExampleKeys).toEqual(ALL_ENV_KEYS)
-    expect(envExampleKeys).toHaveLength(25)
+    expect(envExampleKeys).toHaveLength(28)
   })
 
   test('ADR-0011: IDENTITY_UNLOCK_TTL_MINUTES appears nowhere in the app/config surface this ticket owns', () => {
