@@ -49,13 +49,13 @@ create policy reminder_sends_no_app_access on reminder_sends
 revoke select, insert, update on reminder_sends from app_user;
 revoke all on reminder_sends from anon, authenticated;
 
--- Caller-id resolver for the policies below: current_request_user_id() (009/013),
--- a SECURITY DEFINER that resolves request.jwt.claims (hosted) OR
--- request.jwt.claim.sub (local) and fails closed on a malformed claim. Using it
--- (rather than auth.uid(), which app_user cannot call and which reads only the
--- hosted claim shape) keeps these policies working under both PostgREST runtimes.
--- booking_executor already holds execute (009); app_user needs it granted here.
-grant execute on function current_request_user_id() to app_user;
+-- The policies below resolve the caller through current_request_user_id()
+-- (009/013): a SECURITY DEFINER that reads request.jwt.claims (hosted) OR
+-- request.jwt.claim.sub (local) and fails closed on a malformed claim. It is
+-- used rather than auth.uid() (which app_user cannot call, and which reads only
+-- the hosted claim shape) so these policies hold under both PostgREST runtimes.
+-- Both evaluating roles already hold execute: booking_executor from 009,
+-- app_user from 012 — so no grant is repeated here.
 
 -- ── #4 staff_admins: a caller may see only their own row ─────────────────────
 -- Blanket SELECT let any session enumerate every administrator. is_admin()

@@ -24,8 +24,10 @@ export function anonClient(accessToken: string): SupabaseClient {
 }
 
 /** Service role. Legal in FR-2 identity verification, share-token resolution,
- *  the reminder job, and the audit writer's single-row unauthenticated
- *  fallback. Nowhere else. */
+ *  the reminder job, the audit writer's single-row unauthenticated fallback,
+ *  the login brute-force throttle (app/api/auth/login), and outbound-email
+ *  enqueue (lib/notify/email.ts) — the last two write tables that migration 016
+ *  locks to the service role (login_attempts, email_outbox). Nowhere else. */
 export function serviceClient(): SupabaseClient {
   return createClient(config.supabaseUrl, config.supabaseServiceRoleKey)
 }

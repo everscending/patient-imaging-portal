@@ -926,30 +926,38 @@ create policy slots_insert_own on slots for insert
   with check (provider_id = current_provider_id() or is_admin());
 ```
 
-**`email_outbox` gets no RLS at all**, deliberately: it is written by server
-code on the patient's behalf and drained by the reminder job running as the
-service role, and it holds no patient identifier — a recipient address, a
-subject and a generic body. A policy keyed on `current_patient_id()` would
-refuse the job's own reads.
+**`email_outbox` is locked to the service role** (migration 016, closing
+AUDIT.md #1). It is written by the enqueue path and drained by the reminder job,
+both as the service role — and a share email's body carries the raw share-link
+token, a working key to a patient's image or report. So RLS is enabled with a
+deny-all policy and `app_user`/`anon`/`authenticated` hold no grant. This table
+previously had no RLS on the premise it held no PHI; the share token made that
+premise false.
 
-**`identity_attempts` and `reminder_sends` get no app-role write policy**, because
-neither is written by a patient session: FR-2 verification runs through the
-service role (it must read `patients` before any link exists), and the reminder
-job is the service role by definition.
+**`identity_attempts` has no app-role write policy** — FR-2 verification runs
+through the service role, which must read `patients` before any link exists.
+**`reminder_sends` is RLS'd with app-role writes revoked** (migration 016,
+AUDIT.md #4): the claim RPC (owner) and the reminder job (service role) still
+write it; a patient session no longer can pre-mark another patient's reminder.
 
-**`audit_events` is RLS'd too, and its shape is deliberately lopsided:**
+**`audit_events` is RLS'd, and each caller may append only its own rows:**
 
 ```sql
 alter table audit_events enable row level security;
 
-create policy audit_insert_any on audit_events for insert with check (true);
+-- migration 016 (AUDIT.md #7) replaced `with check (true)` — which let any
+-- session forge a row attributed to another actor — with self-attribution.
+create policy audit_insert_self on audit_events
+  for insert with check (actor_ref = current_request_user_id()::text);
 create policy audit_select_admin on audit_events for select using (is_admin());
 ```
 
-Anyone may append; only an admin may read. Without the read policy the log is
-world-readable to any authenticated session, which would leak *other patients'*
-access history — a PHI disclosure through the very table that exists to record
-them. There is no update or delete policy, and none is grantable (§3).
+A caller may append only rows attributed to its own subject (elevated
+system/anonymous/share writes go through the service role, which bypasses RLS);
+only an admin may read. Without the read policy the log is world-readable to any
+authenticated session, which would leak *other patients'* access history — a PHI
+disclosure through the very table that exists to record them. There is no update
+or delete policy, and none is grantable (§3).
 
 **Share-link reads run through the service role** after `lib/share/links.ts` has
 validated the token — RLS cannot see a share recipient, which is exactly why the
