@@ -217,10 +217,13 @@ own committed, runnable checks have covered so far.
 JOR-207). 10 due reminders, 10 sent, 0 duplicates, 0 failed — every due
 reminder delivered exactly once across that window.
 
-**PF-9 — deployed-demo uptime.** One measurement, one place. The window is
-polled by `scripts/uptime-check.sh` and recorded in
-[`docs/deploy.md`](docs/deploy.md) (JOR-252), which holds the window's start,
-base URL, and polling interval. The row below is that record's own
+**PF-9 — deployed-demo uptime.** Two records, one counting rule. The
+standing measurement is `.github/workflows/uptime.yml` — a scheduled ping of
+the health endpoint every 15 minutes whose run history is the ongoing
+availability record (see [`docs/deploy.md`](docs/deploy.md)). The closed
+manual window below was polled by `scripts/uptime-check.sh` and recorded in
+the same document (JOR-252), which holds the window's start, base URL, and
+polling interval. The row below is that record's own
 window-close row, restated here verbatim and never re-derived — this file
 adds no second copy of anything it does not restate exactly. A
 reachable-but-degraded response counts as up; only `unreachable` counts
