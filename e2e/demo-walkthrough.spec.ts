@@ -157,10 +157,9 @@ test.describe.serial('JOR-261 — the recorded DEL-6 demo walkthrough', () => {
       await page.getByLabel('Password').fill(DEMO_PASSWORD)
       await expect(page.getByLabel('Password')).toHaveAttribute('type', 'password')
       await page.getByRole('button', { name: 'Sign in' }).click()
-      await expect(page).toHaveURL(/\/appointments$/)
-
-      // The identity gate: an unlinked account asking for studies is sent to
-      // /verify, and only the seeded reference and date of birth open it.
+      // The identity gate: an unlinked sign-in lands straight on /verify,
+      // and only the seeded reference and date of birth open it.
+      await expect(page).toHaveURL(/\/verify\?next=%2Fappointments$/)
       await page.goto('/studies')
       await expect(page).toHaveURL('/verify?next=%2Fstudies')
       await expect(page.getByTestId('identity-form')).toBeVisible()

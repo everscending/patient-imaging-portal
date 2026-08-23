@@ -194,7 +194,10 @@ test.describe('JOR-264 E2 identity/access wiring', () => {
     await page.getByLabel('Email').fill(email)
     await page.getByLabel('Password').fill(PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    await expect(page).toHaveURL(/\/appointments$/)
+    // An unverified sign-in lands on /verify first; link the seeded patient
+    // to unlock /profile.
+    await expect(page).toHaveURL(/\/verify\?next=%2Fappointments$/)
+    expect((await verify(page.request, SEEDED_PATIENT.patientRef, SEEDED_PATIENT.dateOfBirth)).status).toBe(200)
 
     await page.goto('/profile')
     await page.getByLabel('Display name').fill('E2 Patient')

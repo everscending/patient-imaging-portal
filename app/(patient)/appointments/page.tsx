@@ -25,9 +25,9 @@ function readAppointments(value: unknown): Appointment[] {
 
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[] | null>(null)
-  // /appointments is deliberately session-only (middleware never redirects it
-  // to /verify — e2e/auth.spec.ts pins that), so the 403 the API returns for
-  // an unverified patient surfaces here as a prompt instead of a dead end.
+  // Middleware redirects an unverified session to /verify before this page
+  // renders; the 403 handling below is a backstop for a session that loses
+  // its link mid-visit, so the API refusal surfaces as a prompt, not a dead end.
   const [blocked, setBlocked] = useState<'verify' | 'unavailable' | null>(null)
 
   useEffect(() => {
