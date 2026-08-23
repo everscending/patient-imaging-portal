@@ -293,7 +293,7 @@ describe('deployed provisioning program', () => {
     expect(psql(run.dbName, 'select count(*) from patients;')).toBe(patientCount)
     expect(psql(run.dbName, 'select count(*) from app_deploy.seed_runs;')).toBe('1')
     expect(objects.size).toBe(objectCount)
-    expect(users.size).toBe(3)
+    expect(users.size).toBe(8)
 
     await expect(
       provisionSeed({ ...config, minChangeNoticeHours: 48 }, storage, authAdmin, sql),

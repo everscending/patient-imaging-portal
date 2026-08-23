@@ -22,6 +22,21 @@ export const DEMO_MAIL_DOMAIN = 'demo.pip.test'
 
 export const DEMO_ACCOUNT_EMAILS = [DEMO_PATIENT_EMAIL, DEMO_PROVIDER_EMAIL, DEMO_ADMIN_EMAIL] as const
 
+// ── FR-2 test accounts: sign-in-only auth users with no patients.user_id
+// link, for exercising the /verify identity check against the unlinked
+// patient pool. Same password as the demo accounts. ─────────────────────
+export const TEST_PATIENT_ACCOUNT_COUNT = 5
+export type TestPatientAccount = { id: string; email: string }
+
+/** Deterministic like every other seed identity — the provisioner re-derives
+ *  the same five accounts on an already-seeded stack. */
+export function buildTestPatientAccounts(sourceSeed: string): TestPatientAccount[] {
+  return Array.from({ length: TEST_PATIENT_ACCOUNT_COUNT }, (_, i) => ({
+    id: deterministicId(sourceSeed, 'auth', 'test-patient', i),
+    email: `testpatient${i + 1}@${DEMO_MAIL_DOMAIN}`,
+  }))
+}
+
 // ── row counts (ADR-0009 / DEL-4) ───────────────────────────────────────
 export const PATIENT_COUNT = 50
 export const PROVIDER_COUNT = 10
@@ -143,6 +158,7 @@ export type RowSetFixtures = {
   noticeWindowInsideAppointmentId: string
   noticeWindowOutsideAppointmentId: string
   statusAppointmentIds: Record<AppointmentStatus, string>
+  testPatientAccounts: TestPatientAccount[]
 }
 
 export type RowSet = {
@@ -635,6 +651,7 @@ export function buildRowSet(input: BuildRowSetInput): RowSet {
   const demoPatientAuthId = deterministicId(sourceSeed, 'auth', 'demo-patient')
   const demoProviderAuthId = deterministicId(sourceSeed, 'auth', 'demo-provider')
   const demoAdminAuthId = deterministicId(sourceSeed, 'auth', 'demo-admin')
+  const testPatientAccounts = buildTestPatientAccounts(sourceSeed)
 
   const services = buildServices(sourceSeed)
   const providers = buildProviders(sourceSeed, demoProviderAuthId)
@@ -746,6 +763,7 @@ export function buildRowSet(input: BuildRowSetInput): RowSet {
     noticeWindowInsideAppointmentId: noticeWindowInside.id,
     noticeWindowOutsideAppointmentId: noticeWindowOutside.id,
     statusAppointmentIds,
+    testPatientAccounts,
   }
 
   const rowSet: RowSet = {
@@ -783,6 +801,7 @@ function validateRowSet(rowSet: RowSet, poolIndex: PoolIndex): void {
   assertDemoAccountAddress(DEMO_PROVIDER_EMAIL)
   assertDemoAccountAddress(DEMO_ADMIN_EMAIL)
   for (const patient of rowSet.patients) assertSeededEmailNonDeliverable(patient.email)
+  for (const account of rowSet.fixtures.testPatientAccounts) assertSeededEmailNonDeliverable(account.email)
 
   for (const appointment of rowSet.appointments) {
     assertAppointmentServiceOffered(appointment.provider_id, appointment.service_id, rowSet.providerServices)

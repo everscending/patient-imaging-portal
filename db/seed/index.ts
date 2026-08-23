@@ -8,7 +8,7 @@
 // raw environment (tests/seed/assets.test.ts's
 // adversarialDbSeedSourceNeverReachesWallClockOrRandom scans this file too).
 import { generateAssetPool } from './assets'
-import { buildRowSet, DEMO_ACCOUNT_PASSWORD, DEMO_ADMIN_EMAIL, DEMO_PATIENT_EMAIL, DEMO_PROVIDER_EMAIL, toInsertPlan, type RowSet } from './rows'
+import { buildRowSet, DEMO_ACCOUNT_PASSWORD, DEMO_ADMIN_EMAIL, DEMO_PATIENT_EMAIL, DEMO_PROVIDER_EMAIL, toInsertPlan, type RowSet, type TestPatientAccount } from './rows'
 import { uploadPool, type PhiStorageClient, type UploadPoolSummary } from './storage'
 
 export type SeedDbClient = {
@@ -81,6 +81,25 @@ async function createDemoAuthUsers(authAdmin: AuthAdminClient, rowSet: RowSet): 
     })
     if (error) {
       throw new Error(`db/seed/index: creating demo ${account.role} account failed: ${error.message}`)
+    }
+  }
+
+  await createTestPatientAuthUsers(authAdmin, rowSet.fixtures.testPatientAccounts)
+}
+
+/** FR-2 test accounts: sign-in-only, never linked to a patients row — the
+ * /verify identity check is exercised against the unlinked patient pool.
+ * Also called by the provisioner on an already-seeded stack. */
+export async function createTestPatientAuthUsers(authAdmin: AuthAdminClient, accounts: TestPatientAccount[]): Promise<void> {
+  for (const account of accounts) {
+    const { error } = await authAdmin.auth.admin.createUser({
+      id: account.id,
+      email: account.email,
+      password: DEMO_ACCOUNT_PASSWORD,
+      email_confirm: true,
+    })
+    if (error) {
+      throw new Error(`db/seed/index: creating test patient account ${account.email} failed: ${error.message}`)
     }
   }
 }

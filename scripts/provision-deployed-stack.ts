@@ -5,9 +5,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { generateAssetPool } from '../db/seed/assets'
-import { runSeed, type AuthAdminClient, type SeedDbClient } from '../db/seed/index'
+import { createTestPatientAuthUsers, runSeed, type AuthAdminClient, type SeedDbClient } from '../db/seed/index'
 import {
   buildRowSet,
+  buildTestPatientAccounts,
   DEMO_ACCOUNT_PASSWORD,
   DEMO_PATIENT_EMAIL,
 } from '../db/seed/rows'
@@ -46,6 +47,12 @@ export const ULTRASOUND_PIXELS_SEED_CHECKSUM = '650767c6e628ebe0ffd4f7cea5d6ee4d
 // migrates here, only the checksum.
 // tests/deploy/provisioning.test.ts pins it to the current checkout.
 export const JOR320_MEMOIZED_POOL_SEED_CHECKSUM = '57e60395f0ea3375b707dc7678287acee408b6014b316f790eefd77a005d5872'
+// Five FR-2 test patient accounts (sign-in-only auth users, no table rows)
+// were added to db/seed/rows.ts. No seeded row changes, so the upgrade is a
+// marker advance; the accounts themselves are ensured idempotently on every
+// already-seeded provision below.
+// tests/deploy/provisioning.test.ts pins it to the current checkout.
+export const TEST_PATIENT_ACCOUNTS_SEED_CHECKSUM = 'a687daa9bf90b14233aa400d6f1f6d6f76ba125232751d0692b137ad7d0f7570'
 
 // One entry per intentional seed change, each moving the marker a single
 // step. A stack several changes behind walks the chain in one run; a stack
@@ -69,6 +76,10 @@ const SEED_DATA_CHECKSUM_UPGRADES = new Map<string, SeedDataUpgrade>([
   [
     ULTRASOUND_PIXELS_SEED_CHECKSUM,
     { to: JOR320_MEMOIZED_POOL_SEED_CHECKSUM, apply: advanceMarkerForPixelOnlyChange },
+  ],
+  [
+    JOR320_MEMOIZED_POOL_SEED_CHECKSUM,
+    { to: TEST_PATIENT_ACCOUNTS_SEED_CHECKSUM, apply: advanceMarkerForPixelOnlyChange },
   ],
 ])
 const MIGRATION_LOCK = 7_402_021
@@ -413,6 +424,7 @@ export async function provisionSeed(
       upgrade.apply(sql, marker, markerChecksum, upgrade.to, config)
       markerChecksum = upgrade.to
     }
+    await createTestPatientAuthUsers(authAdmin, buildTestPatientAccounts(config.seedSourceSeed))
     await uploadPool(storage, generateAssetPool(config.seedSourceSeed))
     console.log('provision-deployed-stack: seed rows already applied; assets verified')
     return

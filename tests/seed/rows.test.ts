@@ -207,6 +207,17 @@ describe('AC: demo patient, provider and admin accounts exist and are linked', (
     expect(demoProvider?.user_id).toBe(rowSet.fixtures.demoProviderAuthId)
     expect(rowSet.staffAdmins[0].user_id).toBe(rowSet.fixtures.demoAdminAuthId)
   })
+
+  test('fiveTestPatientAccountsExistUnlinkedOnTheReservedDomain', function fiveTestPatientAccountsExistUnlinkedOnTheReservedDomain() {
+    expect(rowSet.fixtures.testPatientAccounts).toHaveLength(5)
+    const linkedIds = new Set(
+      [...rowSet.patients, ...rowSet.providers, ...rowSet.staffAdmins].map((r) => r.user_id).filter(Boolean),
+    )
+    for (const account of rowSet.fixtures.testPatientAccounts) {
+      expect(account.email.endsWith(`@${DEMO_MAIL_DOMAIN}`)).toBe(true)
+      expect(linkedIds.has(account.id)).toBe(false)
+    }
+  })
 })
 
 describe('AC + mandatory adversarial: no seeded email is outside a domain that cannot receive mail', () => {
