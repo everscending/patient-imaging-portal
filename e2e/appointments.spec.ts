@@ -72,6 +72,22 @@ async function show(page: import('@playwright/test').Page, items: FixtureAppoint
   await expect(page.getByTestId('appointment-list')).toBeVisible()
 }
 
+async function mockOpenSlots(page: import('@playwright/test').Page): Promise<void> {
+  await page.route('**/api/appointments/*/slots', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      providerTimeZone: 'America/Chicago',
+      slots: [{ id: SLOT_ID, startsAt: '2030-06-11T14:00:00-05:00', endsAt: '2030-06-11T15:00:00-05:00' }],
+    }),
+  }))
+}
+
+async function pickSlotAndConfirm(page: import('@playwright/test').Page): Promise<void> {
+  await page.locator('[data-testid="appointment-reschedule"]:visible').click()
+  await page.locator('[data-testid="slot-item"]:visible').first().click()
+  await page.getByTestId('appointment-reschedule-confirm').click()
+}
+
 test.describe('JOR-257 appointments', () => {
   test('seededLiveAppointments_insideNoticeLocksAndOutsideOffersBoth', async ({ page }) => {
     test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
@@ -170,10 +186,9 @@ test.describe('JOR-257 appointments', () => {
   test('rescheduleReturningSlotUnavailable_leavesItemUnchanged', async ({ page }) => {
     await signedIn(page)
     await page.route('**/api/appointments/*', (route) => route.fulfill({ status: 409, contentType: 'application/json', body: '{"error":"slot_unavailable","message":"That slot is no longer available."}' }))
+    await mockOpenSlots(page)
     await show(page, [appointment()])
-    await page.locator('[data-testid="appointment-reschedule"]:visible').click()
-    await page.locator('input:visible').fill(SLOT_ID)
-    await page.getByRole('button', { name: 'Confirm reschedule' }).click()
+    await pickSlotAndConfirm(page)
     await expect(page.locator('[data-testid="appointment-item"]:visible').getByRole('alert')).toHaveText('That slot is no longer available.')
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Status: Requested')
   })
@@ -201,10 +216,9 @@ test.describe('JOR-257 appointments', () => {
       contentType: 'application/json',
       body: JSON.stringify(appointment({ startsAt: '2030-06-11T14:00:00-05:00' })),
     }))
+    await mockOpenSlots(page)
     await show(page, [appointment()])
-    await page.locator('[data-testid="appointment-reschedule"]:visible').click()
-    await page.locator('input:visible').fill(SLOT_ID)
-    await page.getByRole('button', { name: 'Confirm reschedule' }).click()
+    await pickSlotAndConfirm(page)
     await expect(page.locator('[data-testid="appointment-item"]:visible')).toContainText('Jun 11, 2030')
   })
 

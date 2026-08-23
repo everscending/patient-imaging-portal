@@ -136,8 +136,10 @@ test.describe.serial('JOR-240 E6 availability wiring', () => {
     expect(withoutBlock.responseBody.preservedOutOfHours).toEqual([])
 
     await page.getByRole('button', { name: 'Add block' }).click()
-    await page.getByLabel('Block 1 start').fill(BLOCK.startsAt)
-    await page.getByLabel('Block 1 end').fill(BLOCK.endsAt)
+    // The block inputs are native datetime-local pickers: naive local values
+    // in the provider zone, converted to RFC 3339 by the page on save.
+    await page.getByLabel('Block 1 start').fill(`${blockDate}T13:00`)
+    await page.getByLabel('Block 1 end').fill(`${blockDate}T14:00`)
     await page.getByLabel('Block 1 reason').fill(BLOCK.reason)
     const withBlock = await saveAvailability(page)
     expect(withBlock.requestBody).toEqual({

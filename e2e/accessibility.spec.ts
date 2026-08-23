@@ -487,11 +487,14 @@ test.describe.serial('JOR-237 keyboard and accessibility pass', () => {
     await expect(reschedule).toHaveAccessibleName('Reschedule')
     await tabTo(page, reschedule)
     await page.keyboard.press('Enter')
-    const newSlot = changeable.getByTestId('slot-item').first()
+    // Opening the panel hides the item's Reschedule button, so re-anchor on
+    // the open panel rather than the has-reschedule filter.
+    const panel = page.getByTestId('appointment-reschedule-panel')
+    const newSlot = panel.getByTestId('slot-item').first()
     await expect(newSlot).toBeVisible()
     await tabTo(page, newSlot)
     await page.keyboard.press('Enter')
-    await tabTo(page, changeable.getByTestId('appointment-reschedule-confirm'))
+    await tabTo(page, page.getByTestId('appointment-reschedule-confirm'))
     await page.keyboard.press('Enter')
     const updatedAppointment = page.getByTestId('appointment-item').filter({ hasText: 'Jun 11, 2030' })
     await expect(updatedAppointment).toBeVisible()

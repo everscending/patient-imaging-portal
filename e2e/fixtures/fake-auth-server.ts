@@ -127,6 +127,7 @@ type FakeBookingAppointment = { id: string; slot_id: string; patient_id: string;
 type FakeAppointment = {
   id: string
   patient_id: string
+  provider_id: string
   status: 'requested' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   out_of_hours: boolean
   created_at: string
@@ -273,6 +274,7 @@ const APPOINTMENTS: FakeAppointment[] = [
   {
     id: '22552255-2255-4255-8255-225522552255',
     patient_id: SEEDED_PATIENT.id,
+    provider_id: E2_PROVIDER_ID,
     status: 'confirmed',
     out_of_hours: false,
     created_at: new Date(APPOINTMENT_SEED_NOW).toISOString(),
@@ -286,6 +288,7 @@ const APPOINTMENTS: FakeAppointment[] = [
   {
     id: '22662266-2266-4266-8266-226622662266',
     patient_id: SEEDED_PATIENT.id,
+    provider_id: E2_PROVIDER_ID,
     status: 'confirmed',
     out_of_hours: true,
     created_at: new Date(APPOINTMENT_SEED_NOW - 1).toISOString(),
@@ -906,6 +909,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     patientAppointments.push({
       id: appointment.id,
       patient_id: patient.id,
+      provider_id: slot.provider_id,
       status: 'requested',
       out_of_hours: false,
       created_at: new Date().toISOString(),
@@ -1243,7 +1247,9 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
   }
 
   async function handleEmailOutbox(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-    if (req.method === 'POST' && authenticatedUser(req)) {
+    // Migration 016 denies the app role all email_outbox access; only the
+    // service role may enqueue, so the fake accepts exactly that.
+    if (req.method === 'POST' && serviceRoleRequest(req)) {
       const body = await readJsonBody(req)
       const now = new Date().toISOString()
       emailOutbox.push({

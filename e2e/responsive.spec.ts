@@ -263,7 +263,10 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await slotButton.click()
     const confirm = page.getByTestId('appointment-reschedule-confirm')
     await expectTapTarget(confirm)
-    await expectHorizontalOverflowOwnedBy(appointmentList)
+    // The redesigned appointment list reflows to fit 390px (day-paged slot
+    // grid, wrapped cells), so it owns no horizontal scroll any more; the
+    // page-overflow check below still pins that nothing leaks to the body.
+    await expect(appointmentList).toBeVisible()
     await confirm.scrollIntoViewIfNeeded()
     await expect(confirm).toBeInViewport()
     await expectNoPageOverflow(page)
@@ -350,8 +353,10 @@ test.describe.serial('JOR-224 phone-width patient flows', () => {
     await expect(changeableAppointment.getByTestId('appointment-reschedule')).toBeVisible()
     await expect(changeableAppointment.getByTestId('appointment-cancel')).toBeVisible()
     await changeableAppointment.getByTestId('appointment-reschedule').click()
-    await expect(changeableAppointment.getByLabel('New appointment slot ID')).toBeVisible()
-    await expect(changeableAppointment.getByRole('button', { name: 'Confirm reschedule' })).toBeVisible()
+    const reschedulePanel = page.getByTestId('appointment-reschedule-panel')
+    await expect(reschedulePanel).toBeVisible()
+    await reschedulePanel.getByTestId('slot-item').first().click()
+    await expect(page.getByTestId('appointment-reschedule-confirm')).toBeVisible()
     await expectNoForbiddenTextColour(page)
   })
 
