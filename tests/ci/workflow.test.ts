@@ -81,9 +81,12 @@ const gateInvocations = executableInvocations(ci, /scripts\/gate\.sh/)
 describe('per-change triggers and concurrency', () => {
   const triggerBlock = ci.match(/^on:\n([\s\S]*?)^concurrency:/m)?.[1] ?? ''
 
-  test('adversarial: product workflow push branches are exactly main', () => {
-    expect(pushBranches(ci)).toEqual(['main'])
-    expect(pushBranches(ci.replace('      - main', "      - main\n      - '**'"))).not.toEqual(['main'])
+  test('adversarial: product workflow triggers on pull requests only — main pushes are deploy.yml\'s job', () => {
+    // 2026-08-23: the push trigger moved out; deploy.yml runs the identical
+    // gate on every main push, so a push trigger here doubles cost for no
+    // extra signal.
+    expect(pushBranches(ci)).toEqual([])
+    expect(triggerBlock).not.toMatch(/^\s*push:\s*$/m)
     expect(triggerBlock).toMatch(/^\s*pull_request:\s*$/m)
   })
 
@@ -220,8 +223,10 @@ describe('per-change coverage stays cumulative', () => {
 describe('fresh-clone certification stays required and visible', () => {
   const triggerBlock = certification.match(/^on:\n([\s\S]*?)^concurrency:/m)?.[1] ?? ''
 
-  test('certification runs on main, nightly, and by manual dispatch', () => {
-    expect(triggerBlock).toMatch(/push:\s*\n\s+branches:\s*\n\s+- main/)
+  test('certification runs nightly and by manual dispatch, never per push', () => {
+    // 2026-08-23: per-push trigger removed — a 1.5h clean-machine check per
+    // commit was noise; nightly is the cadence someone actually triages.
+    expect(triggerBlock).not.toMatch(/^\s*push:\s*$/m)
     expect(triggerBlock).toMatch(/^\s*schedule:\s*$/m)
     expect(triggerBlock).toMatch(/cron:\s*["']17 7 \* \* \*["']/)
     expect(triggerBlock).toMatch(/^\s*workflow_dispatch:\s*$/m)

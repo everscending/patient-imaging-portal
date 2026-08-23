@@ -2,13 +2,12 @@ name: CI
 
 # CQ-8 per-change product validation: lint, types, unit, PostgreSQL integration,
 # and ordinary product Playwright tests run once per branch through its pull
-# request. Main pushes still validate the integrated tree.
+# request. Main pushes are validated by deploy.yml's gate-then-confirm, which
+# runs the identical suite — running it here too doubled every push's cost
+# for no extra signal (removed 2026-08-23).
 # Fresh-clone E0/E1 certification is kept independently visible in
 # certification.yml; it is intentionally not recursive inside this UI gate.
 on:
-  push:
-    branches:
-      - main
   pull_request:
 
 concurrency:

@@ -1,12 +1,11 @@
 name: Certification
 
-# Fresh-clone certification is expensive by design. It is visible on main,
-# runs nightly, and can be launched manually without recursively slowing every
-# pull-request product gate.
+# Fresh-clone certification is expensive by design (~1.5h). It runs nightly
+# and can be launched manually; the per-push trigger was removed 2026-08-23 —
+# clean-machine regressions do not need per-commit detection, and a red
+# nightly is a signal someone actually triages rather than background noise
+# on every push.
 on:
-  push:
-    branches:
-      - main
   schedule:
     - cron: "17 7 * * *"
   workflow_dispatch:

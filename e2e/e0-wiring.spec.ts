@@ -260,13 +260,15 @@ test.describe('Environment contract — acceptance + mandatory adversarial: §8,
   })
 })
 
+// Main pushes are gated by deploy.yml since 2026-08-23 (ci.yml is
+// pull-request-only), so the green-run check reads the Deploy workflow.
 test.describe('CI — acceptance: lint, unit, and end-to-end run on every push', () => {
   test('acceptance: the latest completed run on origin/main is green and its log shows scripts/gate.sh ui', () => {
     test.skip(!ghAvailable(), 'gh CLI is not authenticated in this environment')
     const mainSha = execFileSync('git', ['rev-parse', 'origin/main'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim()
     const raw = execFileSync(
       'gh',
-      ['run', 'list', '--branch', 'main', '--workflow', 'CI', '--json', 'databaseId,headSha,status,conclusion', '--limit', '10'],
+      ['run', 'list', '--branch', 'main', '--workflow', 'Deploy', '--json', 'databaseId,headSha,status,conclusion', '--limit', '10'],
       { cwd: REPO_ROOT, encoding: 'utf8' },
     )
     const runs = JSON.parse(raw) as Array<{ databaseId: number; headSha: string; status: string; conclusion: string }>
