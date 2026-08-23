@@ -82,6 +82,18 @@ describe('apply_provider_availability transactional accept-and-flag', () => {
     expect(psql(run.dbName, `select count(*) from slots a join slots b on a.provider_id=b.provider_id and a.id<b.id and tstzrange(a.starts_at,a.ends_at) && tstzrange(b.starts_at,b.ends_at) where a.provider_id='${providerId}';`)).toBe('0')
   })
 
+  test('a slot referenced only by a cancelled appointment survives regeneration instead of aborting the save', () => {
+    const { providerId, callerId } = fixture()
+    const slotId = psql(run.dbName, `select id from slots where provider_id='${providerId}' and starts_at='2026-08-17 15:30+00';`)
+    psql(run.dbName, `insert into appointments (slot_id,patient_id,provider_id,service_id,status)
+      select '${slotId}', patient_id, provider_id, service_id, 'cancelled' from appointments where provider_id='${providerId}';`)
+    expect(psql(run.dbName, `select status from slots where id='${slotId}';`)).toBe('open')
+
+    const hours = `[{"weekday":1,"startsLocal":"09:00","endsLocal":"17:00"}]`
+    expect(apply(providerId, callerId, hours, `array['[2026-08-17 15:30+00,2026-08-17 16:00+00)','[2026-08-17 16:00+00,2026-08-17 16:30+00)']`)).toBe('0|1|0')
+    expect(psql(run.dbName, `select count(*) from slots where id='${slotId}';`)).toBe('1')
+  })
+
   test('a failure after replacement begins rolls every availability change back', () => {
     const { providerId, callerId } = fixture()
     const before = psql(run.dbName, `select count(*) || '|' || min(starts_local)::text from working_hours where provider_id='${providerId}';`)
