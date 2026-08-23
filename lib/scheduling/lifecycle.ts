@@ -3,6 +3,20 @@ export type SchedulingRole = 'patient' | 'provider' | 'admin'
 export const clinicianTransitionStatuses = ['confirmed', 'completed', 'no_show'] as const satisfies readonly AppointmentStatus[]
 export type ClinicianTransitionStatus = (typeof clinicianTransitionStatuses)[number]
 
+// Canonical action verb for each transition a clinician can take. Lives here
+// (not in the schedule page) because any per-status mapping outside this file
+// trips the single-authority guard in tests/scheduling/lifecycle.test.ts.
+const ACTION_LABELS: Partial<Record<AppointmentStatus, string>> = {
+  confirmed: 'Confirm',
+  completed: 'Complete',
+  cancelled: 'Cancel',
+  no_show: 'Mark no-show',
+}
+
+export function actionLabel(status: AppointmentStatus): string {
+  return ACTION_LABELS[status] ?? status
+}
+
 export type LifecycleInput = {
   status: AppointmentStatus
   role: SchedulingRole

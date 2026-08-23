@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useProviderShell } from '../../../../components/shell/ProviderShell'
 import type { AppointmentDto } from '../../../../lib/scheduling/booking'
+import { actionLabel } from '../../../../lib/scheduling/lifecycle'
 
 type Transition = AppointmentDto['allowedTransitions'][number]
 type Schedule = {
@@ -41,17 +42,6 @@ function shiftDay(date: string, days: number): string {
 
 function dayLabel(date: string): string {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(`${date}T00:00:00Z`))
-}
-
-const ACTION_LABELS: Partial<Record<Transition, string>> = {
-  confirmed: 'Confirm',
-  completed: 'Complete',
-  cancelled: 'Cancel',
-  no_show: 'Mark no-show',
-}
-
-function actionLabel(status: Transition): string {
-  return ACTION_LABELS[status] ?? status
 }
 
 export default function ProviderSchedulePage() {

@@ -190,6 +190,24 @@ language sql stable
 as $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
 `
 
+// Hosted Supabase always has the PostgREST roles anon and authenticated;
+// migration 016 revokes from them unconditionally, so a fresh cluster must
+// hold them before any migration set applies. Cluster-global like app_user,
+// so creation runs under the same advisory lock as migrations (see
+// withRoleLock) and is guarded for the concurrent-worktree case anyway.
+const HOSTED_ROLE_STUB_SQL = `
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin noinherit;
+  end if;
+exception when duplicate_object then null;
+end $$;
+`
+
 // Arbitrary fixed key identifying "first-time app_user provisioning" as a
 // cluster-wide critical section. Any process — this one or another
 // worktree's — blocks on pg_advisory_lock until whoever holds it finishes
@@ -270,6 +288,7 @@ export async function startRun(container: Container, migrationsDir?: string): Pr
   psql(MAINTENANCE_DB, `INSERT INTO ${REGISTRY_TABLE} (dbname) VALUES ('${dbName}');`)
   stubAuth(dbName)
   await withRoleLock(() => {
+    psqlFile(dbName, HOSTED_ROLE_STUB_SQL)
     runMigrations(dbName, migrationsDir)
   })
   return {
