@@ -108,6 +108,15 @@ Protections in place:
 - **No PHI in application or server logs** — identifiers and references are
   logged instead of names, dates of birth, contact details, or health
   context.
+- **Encryption in transit and at rest (SEC-3).** Every connection — browser
+  to the app, the app to Supabase, and outbound email — runs over TLS/HTTPS;
+  the deployed certificate is recorded per release in
+  [`docs/deploy.md`](docs/deploy.md)'s live-check table. At rest, the
+  Postgres database and the private `phi` Storage bucket are encrypted by
+  the hosting platform (Supabase encrypts database storage and object
+  storage at rest as a platform default). Signed URLs add a second bound on
+  stored PHI exposure: a leaked link dies with its short TTL
+  (`SIGNED_URL_TTL_SECONDS`, default 300 s).
 
 ## Business Associate Agreement (BAA) disclosure
 

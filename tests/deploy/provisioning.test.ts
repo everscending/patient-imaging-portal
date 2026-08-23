@@ -34,6 +34,7 @@ describe('deployed schema provisioning', () => {
       '014_patient_imaging_access_local_compat.sql',
       '015_provider_schedule_patient_refs.sql',
       '016_security_audit_fixes.sql',
+      '017_booking_audit_transactional.sql',
     ])
 
     const program = buildMigrationProgram(files)

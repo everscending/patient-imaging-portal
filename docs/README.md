@@ -25,6 +25,7 @@ the fact itself.
 - [ADR-0012 — The twenty-two closures that writing the tickets forced](adr/0012-phase-4-closures.md)
 - [ADR-0013 — One test Postgres on an ephemeral port, with a database per run](adr/0013-one-test-postgres-ephemeral-port-database-per-run.md)
 - [ADR-0014 — Transactional domain writes own their audit rows](adr/0014-transactional-domain-audits.md)
+- [ADR-0015 — The as-built database plane: executor-owned RPCs, the schedule view, and the reminder lease](adr/0015-as-built-database-plane.md)
 
 ## Deployment
 
