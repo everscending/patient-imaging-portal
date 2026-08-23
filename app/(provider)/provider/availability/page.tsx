@@ -444,10 +444,14 @@ export default function AvailabilityPage() {
 
       {summary ? (
         <section className="pip-save-summary" aria-live="polite">
-          <p><strong>Saved. {summary.removedOpenSlots} open slots removed.</strong></p>
+          <p><strong>Availability saved. {summary.generatedOpenSlots} open slots regenerated.</strong></p>
           {summary.preservedOutOfHours.length > 0 ? (
             <>
-              <p>These booked appointments are now outside your hours and have been kept:</p>
+              <p>
+                {summary.preservedOutOfHours.length === 1
+                  ? 'This booked appointment falls outside your hours and was kept:'
+                  : `These ${summary.preservedOutOfHours.length} booked appointments fall outside your hours and were kept:`}
+              </p>
               <ul data-testid="availability-collision-list">
                 {summary.preservedOutOfHours.map((appointment) => (
                   <li key={appointment.appointmentId}>
