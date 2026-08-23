@@ -7,7 +7,6 @@
 // insertFailureRollsBackTheUpdateToo test below forces the second half of
 // the function to fail and proves the first half doesn't survive it.
 import { execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { ensureContainer, startRun, stopRun, type Container, type Run } from '../setup/postgres'
 
@@ -63,8 +62,20 @@ function insertAuthUser(dbName: string): string {
   return psql(dbName, `insert into auth.users default values returning id;`)
 }
 
+// Sequential refs, not random slices — 4 random hex chars can collide on
+// the unique patient_ref (see rls.test.ts, range 9000+). This file
+// reserves 8900–8999.
+let patientReferenceSequence = 8900
+
+function nextPatientReference(): string {
+  if (patientReferenceSequence > 8999) {
+    throw new Error('migration-004 patient fixture exhausted its reserved reference range')
+  }
+  return `PT-${String(patientReferenceSequence++).padStart(4, '0')}`
+}
+
 function insertPatient(dbName: string, userId: string | null = null): string {
-  const ref = `PT-${randomUUID().slice(0, 4)}`
+  const ref = nextPatientReference()
   const userIdSql = userId ? `'${userId}'` : 'null'
   return psql(
     dbName,

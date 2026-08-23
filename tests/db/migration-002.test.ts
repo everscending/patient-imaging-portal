@@ -94,11 +94,23 @@ function pastTs(hoursAgo: number): string {
   return new Date(Date.now() - hoursAgo * HOUR).toISOString()
 }
 
+// Sequential refs, not random slices — 4 random hex chars can collide on
+// the unique patient_ref (see rls.test.ts, range 9000+). This file
+// reserves 8500–8899.
+let patientReferenceSequence = 8500
+
+function nextPatientReference(): string {
+  if (patientReferenceSequence > 8899) {
+    throw new Error('migration-002 patient fixture exhausted its reserved reference range')
+  }
+  return `PT-${String(patientReferenceSequence++).padStart(4, '0')}`
+}
+
 function insertPatient(dbName: string): string {
   return psql(
     dbName,
     `insert into patients (patient_ref, date_of_birth, full_name, email)
-     values ('PT-${randomUUID().slice(0, 4)}', '1990-01-01', 'Patient ${randomUUID().slice(0, 4)}', 'p${randomUUID().slice(0, 8)}@example.com')
+     values ('${nextPatientReference()}', '1990-01-01', 'Patient ${randomUUID().slice(0, 4)}', 'p${randomUUID().slice(0, 8)}@example.com')
      returning id;`,
   )
 }
