@@ -78,7 +78,7 @@ describe('deployed provisioning program', () => {
     psql(run.dbName, program)
     psql(run.dbName, program)
 
-    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('20')
+    expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('21')
     expect(psql(run.dbName, "select count(*) from storage.buckets where id = 'phi' and not public;")).toBe('1')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'patients', 'select');")).toBe('t')
     expect(psql(run.dbName, "select has_table_privilege('authenticated', 'appointments', 'delete');")).toBe('f')
@@ -146,7 +146,7 @@ describe('deployed provisioning program', () => {
       const result = runProgram(run.dbName, program)
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain(`${target.name}: applied migration checksum changed`)
-      expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('20')
+      expect(psql(run.dbName, 'select count(*) from app_deploy.schema_migrations;')).toBe('21')
     } finally {
       psql(
         run.dbName,
