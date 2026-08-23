@@ -7,12 +7,13 @@ import type { NextRequest } from 'next/server'
 import { anonClient, authClient } from './lib/db/client'
 import { getSessionToken } from './lib/session-cookie'
 
-// §7's URL map: exactly these three stems (each covering its nested pages —
+// §7's URL map: every patient stem (each covering its nested pages —
 // /studies/[studyId], /studies/[studyId]/clips/[clipId], /reports/[reportId])
-// need the account linked to a patient record. /profile, /appointments and
-// /book need a session only.
-const VERIFIED_PATIENT_STEMS = new Set(['studies', 'reports', 'shares'])
-const SESSION_ONLY_STEMS = new Set(['profile', 'appointments', 'book'])
+// needs the account linked to a patient record. Verification is the first
+// stop after login: an unverified session is redirected to /verify from any
+// of these, so /verify itself is the only patient page a session can use
+// before linking.
+const VERIFIED_PATIENT_STEMS = new Set(['studies', 'reports', 'shares', 'profile', 'appointments', 'book'])
 
 function classifyPath(pathname: string): { apiRoute: boolean; stem: string } {
   const apiRoute = pathname.startsWith('/api/')
@@ -62,8 +63,7 @@ export async function middleware(request: NextRequest): Promise<Response> {
   if (apiRoute) return NextResponse.next()
 
   const requiresVerified = VERIFIED_PATIENT_STEMS.has(stem)
-  const requiresSession = requiresVerified || SESSION_ONLY_STEMS.has(stem)
-  if (!requiresSession) return NextResponse.next()
+  if (!requiresVerified) return NextResponse.next()
 
   const token = getSessionToken(request)
   // A missing cookie is an unauthenticated request, not a navigation flow.
@@ -77,7 +77,7 @@ export async function middleware(request: NextRequest): Promise<Response> {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (requiresVerified && !(await isLinkedToPatient(token, data.user.id))) {
+  if (!(await isLinkedToPatient(token, data.user.id))) {
     const verifyUrl = new URL('/verify', request.url)
     verifyUrl.searchParams.set('next', sanitizeNextPath(pathname))
     return NextResponse.redirect(verifyUrl)

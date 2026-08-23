@@ -8,6 +8,11 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
+import {
+  acquireIdentityFixtureLock,
+  IDENTITY_FIXTURE_HOOK_TIMEOUT_MS,
+  releaseIdentityFixtureLock,
+} from './fixtures/identity-fixture-lock'
 
 const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
 
@@ -238,7 +243,7 @@ test.describe('Password never rendered, logged, or in a query string — mandato
   })
 })
 
-test.describe('Middleware — six verified-patient routes redirect to /verify; three session-only routes do not', () => {
+test.describe('Middleware — every patient page route redirects an unverified session to /verify', () => {
   const VERIFIED_ROUTES = [
     '/studies',
     '/studies/11111111-1111-1111-1111-111111111111',
@@ -246,6 +251,9 @@ test.describe('Middleware — six verified-patient routes redirect to /verify; t
     '/reports',
     '/reports/11111111-1111-1111-1111-111111111111',
     '/shares',
+    '/profile',
+    '/appointments',
+    '/book',
   ]
 
   test('acceptance: verified_unlinkedSession_redirectsToVerifyWithEncodedNext', async ({ request }) => {
@@ -275,15 +283,6 @@ test.describe('Middleware — six verified-patient routes redirect to /verify; t
       error: 'identity_verification_required',
       message: expect.any(String),
     })
-  })
-
-  test('acceptance: sessionOnlyRoutes_areNeverRedirectedToVerify', async ({ request }) => {
-    await registerAndSignIn(request)
-    for (const route of ['/profile', '/appointments', '/book']) {
-      const response = await request.get(route, { maxRedirects: 0 })
-      const location = response.headers()['location'] ?? ''
-      expect(location.includes('/verify'), route).toBe(false)
-    }
   })
 
   test('mandatory adversarial: next_attackerSuppliedValue_isIgnoredForTheRedirectMiddlewareBuilds', async ({
@@ -339,8 +338,8 @@ test.describe('Middleware — expired/absent session', () => {
   })
 })
 
-test.describe('Registering, signing in, and reaching a session-only page', () => {
-  test('acceptance: freshAccount_registersSignsInAndReachesAppointments', async ({ page }) => {
+test.describe('Registering and signing in lands an unverified account on /verify', () => {
+  test('acceptance: freshAccount_registersSignsInAndLandsOnVerify', async ({ page }) => {
     const email = uniqueEmail('golden-path')
     await page.goto('/register')
     await page.getByLabel('Email').fill(email)
@@ -351,30 +350,38 @@ test.describe('Registering, signing in, and reaching a session-only page', () =>
     await page.getByLabel('Email').fill(email)
     await page.getByLabel('Password').fill(PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    await expect(page).toHaveURL(/\/appointments$/)
+    await expect(page).toHaveURL(/\/verify\?next=%2Fappointments$/)
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
-  })
-
-  // /profile's page.tsx belongs to JOR-263 — this proves middleware keeps
-  // treating the now-implemented page as session-only rather than requiring
-  // an identity link.
-  test('acceptance: sessionOnlyRoute_profile_isNotBlockedByMiddleware', async ({
-    request,
-  }) => {
-    await registerAndSignIn(request)
-    const response = await request.get('/profile', { maxRedirects: 0 })
-    expect(response.status()).toBe(200)
   })
 })
 
 test.describe('PatientShell — U-1, acceptance + mandatory adversarial', () => {
   const DESTINATIONS = ['Appointments', 'Imaging', 'Reports', 'Shares']
 
+  // Every patient page now requires a verified session, so the shell tests
+  // link the seeded fixture patient (PT-4471) — serialized by the identity
+  // fixture lock because linking resets the shared fixture's identity state.
+  let lockToken: string | undefined
+  test.beforeEach(async () => {
+    test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
+    lockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterEach(async () => {
+    await releaseIdentityFixtureLock(lockToken)
+    lockToken = undefined
+  })
+
   async function signedInPage(page: Page): Promise<void> {
+    const authUrl = await fakeAuthServerUrl()
+    expect((await page.request.post(`${authUrl}/__test__/reset-identity`)).status()).toBe(200)
     const email = uniqueEmail('shell')
     await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })
     const loginResponse = await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })
     expect(loginResponse.status()).toBe(200)
+    const verification = await page.request.post('/api/identity/verify', {
+      data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
+    })
+    expect(verification.status()).toBe(200)
   }
 
   test('acceptance: at390px_rendersBottomTabBarWithFourDestinations_44pxTargets_noHorizontalScroll', async ({
@@ -422,6 +429,11 @@ test.describe('PatientShell — U-1, acceptance + mandatory adversarial', () => 
   })
 
   test('mandatory adversarial: noVerificationIndicatorAnywhere_at390pxOr1280px', async ({ page }) => {
+    // Appointments are mocked empty so the assertion sees only the shell —
+    // seeded appointment times would otherwise trip the \d{1,2}:\d{2} check.
+    await page.route('**/api/appointments', (route) =>
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ appointments: [] }) }),
+    )
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 900 })
       await signedInPage(page)

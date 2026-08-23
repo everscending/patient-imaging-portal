@@ -1179,8 +1179,10 @@ no failing test anywhere, because no test would know to look.
 `GET`/`PATCH /api/profile` and `GET /api/identity/status` authenticate the
 session and return only the caller's own account data — including the caller's
 own `patientRef` once FR-2 has linked it. They deliberately do not cross the
-guard: both must work *before* the identity link exists (the profile form and
-the verify screen are how an unlinked account gets linked at all), the data
+guard: both must work *before* the identity link exists (the verify screen is
+how an unlinked account gets linked at all — the `/profile` *page* now
+redirects an unlinked session to `/verify`, but its API stays session-only so
+the linked profile renders the moment verification completes), the data
 returned can never belong to another patient, and the closed audit-action set
 (§3) carries no `profile.view` — adding one would write an audit row on every
 shell render for no leakage-detection value. This is the complete list; a new
@@ -1599,8 +1601,8 @@ POST /api/jobs/reminders          header: x-cron-secret
 |------|-----|-------------|
 | `/` | anyone | landing |
 | `/register`, `/login` | anonymous | FR-1 |
-| `/profile` | signed-in patient | FR-1 · basic profile management |
-| `/verify` | signed-in patient | FR-2 |
+| `/profile` | verified patient | FR-1 · basic profile management |
+| `/verify` | signed-in patient | FR-2 · first stop after login until verified |
 | `/studies` | verified patient | FR-3 |
 | `/studies/[studyId]` | verified patient | FR-3 · image viewer, zoom/pan |
 | `/studies/[studyId]/clips/[clipId]` | verified patient | FR-4 · cine viewer |
@@ -1608,8 +1610,8 @@ POST /api/jobs/reminders          header: x-cron-secret
 | `/reports/[reportId]` | verified patient | FR-7 |
 | `/shares` | verified patient | FR-5, FR-8 · list + revoke |
 | `/s/[token]` | **anonymous recipient** | FR-5, FR-8, EC-5 |
-| `/appointments` | patient | FR-11, FR-13, FR-14 |
-| `/book` | patient | FR-11 |
+| `/appointments` | verified patient | FR-11, FR-13, FR-14 |
+| `/book` | verified patient | FR-11 |
 | `/provider/schedule` | provider | FR-10, FR-14 |
 | `/provider/availability` | provider | FR-10, EC-8 |
 | `/admin/audit` | admin | SEC-4 |

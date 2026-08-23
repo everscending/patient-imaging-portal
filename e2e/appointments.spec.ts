@@ -45,10 +45,11 @@ function appointment(overrides: Partial<FixtureAppointment> = {}): FixtureAppoin
   }
 }
 
+// Every patient page now requires a verified session, so even the tests that
+// mock the appointments API must link the seeded fixture patient to get past
+// middleware. Identity mutation happens under the suite-level fixture lock.
 async function signedIn(page: import('@playwright/test').Page): Promise<void> {
-  const email = `jor-257-${randomUUID()}@example.test`
-  expect((await page.request.post('/api/auth/register', { data: { email, password: PASSWORD } })).status()).toBe(201)
-  expect((await page.request.post('/api/auth/login', { data: { email, password: PASSWORD } })).status()).toBe(200)
+  await resetAndLinkSeededPatient(page.request)
 }
 
 async function fakeServerUrl(): Promise<string> {
@@ -89,29 +90,32 @@ async function pickSlotAndConfirm(page: import('@playwright/test').Page): Promis
 }
 
 test.describe('JOR-257 appointments', () => {
-  test('seededLiveAppointments_insideNoticeLocksAndOutsideOffersBoth', async ({ page }) => {
+  // Every test in this suite links the seeded patient, so the whole suite
+  // leases the shared identity fixture.
+  let lockToken: string | undefined
+  test.beforeAll(async () => {
     test.setTimeout(IDENTITY_FIXTURE_HOOK_TIMEOUT_MS)
-    const lockToken = await acquireIdentityFixtureLock()
-    try {
-      await resetAndLinkSeededPatient(page.request)
-      await page.goto('/appointments')
+    lockToken = await acquireIdentityFixtureLock()
+  })
+  test.afterAll(async () => releaseIdentityFixtureLock(lockToken))
 
-      const visibleItems = page.locator('[data-testid="appointment-item"]:visible')
-      await expect(visibleItems).toHaveCount(2)
+  test('seededLiveAppointments_insideNoticeLocksAndOutsideOffersBoth', async ({ page }) => {
+    await resetAndLinkSeededPatient(page.request)
+    await page.goto('/appointments')
 
-      const locked = visibleItems.filter({ has: page.getByTestId('appointment-notice-locked') })
-      await expect(locked).toHaveCount(1)
-      await expect(locked.getByTestId('appointment-notice-locked')).toHaveText(NOTICE)
-      await expect(locked.getByTestId('appointment-reschedule')).toHaveCount(0)
-      await expect(locked.getByTestId('appointment-cancel')).toHaveCount(0)
+    const visibleItems = page.locator('[data-testid="appointment-item"]:visible')
+    await expect(visibleItems).toHaveCount(2)
 
-      const offered = visibleItems.filter({ has: page.getByTestId('appointment-reschedule') })
-      await expect(offered).toHaveCount(1)
-      await expect(offered.getByTestId('appointment-reschedule')).toHaveCount(1)
-      await expect(offered.getByTestId('appointment-cancel')).toHaveCount(1)
-    } finally {
-      await releaseIdentityFixtureLock(lockToken)
-    }
+    const locked = visibleItems.filter({ has: page.getByTestId('appointment-notice-locked') })
+    await expect(locked).toHaveCount(1)
+    await expect(locked.getByTestId('appointment-notice-locked')).toHaveText(NOTICE)
+    await expect(locked.getByTestId('appointment-reschedule')).toHaveCount(0)
+    await expect(locked.getByTestId('appointment-cancel')).toHaveCount(0)
+
+    const offered = visibleItems.filter({ has: page.getByTestId('appointment-reschedule') })
+    await expect(offered).toHaveCount(1)
+    await expect(offered.getByTestId('appointment-reschedule')).toHaveCount(1)
+    await expect(offered.getByTestId('appointment-cancel')).toHaveCount(1)
   })
 
   test('liveAppointments_canChangeFalseWithNoTransitionsShowsNotice', async ({ page }) => {

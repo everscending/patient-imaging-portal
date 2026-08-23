@@ -121,12 +121,11 @@ test.describe('JOR-263 /verify and /profile', () => {
     expect(unlinked.status()).toBe(200)
     expect(await unlinked.json()).toEqual({ email, fullName: '', phone: null, patientRef: null })
 
+    // The /profile page itself now sits behind verification — an unlinked
+    // session is redirected to /verify while /api/profile stays session-only.
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/profile')
-    await expect(page.getByTestId('profile-form')).toBeVisible()
-    await expect(page.getByTestId('profile-patient-ref')).toHaveCount(0)
-    await expect(page.getByLabel('Email')).toHaveAttribute('readonly', '')
-    expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+    await expect(page).toHaveURL(/\/verify\?next=%2Fprofile$/)
 
     const verified = await sessionRequest.post('/api/identity/verify', {
       data: { patientRef: 'PT-4471', dateOfBirth: '1988-03-14' },
@@ -149,7 +148,10 @@ test.describe('JOR-263 /verify and /profile', () => {
     })
     expect((await identityState(sessionRequest)).patients).toEqual(patientsBefore)
 
-    await page.reload()
+    await page.goto('/profile')
+    await expect(page.getByTestId('profile-form')).toBeVisible()
+    await expect(page.getByLabel('Email')).toHaveAttribute('readonly', '')
+    expect(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     const patientReference = page.getByTestId('profile-patient-ref')
     await expect(patientReference).toHaveValue('PT-4471')
     await expect(patientReference).toHaveAttribute('readonly', '')
