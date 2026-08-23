@@ -83,6 +83,10 @@ directly, so the payloads are validated server-side like every other surface
 images or reports until the account is linked to a patient record (§4.2); once
 it is, signing in is all that is needed.
 
+After a successful registration the login page shows a one-time notice —
+**"Account created. Sign in to continue."** — so the redirect back to `/login`
+reads as success, not as a silent bounce.
+
 ### 4.2 Identity verification — `/verify` · FR-2, EC-1
 
 **A dedicated route, not a modal (U-2).** Middleware redirects any locked route

@@ -8,11 +8,14 @@ import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
   const router = useRouter()
-  // Register sets this flag right before navigating here; shown once.
-  // Removal happens in an effect, not the initializer, so StrictMode's
-  // double-invoked initializer can't eat the flag.
-  const [registered] = useState(() => typeof window !== 'undefined' && sessionStorage.getItem('pip-registered') === '1')
-  useEffect(() => { sessionStorage.removeItem('pip-registered') }, [])
+  // Register sets this flag right before navigating here; shown once. Read
+  // and cleared in an effect so server and client render identically (no
+  // hydration mismatch on a hard load) and StrictMode re-runs stay harmless.
+  const [registered, setRegistered] = useState(false)
+  useEffect(() => {
+    if (sessionStorage.getItem('pip-registered') === '1') setRegistered(true)
+    sessionStorage.removeItem('pip-registered')
+  }, [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
