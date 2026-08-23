@@ -60,7 +60,8 @@ export default function LoginPage() {
         </p>
       ) : null}
 
-      <form data-testid="login-form" onSubmit={handleSubmit} noValidate>
+      {/* method="post" so a pre-hydration native submit never puts the password in the URL */}
+      <form data-testid="login-form" method="post" onSubmit={handleSubmit} noValidate>
         <div className="pip-field">
           <label htmlFor="login-email">Email</label>
           <input

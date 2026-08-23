@@ -115,7 +115,7 @@ export default function VerifyPage() {
       <h1>Verify your identity</h1>
       <p className="pip-notice">This is a one-time step. Once matched, you will not be asked again.</p>
 
-      <form aria-label="Identity verification" data-testid="identity-form" onSubmit={submit} noValidate>
+      <form aria-label="Identity verification" data-testid="identity-form" method="post" onSubmit={submit} noValidate>
         <div className="pip-field">
           <label htmlFor="patient-reference">Patient reference</label>
           <input

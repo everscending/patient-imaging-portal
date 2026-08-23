@@ -51,7 +51,7 @@ export default function RegisterPage() {
         </p>
       ) : null}
 
-      <form data-testid="register-form" onSubmit={handleSubmit} noValidate>
+      <form data-testid="register-form" method="post" onSubmit={handleSubmit} noValidate>
         <div className="pip-field">
           <label htmlFor="register-email">Email</label>
           <input
