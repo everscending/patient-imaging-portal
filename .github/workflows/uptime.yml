@@ -1,0 +1,53 @@
+name: Uptime
+
+# PF-9's standing measurement (sync-report T5). docs/deploy.md's
+# scripts/uptime-check.sh window was a one-off manual poll; this workflow is
+# the scheduled ping that outlives it: every 15 minutes it makes one request
+# to the deployed health endpoint and fails the run when the app is
+# unreachable. The workflow's own run history is the uptime record — green
+# runs over a window ÷ total runs is the PF-9 figure, and a red run is an
+# incident timestamp. The run fails only when the app itself cannot answer;
+# a 200 whose body reports a degraded dependency stays green (that is CQ-3's
+# designed shape — the app is up and saying so) but the state is surfaced in
+# the job summary.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+env:
+  # The production alias, as recorded in docs/deploy.md's run record.
+  PRODUCTION_URL: https://patient-imaging-portal.vercel.app
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: One health request
+        run: |
+          set -euo pipefail
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          status="$(curl -sS -o body.json -w '%{http_code}' --max-time 30 "$PRODUCTION_URL/api/health")" || status="000"
+          body="$(cat body.json 2>/dev/null || echo '{}')"
+          {
+            echo "## Uptime ping"
+            echo ""
+            echo "| Checked (UTC) | Endpoint | HTTP | Body |"
+            echo "| --- | --- | --- | --- |"
+            echo "| $started | \`$PRODUCTION_URL/api/health\` | $status | \`$body\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != "200" ]; then
+            echo "uptime: health endpoint unreachable or non-200 (HTTP $status)" >&2
+            exit 1
+          fi
+          if ! grep -q '"app":"ok"' body.json && ! grep -q '"app": *"ok"' body.json; then
+            echo "uptime: 200 without app:ok — treating as down" >&2
+            exit 1
+          fi
+          # Degraded dependencies keep the run green but visible.
+          if grep -q '"down"' body.json; then
+            echo "::warning::health body reports a degraded dependency: $body"
+          fi
