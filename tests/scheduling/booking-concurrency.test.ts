@@ -332,11 +332,15 @@ describe('book — transaction, DTO, idempotency, derived slot state, and audit'
     const reused = await book(input)
     expect(reused).toEqual({ ok: true, appointment: created.appointment, reused: true })
     expect(psql(`select count(*) from appointments where patient_id = '${input.patientId}' and idempotency_key = '${key}';`)).toBe('1')
-    expect(psql(`select count(*) from audit_events where target_id = '${created.appointment.id}';`)).toBe('1')
+    // SEC-4: the EC-10 replay is a real access and writes its own granted row.
+    expect(psql(`select count(*) from audit_events where target_id = '${created.appointment.id}';`)).toBe('2')
 
     const differentSlot = await book({ ...input, slotId: fixture.slots[1]! })
     expect(differentSlot).toEqual({ ok: false, error: 'idempotency_key_reused' })
     expect(psql(`select count(*) from appointments where patient_id = '${input.patientId}' and idempotency_key = '${key}';`)).toBe('1')
+    expect(
+      psql(`select count(*) from audit_events where action = 'booking.create' and outcome = 'denied' and target_kind = 'slot' and target_id = '${fixture.slots[1]}';`),
+    ).toBe('1')
   })
 
   test('book_serviceNotOffered_returnsBeforeTheSlotRowLock', async () => {
@@ -409,6 +413,10 @@ describe('book — mandatory concurrency and adversarial guards', () => {
     ).toBe('1')
     expect(psql(`select count(*) from slots where id in ('${untouchedSlots.join("','")}') and status = 'open';`)).toBe(openBefore)
     expect(psql(`select count(*) from audit_events ae join appointments a on a.id = ae.target_id where a.slot_id = '${targetSlot}' and ae.action = 'booking.create';`)).toBe('1')
+    // SEC-4: every refused attempt leaves a denied row targeting the slot.
+    expect(
+      psql(`select count(*) from audit_events where action = 'booking.create' and outcome = 'denied' and target_kind = 'slot' and target_id = '${targetSlot}';`),
+    ).toBe(String(CONCURRENCY - 1))
   }, 30_000)
 
   test('sameIdempotencyKeyDifferentSlots_concurrentLoserIsKeyReuseNeverPhantomSuccess', async () => {

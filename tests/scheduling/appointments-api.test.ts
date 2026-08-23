@@ -76,6 +76,28 @@ describe('POST /api/appointments', () => {
     expect(await two.json()).toEqual({ id: ID, slotId: SLOT, startsAt: dto.startsAt, endsAt: dto.endsAt, status: 'requested', providerName: 'Dr. A', serviceName: 'MRI' })
     expect(bookMock).toHaveBeenCalledTimes(2) // booking.ts, never this route, owns booking audit rows
   })
+  test('unverified_account_post_is_pinned_403_and_the_guard_owns_the_denial_audit', async () => {
+    guardMock.mockResolvedValue({ ok: false, status: 403 })
+    const response = await collection.POST(request({ slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID }))
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'identity_verification_required', message: 'Verify your identity to continue.' })
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: ACTOR }, { kind: 'patient', id: null }, 'booking.create', { grantedAudit: 'transactional-rpc' })
+    expect(bookMock).not.toHaveBeenCalled()
+  })
+  test('anonymous_post_is_401_and_still_crosses_the_guard', async () => {
+    callerMock.mockResolvedValue(null); guardMock.mockResolvedValue({ ok: false, status: 401 })
+    const response = await collection.POST(request({ slotId: SLOT, serviceId: SERVICE, idempotencyKey: ID }))
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({ error: 'session_required', message: 'Sign in to continue.' })
+    expect(guardMock).toHaveBeenCalledWith({ kind: 'patient', userId: '' }, { kind: 'patient', id: null }, 'booking.create', { grantedAudit: 'transactional-rpc' })
+    expect(bookMock).not.toHaveBeenCalled()
+  })
+  test('guard_denial_precedes_body_validation_on_post', async () => {
+    guardMock.mockResolvedValue({ ok: false, status: 403 })
+    const response = await collection.POST(request({ slotId: 'not-a-uuid' }))
+    expect(response.status).toBe(403) // auth before EC-12 validation, same ordering as every PHI route
+    expect(bookMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('GET /api/appointments', () => {

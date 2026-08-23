@@ -883,21 +883,40 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
     const slot = bookingSlots.find((candidate) => candidate.id === body.p_slot_id)
     const serviceId = String(body.p_service_id)
     const key = String(body.p_idempotency_key)
+    // Mirrors migration 017: the RPC itself commits one booking.create audit
+    // row per request — granted (appointment) or denied (contested slot).
+    const pushBookingAudit = (outcome: 'granted' | 'denied', targetKind: 'appointment' | 'slot', targetId: string | null) => {
+      auditEvents.push({
+        id: nextAuditEventId++,
+        occurred_at: new Date().toISOString(),
+        actor_kind: 'account',
+        actor_ref: caller?.id ?? null,
+        action: 'booking.create',
+        target_kind: targetKind,
+        target_id: targetId,
+        outcome,
+        detail: null,
+      })
+    }
     const previous = patient ? bookingAppointments.find((candidate) => candidate.patient_id === patient.id && candidate.idempotency_key === key) : undefined
     if (previous) {
       const previousSlot = bookingSlots.find((candidate) => candidate.id === previous.slot_id)!
       if (previous.slot_id !== body.p_slot_id || previous.service_id !== serviceId) {
+        pushBookingAudit('denied', 'slot', String(body.p_slot_id))
         sendJson(res, 200, [bookingRpcRow(previousSlot, previous.service_id, null, 'idempotency_key_reused', false)])
         return
       }
+      pushBookingAudit('granted', 'appointment', previous.id)
       sendJson(res, 200, [bookingRpcRow(previousSlot, previous.service_id, previous, null, true)])
       return
     }
     if (!patient || !slot || slot.status !== 'open') {
+      pushBookingAudit('denied', 'slot', slot?.id ?? String(body.p_slot_id))
       sendJson(res, 200, [bookingRpcRow(slot ?? bookingSlots[0], serviceId, null, 'slot_unavailable', false)])
       return
     }
     if (!bookingServices.some((candidate) => candidate.id === serviceId) || slot.provider_id !== E2_OTHER_PROVIDER_ID) {
+      pushBookingAudit('denied', 'slot', slot.id)
       sendJson(res, 200, [bookingRpcRow(slot, serviceId, null, 'service_not_offered', false)])
       return
     }
@@ -918,6 +937,7 @@ export function startFakeAuthServer(): Promise<FakeAuthServer> {
       services: { name: service.name },
     })
     patientAppointmentSlotIds.set(appointment.id, slot.id)
+    pushBookingAudit('granted', 'appointment', appointment.id)
     sendJson(res, 200, [bookingRpcRow(slot, serviceId, appointment, null, false)])
   }
 

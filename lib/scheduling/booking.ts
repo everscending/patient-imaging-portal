@@ -2,7 +2,6 @@ import 'server-only'
 
 import { cookies } from 'next/headers'
 
-import { recordAuditEvent } from '../audit/events'
 import { config } from '../config'
 import { anonClient } from '../db/client'
 import { SESSION_COOKIE_NAME } from '../session-cookie'
@@ -262,21 +261,13 @@ export async function book(input: {
     if (error) throw new Error('booking: transactional write failed')
     const row = (Array.isArray(data) ? data[0] : data) as BookRpcRow | null
     if (!row) throw new Error('booking: transactional write returned no result')
+    // No audit write here: migration 017's book_appointment commits the
+    // granted or denied booking.create row inside its own transaction
+    // (ADR-0014) — replays and refusals included.
     if (row.result_error) return { ok: false, error: row.result_error }
 
     const appointment = appointmentDto(row, role)
     const reused = required(row.result_reused, 'result_reused')
-    if (!reused) {
-      await recordAuditEvent({
-        actorKind: 'account',
-        actorRef: input.actorUserId,
-        action: 'booking.create',
-        targetKind: 'appointment',
-        targetId: appointment.id,
-        outcome: 'granted',
-      })
-    }
-
     return { ok: true, appointment, reused }
   }, (result) => {
     if (result.ok) return 'ok'
