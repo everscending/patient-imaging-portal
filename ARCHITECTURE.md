@@ -86,7 +86,7 @@ lib/
   scheduling/lifecycle.ts    FR-14 status transitions
   share/links.ts             mint, resolve, revoke
   notify/email.ts            the ONLY caller of Resend
-  notify/reminders.ts        the §12 reminder job body: due-band scan, claim,
+  notify/reminders.ts        the §12 reminder job body: due-band query, claim,
                              outbox drain — invoked only by api/jobs/reminders
   audit/events.ts            the ONLY TypeScript writer to audit_events (ADR-0003/0014: narrow database exceptions)
   audit/actions.ts           the closed action list as data, importable from
@@ -669,8 +669,8 @@ writes one row with `target_id` null and `target_kind` `<kind>_list`.
 `target_kind` is deliberately unconstrained text, but the values in use are
 pinned here: the `PhiTarget` kinds of §5, their `<kind>_list` collection
 forms, `provider` (availability edits), and — since migration 017 — **`slot`**,
-the target of a denied `booking.create` (a refused booking has no appointment
-to point at; the contested slot is what was fought over).
+the target of a denied `booking.create` (a refused booking attempt creates no
+appointment to point at; the contested slot is what was fought over).
 
 `schedule.view` and `appointment.view` exist because provider and admin reads
 are PHI reads. `audit.view` exists because an admin reading the audit log is
@@ -768,8 +768,11 @@ slot-regeneration surfaces from the app role entirely.
 -- `create role app_user` already happened in §3, with the audit grants.
 grant usage on schema public to app_user;
 grant select on all tables in schema public to app_user;
--- (016) email_outbox, reminder_sends, login_attempts, staff_admins and
--- appointment_transitions are re-revoked: service role / executor only.
+-- (016) email_outbox, reminder_sends and login_attempts are deny-all:
+-- service role only. appointment_transitions: participant-scoped read,
+-- executor-only insert. staff_admins: revoked from anon/authenticated on
+-- hosted; the app role keeps a self-or-admin-scoped SELECT via its policy
+-- (the login route and provider layout still read it).
 grant insert, update on identity_attempts, share_links to app_user;
 -- deliberately NOT granted: any write on `slots`. Its status is derived by the
 -- slots_follow_appointments trigger (§3), which is SECURITY DEFINER, so the app
@@ -1256,8 +1259,10 @@ POST /api/auth/logout
   ← 200 { "ok": true }
 ```
 
-Logout revokes the token at Supabase Auth (GoTrue `/auth/v1/logout`,
-AUDIT.md #6) and then clears the session cookie; it never returns a non-2xx —
+Logout attempts a best-effort token revocation at Supabase Auth (GoTrue
+`/auth/v1/logout`, AUDIT.md #6 — a revocation failure is swallowed, because
+the cleared cookie alone already ends this browser's access) and then clears
+the session cookie; it never returns a non-2xx —
 a caller with no session gets the same `200 { "ok": true }`, because "you are
 signed out" is true either way. It is a session action on no PHI target, so it
 sits in the guard rule's allowlist (§5) rather than crossing the guard.
@@ -1465,8 +1470,9 @@ GET  /api/appointments/:id/slots
 ```
 
 The reschedule picker's endpoint: the same provider's open slots from now to
-`SLOT_HORIZON_DAYS`, resolved from the appointment so the client never has to
-carry provider/service ids. It is guarded (the appointment is the PHI target),
+`SLOT_HORIZON_DAYS` (the route reads the config value, never a hardcoded
+twin), resolved from the appointment so the client never has to carry
+provider/service ids. It is guarded (the appointment is the PHI target),
 and `providerTimeZone` exists here — and only here among slot shapes — because
 the picker renders the provider's local time next to the viewer's (EC-6);
 `GET /api/slots` already knows the provider from its own query parameter.
@@ -1554,9 +1560,10 @@ GET /api/provider/schedule?date=…[&providerId=…]
 A separate endpoint, not a role-conditional `/api/appointments` — that shape is
 pinned patient-side and §6 forbids adding fields to a pinned shape. **The patient
 appears by reference only**, never by name or date of birth (SEC-6).
-`providerId` is optional and admin-shaped: any value that is not the caller's
-own provider id resolves `404`, so for a provider it is a no-op and for anyone
-else it leaks nothing.
+`providerId` is optional and inert: non-provider callers 404 before it is
+read, and for a provider any value other than their own id also resolves
+`404` — it exists for symmetry with the client's fetch shape and leaks
+nothing.
 
 ### Audit log — SEC-4, admin only
 
@@ -1648,7 +1655,7 @@ letting a missing value surface as a runtime null. All of these appear in
 | `SEED_SOURCE_SEED` | `patient-imaging-portal` | `db/seed/**` | deterministic assets (ADR-0009) |
 | `PORT` | `4310` | Next dev/start | §9 |
 | `TEST_PG_PORT` | *(unset)* | test harness | ADR-0013 · **optional pin.** Unset means the OS picks a free port and the harness reads it back. Set it only to attach a database client during a debugging session. |
-| `PLAYWRIGHT_BASE_URL` | *(unset)* | `playwright.config.ts`, e2e specs | **optional pin**, TEST_PG_PORT's analogue: unset means Playwright derives its address from `PORT`; set it only to point the e2e suite at an already-running deployment. |
+| `PLAYWRIGHT_BASE_URL` | *(unset)* | `lib/config.ts`, consumed as `config.playwrightBaseUrl` by `playwright.config.ts` and e2e specs | **optional pin**, TEST_PG_PORT's analogue: unset means Playwright derives its address from `PORT`; set it only to point the e2e suite at an already-running deployment. |
 
 ---
 
@@ -2191,13 +2198,14 @@ also carries E9's spec inside the `product` project rather than a dedicated
 one — see e2e/e9-wiring.spec.ts) plus the wiring projects. Playwright runs
 `product` once before its E2/E3 dependents. The single JSON report is then
 validated once per mandatory specification. **The authoritative validator
-inventory is `scripts/gate.sh` itself** (the `PLAYWRIGHT_*_REPORT` steps — 20
+inventory is `scripts/gate.sh` itself** (the `PLAYWRIGHT_*_REPORT` steps — 19
 of them as of 2026-08-23), guarded by `tests/ci/workflow.test.ts`, which
 rejects a UI-gate extension without a matching report validation. An earlier
 draft enumerated the list here and drifted from the script within a week;
 the script is the document of record for this one inventory.
 
-The Playwright suite has seven projects. `product` contains ordinary browser
+The Playwright suite has eight projects (`demo-walkthrough` joined the
+original seven). `product` contains ordinary browser
 checks. `e2-wiring` and `e3-wiring` depend on `product`, so their cumulative
 proofs run after ordinary product tests stop using the fixture's shared state.
 `e4-wiring`, `e5-wiring`, and `e8-wiring` remain isolated projects selected by

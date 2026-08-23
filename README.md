@@ -164,6 +164,8 @@ carries placeholder values only — a real value is never committed.
 | `REMINDER_LEAD_HOURS` | 24 |
 | `IDENTITY_MAX_ATTEMPTS` | 3 |
 | `IDENTITY_LOCKOUT_MINUTES` | 5 |
+| `LOGIN_MAX_ATTEMPTS` | 10 |
+| `LOGIN_LOCKOUT_MINUTES` | 15 |
 | `SIGNED_URL_TTL_SECONDS` | 300 |
 | `SLOT_HORIZON_DAYS` | 60 |
 | `MAX_REQUEST_BODY_BYTES` | 65536 |
@@ -172,10 +174,11 @@ carries placeholder values only — a real value is never committed.
 | `SEED_SOURCE_SEED` | patient-imaging-portal |
 | `PORT` | 4310 |
 | `TEST_PG_PORT` | *(unset — the OS assigns a free port and the test harness reads it back)* |
+| `PLAYWRIGHT_BASE_URL` | *(unset — Playwright derives its address from `PORT`; set only to point e2e at a running deployment)* |
 
 One value lives outside this table: sessions expire after a 60-minute
 inactivity window, a Supabase Auth project setting rather than an application
-variable. `docs/deploy.md` records where it is set.
+variable. `docs/README.md` records where it is set.
 
 ## Stated parameters (ADR-0008)
 
@@ -189,6 +192,8 @@ own number.
 | Reminder lead time before an appointment | `reminderLeadHours` | `REMINDER_LEAD_HOURS` | 24 |
 | Failed identity-verification attempts before lockout | `identityMaxAttempts` | `IDENTITY_MAX_ATTEMPTS` | 3 |
 | Lockout duration once that limit is reached | `identityLockoutMinutes` | `IDENTITY_LOCKOUT_MINUTES` | 5 |
+| Failed password-login attempts before lockout (per email and per source) | `loginMaxAttempts` | `LOGIN_MAX_ATTEMPTS` | 10 |
+| Login lockout duration once that limit is reached | `loginLockoutMinutes` | `LOGIN_LOCKOUT_MINUTES` | 15 |
 | Signed image/cine URL lifetime, in seconds | `signedUrlTtlSeconds` | `SIGNED_URL_TTL_SECONDS` | 300 |
 
 Identity verification carries no lifetime parameter of its own: **ADR-0011**

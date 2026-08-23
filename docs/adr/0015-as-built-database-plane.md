@@ -52,13 +52,16 @@ swallows failures, the exact shape ADR-0014 rejected. The audited wrapper
 decision and its audit row atomically, aligning booking with its 007/008
 siblings.
 
-**2 · Five further narrow functions, one per seam.**
+**2 · Seven further narrow functions, one per seam.**
 `link_patient_identity` (004 — FR-2's atomic attempt-plus-link),
 `claim_reminder_send` (004 — see 4), `apply_provider_availability` (005 —
-ADR-0014's first use), `read_report_detail` (011), `grant_study_access`
-(012, `SECURITY INVOKER`, ADR-0003/0014). `regenerate_provider_slots` remains
-(002) but is callable **only** through `apply_provider_availability` since
-016 revoked its app-role execute (AUDIT.md #3).
+ADR-0014's first use), `request_profile_deletion` (010 — SEC-5's
+transactional request-plus-audit), `grant_patient_imaging_access` (010,
+recompiled 014 — the ADR-0003 `SECURITY INVOKER` access grant),
+`read_report_detail` (011), `grant_study_access` (012, `SECURITY INVOKER`,
+ADR-0003/0014). `regenerate_provider_slots` remains (002) but is callable
+**only** through `apply_provider_availability` since 016 revoked its
+app-role execute (AUDIT.md #3).
 
 **3 · The provider schedule reads patients through a definer-rights view.**
 `provider_schedule_appointments` (migration 015, `security_barrier`):
@@ -79,8 +82,9 @@ documented `on conflict do nothing`.
 - §4's grant block, §10's mechanism note, §12's lease note, §3's
   `login_attempts`/`retryable_at`/target-kind additions and §16's residues
   were updated alongside this ADR (sync-report tickets T7–T10).
-- The `slot` audit target kind is pinned in §3: a denied booking has no
-  appointment to reference; the contested slot is the honest target.
+- The `slot` audit target kind is pinned in §3: a denied booking attempt
+  creates no appointment to reference; the contested slot is the honest
+  target.
 - The migration directory carries duplicate numeric prefixes (004/009/010
   pairs). Ordering is deterministic under the harness's full-filename sort;
   the tracked fix is an order-asserting guard test (T11), never renaming an

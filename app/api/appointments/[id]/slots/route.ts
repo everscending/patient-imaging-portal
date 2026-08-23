@@ -4,12 +4,14 @@
 // read; a row the caller cannot see 404s exactly like the PATCH route.
 import { guardPhiAccess, resolveScheduleActor } from '../../../../../lib/access/guard'
 import { resolveAuthenticatedSession, resolveCallerId } from '../../../../../lib/access/identity'
+import { config } from '../../../../../lib/config'
 import { anonClient } from '../../../../../lib/db/client'
 import { appointmentParamsSchema, parseParams } from '../../../../../lib/validation'
 import { errorResponse } from '../../../../../lib/validation/envelope'
 
-// Mirrors the booking page's window: open slots from now to +60 days.
-const SLOT_WINDOW_DAYS = 60
+// The booking window is the generated grid's horizon — the ADR-0012 stated
+// parameter, never a hardcoded twin of it (ADR-0008's no-duplicate rule).
+const SLOT_WINDOW_DAYS = config.slotHorizonDays
 
 type RouteContext = { params: Promise<{ id: string }> }
 
