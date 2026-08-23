@@ -442,9 +442,17 @@ describe('JOR-239 live share fixture', () => {
     expect(await (await request(`/rest/v1/images?id=eq.${E2_SEEDED_IMAGE_ID}`, { headers: serviceHeaders })).json())
       .toEqual(expect.objectContaining({ id: E2_SEEDED_IMAGE_ID }))
 
-    const outbox = await request('/rest/v1/email_outbox', {
+    // Migration 016 denies the app role all email_outbox access — only the
+    // service role enqueues (lib/notify/email.ts), and the fixture mirrors it.
+    const outboxDenied = await request('/rest/v1/email_outbox', {
       method: 'POST',
       headers: { Authorization: `Bearer ${patientToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: 'recipient@example.test', subject: 'Generic notice', body: 'No PHI' }),
+    })
+    expect(outboxDenied.status).toBe(403)
+    const outbox = await request('/rest/v1/email_outbox', {
+      method: 'POST',
+      headers: { ...serviceHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipient: 'recipient@example.test', subject: 'Generic notice', body: 'No PHI' }),
     })
     expect(outbox.status).toBe(201)
