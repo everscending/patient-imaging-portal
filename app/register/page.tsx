@@ -28,6 +28,12 @@ export default function RegisterPage() {
         setError(body.message)
         return
       }
+      // sessionStorage, not a query param: client navigation can render the
+      // login page before the URL updates, so a ?registered read is racy.
+      // Best-effort — a storage-blocked browser must still reach /login.
+      try {
+        sessionStorage.setItem('pip-registered', '1')
+      } catch {}
       router.push('/login')
     } finally {
       setSubmitting(false)

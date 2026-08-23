@@ -346,6 +346,7 @@ test.describe('Registering and signing in lands an unverified account on /verify
     await page.getByLabel('Password').fill(PASSWORD)
     await page.getByRole('button', { name: 'Register' }).click()
     await expect(page).toHaveURL(/\/login$/)
+    await expect(page.getByTestId('registered-notice')).toHaveText('Account created. Sign in to continue.')
 
     await page.getByLabel('Email').fill(email)
     await page.getByLabel('Password').fill(PASSWORD)

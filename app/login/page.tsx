@@ -2,12 +2,20 @@
 
 // app/login/page.tsx — FR-1, SEC-7. Posts to this app's own
 // /api/auth/login, never to Supabase directly (ADR-0012 #15).
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
   const router = useRouter()
+  // Register sets this flag right before navigating here; shown once. Read
+  // and cleared in an effect so server and client render identically (no
+  // hydration mismatch on a hard load) and StrictMode re-runs stay harmless.
+  const [registered, setRegistered] = useState(false)
+  useEffect(() => {
+    if (sessionStorage.getItem('pip-registered') === '1') setRegistered(true)
+    sessionStorage.removeItem('pip-registered')
+  }, [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +47,11 @@ export default function LoginPage() {
   return (
     <main className="pip-auth-form">
       <h1>Sign in</h1>
+      {registered ? (
+        <p className="pip-notice" role="status" data-testid="registered-notice">
+          Account created. Sign in to continue.
+        </p>
+      ) : null}
       <p className="pip-notice">You&apos;ll be signed out after 60 minutes of inactivity.</p>
 
       {error !== null ? (

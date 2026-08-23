@@ -2167,7 +2167,7 @@ E2E selectors are a seam: the ticket that builds a component and the ticket that
 tests a flow both touch them. Pinned names, `data-testid`:
 
 ```
-identity-form · identity-error
+identity-form · identity-error · registered-notice
 profile-form · profile-save · profile-patient-ref
 patient-tabbar · study-list · study-card · image-viewer · image-zoom · image-filmstrip
 cine-viewer · cine-play · cine-next · cine-prev · cine-fps · cine-frame-gap
