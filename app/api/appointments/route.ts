@@ -20,6 +20,16 @@ function denied(status: 401 | 403 | 404): Response {
 export async function POST(request: Request): Promise<Response> {
   try {
     const callerId = await resolveCallerId()
+    // §5: booking is a patient action; the guard checks session + identity
+    // link and writes the denial audit row. The granted booking.create row
+    // stays with booking.ts (ADR-0014 shape), so grantedAudit defers here.
+    const access = await guardPhiAccess(
+      { kind: 'patient', userId: callerId ?? '' },
+      { kind: 'patient', id: null },
+      'booking.create',
+      { grantedAudit: 'transactional-rpc' },
+    )
+    if (!access.ok) return denied(access.status)
     if (!callerId) return denied(401)
     const parsed = await parseBody(appointmentCreateSchema, request)
     if (!parsed.ok) return parsed.response

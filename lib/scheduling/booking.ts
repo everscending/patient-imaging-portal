@@ -262,20 +262,32 @@ export async function book(input: {
     if (error) throw new Error('booking: transactional write failed')
     const row = (Array.isArray(data) ? data[0] : data) as BookRpcRow | null
     if (!row) throw new Error('booking: transactional write returned no result')
-    if (row.result_error) return { ok: false, error: row.result_error }
-
-    const appointment = appointmentDto(row, role)
-    const reused = required(row.result_reused, 'result_reused')
-    if (!reused) {
+    if (row.result_error) {
+      // SEC-4: a refused booking attempt is recorded too — the guard cannot
+      // see these, because the refusal happens inside the RPC after the grant.
       await recordAuditEvent({
         actorKind: 'account',
         actorRef: input.actorUserId,
         action: 'booking.create',
-        targetKind: 'appointment',
-        targetId: appointment.id,
-        outcome: 'granted',
+        targetKind: 'slot',
+        targetId: input.slotId,
+        outcome: 'denied',
       })
+      return { ok: false, error: row.result_error }
     }
+
+    const appointment = appointmentDto(row, role)
+    const reused = required(row.result_reused, 'result_reused')
+    // An idempotent replay is audited too — one row per request, not per
+    // appointment: EC-10 replays are real accesses to the original booking.
+    await recordAuditEvent({
+      actorKind: 'account',
+      actorRef: input.actorUserId,
+      action: 'booking.create',
+      targetKind: 'appointment',
+      targetId: appointment.id,
+      outcome: 'granted',
+    })
 
     return { ok: true, appointment, reused }
   }, (result) => {

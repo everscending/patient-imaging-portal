@@ -225,9 +225,11 @@ test.describe.serial('JOR-205 E7 scheduling wiring', () => {
     const fixtureState = (await (await page.request.get(`${await fakeServerUrl()}/__test__/identity-state`)).json()) as {
       auditEvents: Array<{ action: string; target_id: string | null }>
     }
+    // Two granted rows: the original create and the EC-10 replay — SEC-4
+    // records every request, replays included.
     expect(fixtureState.auditEvents.filter(({ action, target_id }) =>
       action === 'booking.create' && target_id === created.id,
-    )).toHaveLength(1)
+    )).toHaveLength(2)
   })
 
   test('insideNoticeRescheduleAndCancelStayLockedByTheServerAndUi', async function insideNoticeRescheduleAndCancelStayLockedByTheServerAndUi({
