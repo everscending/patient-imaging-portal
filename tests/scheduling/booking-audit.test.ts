@@ -63,52 +63,33 @@ beforeEach(() => {
   auditMock.mockResolvedValue(undefined)
 })
 
-describe('booking.create audit rows (SEC-4: refusals and replays are recorded too)', () => {
-  test('fresh_booking_writes_one_granted_row', async () => {
+// Migration 017's book_appointment wrapper commits the granted or denied
+// booking.create row inside the booking transaction (ADR-0014). The
+// TypeScript layer must therefore write NO booking.create audit row of its
+// own — a second writer here would double-log every outcome. The positive
+// assertions (granted on create and replay, denied on every refusal) live in
+// tests/scheduling/booking-concurrency.test.ts against a real Postgres.
+describe('booking.create audit ownership stays in the database transaction', () => {
+  test('fresh_booking_makes_no_typescript_audit_call', async () => {
     rpcMock.mockResolvedValue({ data: [successRow()], error: null })
     const result = await book(bookInput())
     expect(result.ok).toBe(true)
-    expect(auditMock).toHaveBeenCalledTimes(1)
-    expect(auditMock).toHaveBeenCalledWith({
-      actorKind: 'account',
-      actorRef: ACTOR_USER_ID,
-      action: 'booking.create',
-      targetKind: 'appointment',
-      targetId: APPOINTMENT_ID,
-      outcome: 'granted',
-    })
+    expect(auditMock).not.toHaveBeenCalled()
   })
 
-  test('refused_booking_writes_one_denied_row_targeting_the_slot', async () => {
+  test('refused_booking_makes_no_typescript_audit_call', async () => {
     for (const error of ['slot_unavailable', 'idempotency_key_reused', 'service_not_offered'] as const) {
-      auditMock.mockClear()
       rpcMock.mockResolvedValue({ data: [successRow({ result_error: error, appointment_id: null, result_reused: null })], error: null })
       const result = await book(bookInput())
       expect(result).toEqual({ ok: false, error })
-      expect(auditMock).toHaveBeenCalledTimes(1)
-      expect(auditMock).toHaveBeenCalledWith({
-        actorKind: 'account',
-        actorRef: ACTOR_USER_ID,
-        action: 'booking.create',
-        targetKind: 'slot',
-        targetId: SLOT_ID,
-        outcome: 'denied',
-      })
+      expect(auditMock).not.toHaveBeenCalled()
     }
   })
 
-  test('idempotent_replay_writes_one_granted_row_for_the_original_appointment', async () => {
+  test('idempotent_replay_makes_no_typescript_audit_call', async () => {
     rpcMock.mockResolvedValue({ data: [successRow({ result_reused: true })], error: null })
     const result = await book(bookInput())
     expect(result.ok && result.reused).toBe(true)
-    expect(auditMock).toHaveBeenCalledTimes(1)
-    expect(auditMock).toHaveBeenCalledWith({
-      actorKind: 'account',
-      actorRef: ACTOR_USER_ID,
-      action: 'booking.create',
-      targetKind: 'appointment',
-      targetId: APPOINTMENT_ID,
-      outcome: 'granted',
-    })
+    expect(auditMock).not.toHaveBeenCalled()
   })
 })

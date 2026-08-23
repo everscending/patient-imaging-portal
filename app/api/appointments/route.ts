@@ -21,8 +21,9 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const callerId = await resolveCallerId()
     // §5: booking is a patient action; the guard checks session + identity
-    // link and writes the denial audit row. The granted booking.create row
-    // stays with booking.ts (ADR-0014 shape), so grantedAudit defers here.
+    // link and writes the denial audit row. The granted row commits inside
+    // migration 017's book_appointment transaction (ADR-0014), so
+    // grantedAudit defers to that RPC here.
     const access = await guardPhiAccess(
       { kind: 'patient', userId: callerId ?? '' },
       { kind: 'patient', id: null },
