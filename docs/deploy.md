@@ -186,6 +186,19 @@ would be the wrong shape here.
 
 ## Uptime check (JOR-252)
 
+**Standing measurement (added 2026-08-23, sync-report T5):**
+`.github/workflows/uptime.yml` pings `GET /api/health` on the deployed base
+URL (the `APP_BASE_URL` repository secret, deploy.yml's same source) every
+15 minutes on a GitHub Actions schedule. The workflow's run history is the
+ongoing PF-9 record — green runs ÷ **fired** runs over any window is the
+availability figure (GitHub can skip or delay cron firings, so a missing run
+shows as a gap in the history rather than silently counting as up), and each
+run's job summary carries the timestamp, HTTP status and the three health
+states. A run fails only on an unreachable endpoint or a non-200; any 200 —
+healthy or degraded — is up, exactly the counting rule below, with a
+degraded body surfaced as a warning annotation.
+
+**Manual window (the original one-off measurement):**
 `scripts/uptime-check.sh run` polls `GET /api/health` on the deployed URL on
 an interval and appends one JSON line per poll — timestamp and the three
 states health can be in — to a log file; `scripts/uptime-check.sh report`

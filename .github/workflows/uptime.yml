@@ -1,0 +1,66 @@
+name: Uptime
+
+# PF-9's standing measurement (sync-report T5). docs/deploy.md's
+# scripts/uptime-check.sh window was a one-off manual poll; this workflow is
+# the scheduled ping that outlives it: every 15 minutes it makes one request
+# to the deployed health endpoint and fails the run when the app is
+# unreachable. The workflow's run history is the uptime record — a red run
+# is an incident timestamp, and green runs ÷ fired runs over a window is the
+# PF-9 figure (GitHub can skip or delay cron firings, so the denominator is
+# fired runs, never wall-clock intervals — a gap in the run history is
+# visible as a gap, not silently counted as up; docs/deploy.md states this).
+#
+# Counting rule matches scripts/uptime-check.sh exactly: any HTTP 200 is up
+# — healthy or degraded (a body reporting a down dependency is CQ-3's
+# designed shape: the app is up and saying so, surfaced here as a warning
+# annotation). Only an unreachable endpoint or a non-200 fails the run.
+#
+# Deliberately NO concurrency/cancel-in-progress block, unlike the sibling
+# workflows: cancelling an in-flight ping would destroy a sample.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: One health request
+        env:
+          # The §8 name for the deployed base URL, same source deploy.yml
+          # reads — never a hardcoded twin of the production alias.
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_BASE_URL" ]; then
+            echo "uptime: APP_BASE_URL secret is not configured" >&2
+            exit 1
+          fi
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          status="$(curl -sS -o body.json -w '%{http_code}' --max-time 30 "$APP_BASE_URL/api/health")" || status="000"
+          node - "$started" "$status" <<'NODE'
+          const fs = require('node:fs')
+          const [started, status] = process.argv.slice(2)
+          let body = {}
+          try { body = JSON.parse(fs.readFileSync('body.json', 'utf8')) } catch {}
+          const cell = (value) => String(value ?? '').replace(/[|`\n]/g, ' ').slice(0, 200)
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+            '## Uptime ping',
+            '',
+            '| Checked (UTC) | HTTP | app | database | storage |',
+            '| --- | --- | --- | --- | --- |',
+            `| ${cell(started)} | ${cell(status)} | ${cell(body.app)} | ${cell(body.database)} | ${cell(body.storage)} |`,
+            '',
+          ].join('\n'))
+          if (status === '200' && (body.database === 'down' || body.storage === 'down')) {
+            console.log(`::warning::health body reports a degraded dependency: database=${cell(body.database)} storage=${cell(body.storage)}`)
+          }
+          NODE
+          if [ "$status" != "200" ]; then
+            echo "uptime: health endpoint unreachable or non-200 (HTTP $status)" >&2
+            exit 1
+          fi
