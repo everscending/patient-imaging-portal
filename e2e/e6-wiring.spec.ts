@@ -149,7 +149,7 @@ test.describe.serial('JOR-240 E6 availability wiring', () => {
     })
     expect(withBlock.responseBody.generatedOpenSlots).toBeLessThan(withoutBlock.responseBody.generatedOpenSlots)
     await expect(
-      page.getByText(`Saved. ${withBlock.responseBody.removedOpenSlots} open slots removed.`, { exact: true }),
+      page.getByText(`Availability saved. ${withBlock.responseBody.generatedOpenSlots} open slots regenerated.`, { exact: true }),
     ).toBeVisible()
 
     const roundTripResponse = await page.request.get(`/api/providers/${E2_PROVIDER_ID}/availability`)
@@ -180,7 +180,7 @@ test.describe.serial('JOR-240 E6 availability wiring', () => {
     })
     expect(narrowed.responseBody.generatedOpenSlots).toBeGreaterThan(0)
 
-    await expect(page.getByText('These booked appointments are now outside your hours and have been kept:')).toBeVisible()
+    await expect(page.getByText('This booked appointment falls outside your hours and was kept:')).toBeVisible()
     await expect(page.getByTestId('availability-collision-list')).toHaveText('Mon 16:00 · PT-4471')
     const renderedPage = await page.locator('body').innerText()
     expect(renderedPage).not.toContain('Morgan Rivers')

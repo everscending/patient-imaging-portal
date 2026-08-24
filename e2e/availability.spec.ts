@@ -112,7 +112,7 @@ test.describe.serial('provider availability', () => {
       ],
     })
     await expect(
-      page.getByText(`Saved. ${firstSave.responseBody.removedOpenSlots} open slots removed.`, { exact: true }),
+      page.getByText(`Availability saved. ${firstSave.responseBody.generatedOpenSlots} open slots regenerated.`, { exact: true }),
     ).toBeVisible()
 
     await page.getByLabel('Monday end 1').fill('15:00')
@@ -125,7 +125,7 @@ test.describe.serial('provider availability', () => {
     await expect(collisionList).toContainText('Mon 16:00')
     await expect(collisionList).toContainText('PT-4471')
     await expect(
-      page.getByText(`Saved. ${collisionSave.responseBody.removedOpenSlots} open slots removed.`, { exact: true }),
+      page.getByText(`Availability saved. ${collisionSave.responseBody.generatedOpenSlots} open slots regenerated.`, { exact: true }),
     ).toBeVisible()
 
     const bodyText = await page.locator('body').innerText()
@@ -224,7 +224,7 @@ test.describe.serial('provider availability', () => {
     ] as const) {
       expect(source, name).not.toMatch(/#[0-9a-f]{3,8}\b/i)
     }
-    expect(availabilityPage).toMatch(/summary\.removedOpenSlots/)
-    expect(availabilityPage).not.toMatch(/removedOpenSlots\s*[:=][^\n]*(?:filter|reduce|length|workingHours|blocks)/)
+    expect(availabilityPage).toMatch(/summary\.generatedOpenSlots/)
+    expect(availabilityPage).not.toMatch(/generatedOpenSlots\s*[:=][^\n]*(?:filter|reduce|length|workingHours|blocks)/)
   })
 })
