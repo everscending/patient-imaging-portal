@@ -3,6 +3,7 @@
 // <Link>, not a button with a handler. Wordmark and copy read
 // lib/config.ts's practiceName so a later ticket can't drift the header
 // from the shells (components/branding/Wordmark.tsx is the shared piece).
+import Image from 'next/image'
 import Link from 'next/link'
 import Wordmark from '../components/branding/Wordmark'
 import { config } from '../lib/config'
@@ -99,19 +100,29 @@ export default function LandingPage() {
 
       <main>
         <section className="pip-landing-hero">
-          <h1>Your imaging care, all in one place</h1>
-          <p>
-            Review your scans, read signed reports, and manage appointments securely, from any
-            device.
-          </p>
-          <div className="pip-landing-hero-actions">
-            <Link href="/login" className="pip-button-primary">
-              Sign in
-            </Link>
-            <Link href="/register" className="pip-landing-secondary-link">
-              Create an account
-            </Link>
+          <div className="pip-landing-hero-copy">
+            <h1>Your imaging care, all in one place</h1>
+            <p>
+              Review your scans, read signed reports, and manage appointments securely, from any
+              device.
+            </p>
+            <div className="pip-landing-hero-actions">
+              <Link href="/login" className="pip-button-primary">
+                Sign in
+              </Link>
+              <Link href="/register" className="pip-landing-secondary-link">
+                Create an account
+              </Link>
+            </div>
           </div>
+          <Image
+            className="pip-landing-hero-image"
+            src="/hero.png"
+            alt=""
+            width={1040}
+            height={512}
+            priority
+          />
         </section>
 
         <section className="pip-landing-features" aria-labelledby="pip-landing-features-heading">
